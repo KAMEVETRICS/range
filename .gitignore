@@ -1,0 +1,11 @@
+# Local environment secrets
+.env
+.env.*.local
+
+# Local development and agent workspaces
+.superpowers/
+.worktrees/
+node_modules/
+dist/
+coverage/
+playwright-report/
