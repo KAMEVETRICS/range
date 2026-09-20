@@ -3,7 +3,7 @@
 .env.*.local
 
 # Local development and agent workspaces
-.superpowers/
+.superpowers
 .worktrees/
 node_modules/
 dist/

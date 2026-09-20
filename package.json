@@ -1,0 +1,24 @@
+{
+  "name": "range",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --recursive run build",
+    "test": "pnpm test:unit && pnpm test:e2e",
+    "test:unit": "vitest --run",
+    "vitest": "vitest",
+    "test:e2e": "playwright test",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit --project tsconfig.base.json",
+    "dev:compose": "docker compose -f infra/compose.yaml up"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}
