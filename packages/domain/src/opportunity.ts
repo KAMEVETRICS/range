@@ -11,6 +11,7 @@ import {
   UnderlyingIdSchema,
 } from "./ids.js";
 import { ExecutableQuoteSchema, FundingProjectionSchema } from "./funding.js";
+import { DataEligibilitySchema } from "./observation.js";
 
 export const RejectionCodeSchema = z.enum([
   "STALE_INPUT",
@@ -33,10 +34,16 @@ const OpportunityLegSchema = z.object({
   fundingProjection: FundingProjectionSchema.optional(),
 }).strict();
 
-const FreshnessSchema = z.object({
+export const OpportunityFreshnessSchema = z.object({
   oldestInputMs: z.number().int().nonnegative(),
   synchronized: z.boolean(),
+  eligibility: DataEligibilitySchema,
   qualityFlags: z.array(z.string().trim().min(1)),
+}).strict();
+
+const ActionableFreshnessSchema = OpportunityFreshnessSchema.extend({
+  synchronized: z.literal(true),
+  eligibility: z.literal("live"),
 }).strict();
 
 const opportunityFields = {
@@ -62,7 +69,7 @@ const opportunityFields = {
   uncertaintyBufferBps: NonNegativeDecimalStringSchema,
   netEdgeBps: DecimalStringSchema,
   capacityUsd: NonNegativeDecimalStringSchema,
-  freshness: FreshnessSchema,
+  freshness: OpportunityFreshnessSchema,
   expiresAt: IsoTimestampSchema,
   rejectionReasons: z.array(RejectionCodeSchema),
 };
@@ -71,7 +78,9 @@ const ActionableOpportunitySchema = z.object({
   ...opportunityFields,
   status: z.literal("actionable"),
   capacityUsd: PositiveDecimalStringSchema,
+  freshness: ActionableFreshnessSchema,
   evidenceHash: EvidenceHashSchema,
+  rejectionReasons: z.array(RejectionCodeSchema).length(0),
 }).strict();
 
 const RejectedOpportunitySchema = z.object({
@@ -93,12 +102,19 @@ export const OpportunitySchema = z.discriminatedUnion("status", [
   NonActionableOpportunitySchema,
 ]);
 
+export const EvidenceValueSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("decimal"), value: DecimalStringSchema }).strict(),
+  z.object({ kind: z.literal("integer"), value: z.number().int() }).strict(),
+  z.object({ kind: z.literal("boolean"), value: z.boolean() }).strict(),
+  z.object({ kind: z.literal("string"), value: z.string() }).strict(),
+]);
+
 export const EvidenceBundleSchema = z.object({
   sourceEventIds: z.array(z.string().trim().min(1)).min(1),
   calculationVersion: z.string().trim().min(1),
   canonicalMappingVersions: z.record(z.string(), z.string().trim().min(1)),
-  assumptions: z.record(z.string(), z.json()),
-  intermediateValues: z.record(z.string(), z.json()),
+  assumptions: z.record(z.string(), EvidenceValueSchema),
+  intermediateValues: z.record(z.string(), EvidenceValueSchema),
   warnings: z.array(z.string().trim().min(1)),
   evidenceHash: EvidenceHashSchema,
 }).strict();
