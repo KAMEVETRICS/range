@@ -1,0 +1,118 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import type { EachMessagePayload } from "kafkajs";
+import { createHash } from "node:crypto";
+import { observation } from "./test-fixtures.js";
+import { RedpandaEventBus } from "./redpanda.js";
+
+// The broker is the external boundary. Capture sends and commits to exercise the
+// real transport's validation and acknowledgement decisions without Docker.
+const broker = vi.hoisted(() => ({
+  producer: { connect: vi.fn(), disconnect: vi.fn(), send: vi.fn() },
+  consumer: { connect: vi.fn(), disconnect: vi.fn(), subscribe: vi.fn(), run: vi.fn(), commitOffsets: vi.fn() },
+  producerOptions: vi.fn(), consumerOptions: vi.fn(),
+}));
+vi.mock("kafkajs", () => ({
+  Kafka: class {
+    producer(options: unknown) { broker.producerOptions(options); return broker.producer; }
+    consumer(options: unknown) { broker.consumerOptions(options); return broker.consumer; }
+  },
+}));
+beforeEach(() => {
+  vi.resetAllMocks();
+  for (const method of [...Object.values(broker.producer), ...Object.values(broker.consumer)]) {
+    method.mockResolvedValue(undefined);
+  }
+});
+const bus = () => new RedpandaEventBus({ clientId: "test", brokers: ["localhost:19092"] });
+const delivery = (value: string | null, traceId = "9ca8b23b-0d61-4a91-a2d7-000000000001"): EachMessagePayload => ({
+  topic: "market.observation.v1", partition: 2,
+  message: {
+    key: Buffer.from("bitget:RAAPLUSDT"), value: value === null ? null : Buffer.from(value),
+    offset: "9007199254740993", timestamp: "1790000000000", attributes: 0,
+    headers: { "trace-id": Buffer.from(traceId) },
+  },
+  heartbeat: async () => {}, pause: () => () => {},
+});
+const receive = () => broker.consumer.run.mock.calls[0]![0].eachMessage as (message: EachMessagePayload) => Promise<void>;
+
+it("publishes validated messages with keyed ordering and idempotence", async () => {
+  const transport = bus();
+  await transport.publish("market.observation.v1", "bitget:RAAPLUSDT", observation(1));
+  expect(broker.producerOptions).toHaveBeenCalledWith(expect.objectContaining({ idempotent: true, maxInFlightRequests: 1 }));
+  const sent = broker.producer.send.mock.calls[0]![0];
+  expect(sent).toMatchObject({ topic: "market.observation.v1", acks: -1, messages: [{ key: "bitget:RAAPLUSDT" }] });
+  expect(JSON.parse(sent.messages[0].value)).toEqual(observation(1));
+  await transport.close();
+});
+
+it("commits the next exact offset only after the handler succeeds", async () => {
+  const transport = bus();
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const seen: unknown[] = [];
+  const stop = await transport.subscribe("market.observation.v1", "test", async event => { seen.push(event); await blocked; });
+  const processing = receive()(delivery(JSON.stringify(observation(1))));
+  expect(broker.consumer.run.mock.calls[0]![0]).toMatchObject({ autoCommit: false });
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  release();
+  await processing;
+  expect(seen).toEqual([observation(1)]);
+  expect(broker.consumer.commitOffsets).toHaveBeenCalledWith([{ topic: "market.observation.v1", partition: 2, offset: "9007199254740994" }]);
+  await stop();
+  await stop();
+  expect(broker.consumer.disconnect).toHaveBeenCalledTimes(1);
+  await transport.close();
+});
+
+it("does not commit or dead-letter transient handler failures", async () => {
+  const transport = bus();
+  await transport.subscribe("market.observation.v1", "test", async () => { throw new Error("temporary"); });
+  await expect(receive()(delivery(JSON.stringify(observation(1))))).rejects.toThrow("temporary");
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  expect(broker.producer.send).not.toHaveBeenCalled();
+  await transport.close();
+});
+
+it.each([
+  ['{"apiSecret":"NEVER_LOG"}', "INVALID_SCHEMA"],
+  ['{"apiSecret":"NEVER_LOG"', "INVALID_JSON"],
+  [null, "INVALID_JSON"],
+])("quarantines an invalid consumed payload and commits only after durable dead-letter send", async (raw, code) => {
+  const transport = bus();
+  const handler = vi.fn();
+  await transport.subscribe("market.observation.v1", "test", handler);
+  let release!: () => void;
+  broker.producer.send.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
+  const processing = receive()(delivery(raw));
+  await vi.waitFor(() => expect(broker.producer.send).toHaveBeenCalledTimes(1));
+  expect(handler).not.toHaveBeenCalled();
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  const sent = broker.producer.send.mock.calls[0]![0];
+  expect(sent.topic).toBe("range.dead-letter.v1");
+  expect(JSON.parse(sent.messages[0].value)).toEqual({
+    originalTopic: "market.observation.v1", key: "bitget:RAAPLUSDT",
+    payloadHash: `sha256:${createHash("sha256").update(raw ?? "").digest("hex")}`,
+    errorCode: code, traceId: "9ca8b23b-0d61-4a91-a2d7-000000000001",
+  });
+  expect(JSON.stringify(sent)).not.toContain("NEVER_LOG");
+  release();
+  await processing;
+  expect(broker.consumer.commitOffsets).toHaveBeenCalledTimes(1);
+  await transport.close();
+});
+
+it("keeps invalid messages uncommitted if the dead-letter broker send fails", async () => {
+  const transport = bus();
+  await transport.subscribe("market.observation.v1", "test", async () => {});
+  broker.producer.send.mockRejectedValue(new Error("broker down"));
+  await expect(receive()(delivery("{}"))).rejects.toThrow("broker down");
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  await transport.close();
+});
+
+it("validates before publishing and rejects without sending to the original topic", async () => {
+  const transport = bus();
+  await expect(transport.publish("market.observation.v1", "key", { ...observation(1), eligibility: undefined } as never)).rejects.toThrow("INVALID_SCHEMA");
+  expect(broker.producer.send.mock.calls.map(call => call[0].topic)).toEqual(["range.dead-letter.v1"]);
+  await transport.close();
+});

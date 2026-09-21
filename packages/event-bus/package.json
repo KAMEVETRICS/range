@@ -1,0 +1,13 @@
+{
+  "name": "@range/event-bus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@range/domain": "workspace:*",
+    "kafkajs": "^2.2.4",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": { "@testcontainers/redpanda": "^11.0.0" }
+}
