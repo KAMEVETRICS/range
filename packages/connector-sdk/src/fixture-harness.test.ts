@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
 import { InstrumentSchema, type Instrument } from "@range/domain";
 import { RetryAfterError } from "./retry.js";
-import { assertAdapterFixture, type AdapterFixture } from "./fixture-harness.js";
-import type { ConnectorAdapter, FixtureCapableConnectorAdapter, FixtureCaptureSink, RawSnapshot } from "./types.js";
+import { assertAdapterFixture, type AdapterFixture, type AdapterFixtureFactory, type AdapterFixturePorts } from "./fixture-harness.js";
+import type { ConnectorAdapter, FixtureCapableConnectorAdapter, RawSnapshot } from "./types.js";
 
 const instrument: Instrument = InstrumentSchema.parse({
   instrumentId: "ins_fixture_RAAPLUSDT", underlyingId: "RAAPL", venue: "fixture", venueSymbol: "RAAPLUSDT",
@@ -20,16 +20,11 @@ const snapshot = (sourceTimestampMs = 1_000): RawSnapshot => ({
 
 class FixtureAdapter implements ConnectorAdapter, FixtureCapableConnectorAdapter {
   readonly venue = "fixture";
-  protected capture: FixtureCaptureSink | undefined;
   private rateLimitCalls = 0;
 
-  async withFixtureCapture<T>(sink: FixtureCaptureSink, operation: () => Promise<T>): Promise<T> {
-    this.capture = sink;
-    try { return await operation(); }
-    finally { this.capture = undefined; }
-  }
+  constructor(protected readonly ports: AdapterFixturePorts) {}
 
-  async probe() { this.capture?.requestHeaders({ accept: "application/json" }); return { available: true }; }
+  async probe() { this.ports.http.recordRequest({ accept: "application/json" }); return { available: true }; }
   async discover() { return [instrument]; }
   async snapshot() { return snapshot(); }
   async parseFixtureMessage(input: unknown): Promise<RawSnapshot> {
@@ -42,9 +37,9 @@ class FixtureAdapter implements ConnectorAdapter, FixtureCapableConnectorAdapter
   }
 }
 
-function fixture(adapter: FixtureAdapter): AdapterFixture {
+function fixture(factory: AdapterFixtureFactory): AdapterFixture {
   return {
-    adapter,
+    factory,
     expected: {
       probe: { available: true },
       instrumentIds: [instrument.instrumentId],
@@ -57,23 +52,30 @@ function fixture(adapter: FixtureAdapter): AdapterFixture {
   };
 }
 
-it("accepts a conforming adapter through an interposed capture sink", async () => {
-  await expect(assertAdapterFixture(fixture(new FixtureAdapter()))).resolves.toBeUndefined();
+it("accepts a conforming factory that receives harness-owned ports", async () => {
+  const factory: AdapterFixtureFactory = ports => {
+    expect(Object.keys(ports).sort()).toEqual(["clock", "diagnostics", "http"]);
+    expect(Object.keys(ports.http)).toEqual(["recordRequest"]);
+    expect(Object.keys(ports.diagnostics).sort()).toEqual(["error", "log"]);
+    return new FixtureAdapter(ports);
+  };
+  await expect(assertAdapterFixture(fixture(factory))).resolves.toBeUndefined();
 });
 
-it("rejects a broken adapter whose real snapshot path leaves seconds unnormalized", async () => {
-  class SecondsAdapter extends FixtureAdapter {
+it("rejects a broken factory whose real snapshot path leaves seconds unnormalized", async () => {
+  const factory: AdapterFixtureFactory = ports => new class extends FixtureAdapter {
     override async snapshot() { return snapshot(1); }
-  }
-  await expect(assertAdapterFixture(fixture(new SecondsAdapter()))).rejects.toThrow("timestamp");
+  }(ports);
+  await expect(assertAdapterFixture(fixture(factory))).rejects.toThrow("timestamp");
 });
 
-it("rejects a broken adapter whose real probe path leaks credentials into the installed sink", async () => {
-  class LeakingAdapter extends FixtureAdapter {
+it("rejects a broken factory that leaks through mandatory logger and HTTP ports", async () => {
+  const factory: AdapterFixtureFactory = ports => new class extends FixtureAdapter {
     override async probe() {
-      this.capture?.log("authorization: Bearer fixture-secret");
+      this.ports.diagnostics.log("authorization: Bearer fixture-secret");
+      this.ports.http.recordRequest({ authorization: "Bearer fixture-secret" });
       return super.probe();
     }
-  }
-  await expect(assertAdapterFixture(fixture(new LeakingAdapter()))).rejects.toThrow("credential");
+  }(ports);
+  await expect(assertAdapterFixture(fixture(factory))).rejects.toThrow("credential");
 });

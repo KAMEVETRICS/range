@@ -1,10 +1,21 @@
 import { InstrumentSchema } from "@range/domain";
 import { isEpochMilliseconds } from "./clock.js";
 import { retryWithBackoff, type RetryOptions } from "./retry.js";
-import type { ConnectorAdapter, FixtureCapableConnectorAdapter, FixtureCaptureSink, RawVenueEvent } from "./types.js";
+import type { ConnectorAdapter, FixtureCapableConnectorAdapter, RawVenueEvent } from "./types.js";
+
+/** Mandatory fixture-only outbound ports. Adapters must not bypass these ports with global fetch or console APIs. */
+export interface AdapterFixturePorts {
+  readonly http: { recordRequest(headers: unknown): void };
+  readonly diagnostics: { log(entry: unknown): void; error(metadata: unknown): void };
+  readonly clock: { nowMs(): number };
+}
+
+export type AdapterFixtureFactory = (
+  ports: AdapterFixturePorts,
+) => ConnectorAdapter & FixtureCapableConnectorAdapter;
 
 export interface AdapterFixture {
-  readonly adapter: ConnectorAdapter & FixtureCapableConnectorAdapter;
+  readonly factory: AdapterFixtureFactory;
   readonly expected: {
     readonly probe: { readonly available: boolean };
     readonly instrumentIds: readonly string[];
@@ -16,7 +27,7 @@ export interface AdapterFixture {
   readonly sleep?: RetryOptions["sleep"];
 }
 
-type Captured = { logs: unknown[]; requestHeaders: unknown[]; health: unknown[]; errors: unknown[] };
+type Captured = { logs: unknown[]; requestHeaders: unknown[]; errors: unknown[] };
 
 function fixtureFailure(message: string): Error {
   return new Error(`Adapter fixture contract failed: ${message}`);
@@ -44,55 +55,57 @@ function containsCredential(value: unknown, credentials: readonly string[], visi
     || containsCredential((value as Record<PropertyKey, unknown>)[key], credentials, visited));
 }
 
-function captureSink(captured: Captured): FixtureCaptureSink {
+function fixturePorts(captured: Captured): AdapterFixturePorts {
   return {
-    log: entry => { captured.logs.push(entry); },
-    requestHeaders: headers => { captured.requestHeaders.push(headers); },
-    health: event => { captured.health.push(event); },
-    error: error => { captured.errors.push(error); },
+    http: { recordRequest: headers => { captured.requestHeaders.push(headers); } },
+    diagnostics: {
+      log: entry => { captured.logs.push(entry); },
+      error: metadata => { captured.errors.push(metadata); },
+    },
+    clock: { nowMs: () => 1_000 },
   };
 }
 
 /**
- * Runs the adapter itself through its fixture surface while the harness owns
- * capture. No separately supplied parser, rate-limit callback, or capture data
- * can satisfy this contract.
+ * Builds the adapter with harness-owned ports and runs its actual fixture
+ * operations. Separately supplied parser, capture, and rate-limit callbacks
+ * are intentionally not part of this contract.
  */
 export async function assertAdapterFixture(fixture: AdapterFixture): Promise<void> {
   const signal = new AbortController().signal;
-  const captured: Captured = { logs: [], requestHeaders: [], health: [], errors: [] };
-  await fixture.adapter.withFixtureCapture(captureSink(captured), async () => {
-    const probe = await fixture.adapter.probe(signal);
-    if (probe.available !== fixture.expected.probe.available) throw fixtureFailure("probe result differs from expectation");
+  const captured: Captured = { logs: [], requestHeaders: [], errors: [] };
+  const adapter = fixture.factory(fixturePorts(captured));
 
-    const firstDiscovery = await fixture.adapter.discover(signal);
-    const secondDiscovery = await fixture.adapter.discover(signal);
-    const firstIds = firstDiscovery.map(instrument => InstrumentSchema.parse(instrument).instrumentId);
-    const secondIds = secondDiscovery.map(instrument => InstrumentSchema.parse(instrument).instrumentId);
-    if (JSON.stringify(firstIds) !== JSON.stringify(secondIds) || JSON.stringify(firstIds) !== JSON.stringify(fixture.expected.instrumentIds)) {
-      throw fixtureFailure("discovery IDs are not stable or do not match expectation");
-    }
-    if (firstDiscovery.length !== fixture.expected.snapshots.length) throw fixtureFailure("snapshot expectation count differs from discovery");
-    for (const [index, instrument] of firstDiscovery.entries()) {
-      assertNormalized(await fixture.adapter.snapshot(instrument, signal), fixture.expected.snapshots[index]!);
-    }
+  const probe = await adapter.probe(signal);
+  if (probe.available !== fixture.expected.probe.available) throw fixtureFailure("probe result differs from expectation");
 
-    let malformedRejected = false;
-    try { await fixture.adapter.parseFixtureMessage(fixture.expected.malformedMessage, signal); }
-    catch { malformedRejected = true; }
-    if (!malformedRejected) throw fixtureFailure("malformed messages must be rejected by the adapter parser");
+  const firstDiscovery = await adapter.discover(signal);
+  const secondDiscovery = await adapter.discover(signal);
+  const firstIds = firstDiscovery.map(instrument => InstrumentSchema.parse(instrument).instrumentId);
+  const secondIds = secondDiscovery.map(instrument => InstrumentSchema.parse(instrument).instrumentId);
+  if (JSON.stringify(firstIds) !== JSON.stringify(secondIds) || JSON.stringify(firstIds) !== JSON.stringify(fixture.expected.instrumentIds)) {
+    throw fixtureFailure("discovery IDs are not stable or do not match expectation");
+  }
+  if (firstDiscovery.length !== fixture.expected.snapshots.length) throw fixtureFailure("snapshot expectation count differs from discovery");
+  for (const [index, instrument] of firstDiscovery.entries()) {
+    assertNormalized(await adapter.snapshot(instrument, signal), fixture.expected.snapshots[index]!);
+  }
 
-    const observedDelays: number[] = [];
-    await retryWithBackoff(() => fixture.adapter.exerciseFixtureRateLimit(signal), {
-      sleep: async delayMs => {
-        observedDelays.push(delayMs);
-        await fixture.sleep?.(delayMs);
-      },
-    });
-    if (!observedDelays.includes(fixture.expected.retryAfterMs)) {
-      throw fixtureFailure("the adapter rate-limit path did not honor the expected Retry-After");
-    }
+  let malformedRejected = false;
+  try { await adapter.parseFixtureMessage(fixture.expected.malformedMessage, signal); }
+  catch { malformedRejected = true; }
+  if (!malformedRejected) throw fixtureFailure("malformed messages must be rejected by the adapter parser");
+
+  const observedDelays: number[] = [];
+  await retryWithBackoff(() => adapter.exerciseFixtureRateLimit(signal), {
+    sleep: async delayMs => {
+      observedDelays.push(delayMs);
+      await fixture.sleep?.(delayMs);
+    },
   });
+  if (!observedDelays.includes(fixture.expected.retryAfterMs)) {
+    throw fixtureFailure("the adapter rate-limit path did not honor the expected Retry-After");
+  }
 
   for (const [name, values] of Object.entries(captured)) {
     if (containsCredential(values, fixture.credentialValues)) throw fixtureFailure(`credential leaked in captured ${name}`);
