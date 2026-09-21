@@ -8,9 +8,17 @@ const diagnosticMessages: Record<ConnectorDiagnosticCode, string> = {
 
 /** Safe outward-facing error: it deliberately retains no adapter message, cause, or headers. */
 export class ConnectorDiagnosticError extends Error {
-  constructor(readonly code: ConnectorDiagnosticCode, readonly retryAfterMs?: number) {
+  readonly code!: ConnectorDiagnosticCode;
+  readonly retryAfterMs?: number;
+
+  constructor(code: ConnectorDiagnosticCode, retryAfterMs?: number) {
     super(diagnosticMessages[code]);
-    this.name = "ConnectorDiagnosticError";
+    Object.defineProperties(this, {
+      code: { value: code, enumerable: true, writable: false, configurable: false },
+      retryAfterMs: { value: retryAfterMs, enumerable: true, writable: false, configurable: false },
+      name: { value: "ConnectorDiagnosticError", enumerable: false, writable: false, configurable: false },
+      message: { value: diagnosticMessages[code], enumerable: false, writable: false, configurable: false },
+    });
   }
 }
 
@@ -41,12 +49,13 @@ export interface RetryOptions {
 type RetryAfterCarrier = { retryAfterMs?: unknown };
 
 export function safeRetryAfterMs(error: unknown): number | undefined {
-  const value = (error as RetryAfterCarrier | undefined)?.retryAfterMs;
+  let value: unknown;
+  try { value = (error as RetryAfterCarrier | undefined)?.retryAfterMs; }
+  catch { return undefined; }
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 }
 
 export function toConnectorDiagnostic(error: unknown): ConnectorDiagnosticError {
-  if (error instanceof ConnectorDiagnosticError) return error;
   const retryAfterMs = safeRetryAfterMs(error);
   return new ConnectorDiagnosticError(retryAfterMs === undefined ? "ADAPTER_FAILURE" : "RATE_LIMITED", retryAfterMs);
 }

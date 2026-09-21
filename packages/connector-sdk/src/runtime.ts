@@ -73,7 +73,7 @@ export class ConnectorRuntime {
       if (signal.aborted) break;
       try { await this.waitForReconnect(reconnectAttempt, outcome, signal); }
       catch (error) {
-        if (toConnectorDiagnostic(error).code === "ABORTED" && signal.aborted) break;
+        if (signal.aborted) break;
         throw toConnectorDiagnostic(error);
       }
       reconnectAttempt += 1;
@@ -105,7 +105,7 @@ export class ConnectorRuntime {
       return diagnostic;
     } catch (error) {
       const diagnostic = toConnectorDiagnostic(error);
-      if (diagnostic.code !== "ABORTED") await this.degrade(diagnostic);
+      if (!signal.aborted) await this.degrade(diagnostic);
       return diagnostic;
     }
   }
@@ -118,7 +118,7 @@ export class ConnectorRuntime {
         await waitForRetry(this.pollIntervalMs, { signal, sleep: this.options.sleep });
       } catch (error) {
         const diagnostic = toConnectorDiagnostic(error);
-        if (diagnostic.code !== "ABORTED") await this.degrade(diagnostic);
+        if (!signal.aborted) await this.degrade(diagnostic);
         return diagnostic;
       }
     }
@@ -140,7 +140,7 @@ export class ConnectorRuntime {
       return this.instruments;
     } catch (error) {
       const diagnostic = toConnectorDiagnostic(error);
-      if (diagnostic.code !== "ABORTED") await this.degrade(diagnostic);
+      if (!signal.aborted) await this.degrade(diagnostic);
       return [];
     }
   }

@@ -35,6 +35,21 @@ export interface RawVenueEvent {
 
 export type RawSnapshot = RawVenueEvent;
 
+/** Sink installed by the SDK fixture harness around an adapter's real operations. */
+export interface FixtureCaptureSink {
+  log(entry: unknown): void;
+  requestHeaders(headers: unknown): void;
+  health(event: unknown): void;
+  error(error: unknown): void;
+}
+
+/** Optional adapter fixture surface used only by connector contract tests. */
+export interface FixtureCapableConnectorAdapter {
+  withFixtureCapture<T>(sink: FixtureCaptureSink, operation: () => Promise<T>): Promise<T>;
+  parseFixtureMessage(input: unknown, signal: AbortSignal): Promise<RawVenueEvent>;
+  exerciseFixtureRateLimit(signal: AbortSignal): Promise<void>;
+}
+
 export interface ConnectorAdapter {
   readonly venue: string;
   probe(signal: AbortSignal): Promise<ProbeResult>;

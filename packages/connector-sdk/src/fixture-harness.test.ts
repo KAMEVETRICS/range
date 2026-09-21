@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { InstrumentSchema, type Instrument } from "@range/domain";
 import { RetryAfterError } from "./retry.js";
 import { assertAdapterFixture, type AdapterFixture } from "./fixture-harness.js";
-import type { ConnectorAdapter, RawSnapshot } from "./types.js";
+import type { ConnectorAdapter, FixtureCapableConnectorAdapter, FixtureCaptureSink, RawSnapshot } from "./types.js";
 
 const instrument: Instrument = InstrumentSchema.parse({
   instrumentId: "ins_fixture_RAAPLUSDT", underlyingId: "RAAPL", venue: "fixture", venueSymbol: "RAAPLUSDT",
@@ -18,49 +18,62 @@ const snapshot = (sourceTimestampMs = 1_000): RawSnapshot => ({
   payload: { kind: "index_price", price: "200" },
 });
 
-function adapter(timestamp = 1_000): ConnectorAdapter {
-  return {
-    venue: "fixture",
-    async probe() { return { available: true }; },
-    async discover() { return [instrument]; },
-    async snapshot() { return snapshot(timestamp); },
-  };
+class FixtureAdapter implements ConnectorAdapter, FixtureCapableConnectorAdapter {
+  readonly venue = "fixture";
+  protected capture: FixtureCaptureSink | undefined;
+  private rateLimitCalls = 0;
+
+  async withFixtureCapture<T>(sink: FixtureCaptureSink, operation: () => Promise<T>): Promise<T> {
+    this.capture = sink;
+    try { return await operation(); }
+    finally { this.capture = undefined; }
+  }
+
+  async probe() { this.capture?.requestHeaders({ accept: "application/json" }); return { available: true }; }
+  async discover() { return [instrument]; }
+  async snapshot() { return snapshot(); }
+  async parseFixtureMessage(input: unknown): Promise<RawSnapshot> {
+    if (input === "malformed") throw new Error("invalid fixture message");
+    return snapshot();
+  }
+  async exerciseFixtureRateLimit(): Promise<void> {
+    this.rateLimitCalls += 1;
+    if (this.rateLimitCalls === 1) throw new RetryAfterError("429", 25);
+  }
 }
 
-function fixture(overrides: Partial<AdapterFixture> = {}): AdapterFixture {
-  let attempts = 0;
+function fixture(adapter: FixtureAdapter): AdapterFixture {
   return {
-    adapter: adapter(),
+    adapter,
     expected: {
       probe: { available: true },
       instrumentIds: [instrument.instrumentId],
       snapshots: [{ instrumentId: instrument.instrumentId, sourceTimestampMs: 1_000 }],
       retryAfterMs: 25,
+      malformedMessage: "malformed",
     },
-    parseMalformedMessage: async () => { throw new Error("malformed"); },
     credentialValues: ["fixture-secret"],
-    rateLimitAttempt: async () => {
-      attempts += 1;
-      if (attempts === 1) throw new RetryAfterError("429", 25);
-    },
-    capture: () => ({ logs: [], requestHeaders: [], health: [], errors: [] }),
     sleep: async () => {},
-    ...overrides,
   };
 }
 
-it("rejects a fixture whose actual snapshot timestamp differs from its expected normalized timestamp", async () => {
-  await expect(assertAdapterFixture(fixture({ adapter: adapter(999) }))).rejects.toThrow("timestamp");
+it("accepts a conforming adapter through an interposed capture sink", async () => {
+  await expect(assertAdapterFixture(fixture(new FixtureAdapter()))).resolves.toBeUndefined();
 });
 
-it("rejects a fixture whose captured request headers or logs contain a credential", async () => {
-  const secret = "fixture-secret";
-  await expect(assertAdapterFixture(fixture({
-    capture: () => ({
-      logs: [`authorization: Bearer ${secret}`],
-      requestHeaders: [{ authorization: `Bearer ${secret}` }],
-      health: [],
-      errors: [],
-    }),
-  }))).rejects.toThrow("credential");
+it("rejects a broken adapter whose real snapshot path leaves seconds unnormalized", async () => {
+  class SecondsAdapter extends FixtureAdapter {
+    override async snapshot() { return snapshot(1); }
+  }
+  await expect(assertAdapterFixture(fixture(new SecondsAdapter()))).rejects.toThrow("timestamp");
+});
+
+it("rejects a broken adapter whose real probe path leaks credentials into the installed sink", async () => {
+  class LeakingAdapter extends FixtureAdapter {
+    override async probe() {
+      this.capture?.log("authorization: Bearer fixture-secret");
+      return super.probe();
+    }
+  }
+  await expect(assertAdapterFixture(fixture(new LeakingAdapter()))).rejects.toThrow("credential");
 });

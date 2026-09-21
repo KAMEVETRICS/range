@@ -3,8 +3,8 @@ import { InMemoryEventBus, type EventBus, type Topic, type TopicPayload } from "
 import { InstrumentSchema, type Instrument } from "@range/domain";
 import {
   ConnectorRuntime,
+  ConnectorDiagnosticError,
   RetryAfterError,
-  assertAdapterFixture,
   retryWithBackoff,
   type ConnectorAdapter,
   type RawSnapshot,
@@ -102,42 +102,6 @@ it("never allows exponential retry backoff above thirty seconds", async () => {
   expect(delays).toEqual([30_000]);
 });
 
-it("enforces the shared adapter fixture contract without exposing credentials", async () => {
-  const credential = "super-secret-token";
-  let rateLimitAttempts = 0;
-
-  await expect(assertAdapterFixture({
-    adapter: fakeAdapter(),
-    expected: {
-      probe: { available: true }, instrumentIds: [instrument.instrumentId],
-      snapshots: [{ instrumentId: instrument.instrumentId, sourceTimestampMs: 10_000 }], retryAfterMs: 77,
-    },
-    parseMalformedMessage: async () => { throw new Error("invalid wire message"); },
-    credentialValues: [credential],
-    rateLimitAttempt: async () => {
-      rateLimitAttempts += 1;
-      if (rateLimitAttempts === 1) throw new RetryAfterError("429", 77);
-    },
-    capture: () => ({ logs: [], requestHeaders: [], health: [], errors: [] }),
-    sleep: async () => {},
-  })).resolves.toBeUndefined();
-});
-
-it("rejects an adapter fixture that does not simulate a Retry-After response", async () => {
-  await expect(assertAdapterFixture({
-    adapter: fakeAdapter(),
-    expected: {
-      probe: { available: true }, instrumentIds: [instrument.instrumentId],
-      snapshots: [{ instrumentId: instrument.instrumentId, sourceTimestampMs: 10_000 }], retryAfterMs: 1,
-    },
-    parseMalformedMessage: async () => { throw new Error("invalid wire message"); },
-    credentialValues: [],
-    rateLimitAttempt: async () => {},
-    capture: () => ({ logs: [], requestHeaders: [], health: [], errors: [] }),
-    sleep: async () => {},
-  })).rejects.toThrow("Retry-After");
-});
-
 it("reconnects after a stream disconnect and snapshots before the replacement session", async () => {
   const bus = new InMemoryEventBus();
   const healthEvents = await published(bus, "venue.health.v1");
@@ -206,6 +170,25 @@ it("does not expose adapter credentials through health events or diagnostic code
   await expect(runtime.pollOnce()).resolves.toBeUndefined();
 
   expect(runtime.health().errorCounters).toEqual({ ADAPTER_FAILURE: 1 });
+  expect(JSON.stringify({ healthEvents, health: runtime.health() })).not.toContain(sentinel);
+});
+
+it("does not expose forged diagnostic metadata through venue health", async () => {
+  const sentinel = "forged-health-secret";
+  const bus = new InMemoryEventBus();
+  const healthEvents = await published(bus, "venue.health.v1");
+  const forged = Object.create(ConnectorDiagnosticError.prototype) as ConnectorDiagnosticError;
+  Object.assign(forged as object, {
+    code: "RATE_LIMITED", retryAfterMs: 12, name: sentinel, message: sentinel,
+    cause: new Error(sentinel), metadata: { headers: { authorization: sentinel } },
+  });
+  const adapter = fakeAdapter();
+  adapter.snapshot = async () => { throw forged; };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000, retry: { sleep: async () => {} } });
+
+  await expect(runtime.pollOnce()).resolves.toBeUndefined();
+
+  expect(runtime.health().errorCounters).toEqual({ RATE_LIMITED: 1 });
   expect(JSON.stringify({ healthEvents, health: runtime.health() })).not.toContain(sentinel);
 });
 
