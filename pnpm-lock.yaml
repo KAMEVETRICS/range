@@ -24,6 +24,18 @@ importers:
         specifier: ^4.0.0
         version: 4.6.5
 
+  packages/connector-sdk:
+    dependencies:
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@range/event-bus':
+        specifier: workspace:*
+        version: link:../event-bus
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+
   packages/domain:
     dependencies:
       zod:
