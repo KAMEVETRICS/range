@@ -2,7 +2,14 @@ import type { EventBus } from "@range/event-bus";
 import { ObservationEnvelopeSchema, VenueHealthSchema } from "@range/domain";
 import type { VenueHealth } from "@range/domain";
 import { clockSkewMs, isEpochMilliseconds } from "./clock.js";
-import { retryWithBackoff, type RetryOptions } from "./retry.js";
+import {
+  backoffDelayMs,
+  ConnectorDiagnosticError,
+  retryWithBackoff,
+  toConnectorDiagnostic,
+  waitForRetry,
+  type RetryOptions,
+} from "./retry.js";
 import type { ConnectorAdapter, ConnectorHealth, DiscoveredInstrument, RawVenueEvent } from "./types.js";
 
 export interface ConnectorRuntimeOptions {
@@ -11,6 +18,9 @@ export interface ConnectorRuntimeOptions {
   readonly nowMs?: () => number;
   readonly maxClockSkewMs?: number;
   readonly retry?: RetryOptions;
+  readonly reconnect?: RetryOptions;
+  readonly pollIntervalMs?: number;
+  readonly sleep?: (delayMs: number) => Promise<void>;
 }
 
 type ConnectionState = VenueHealth["connectionState"];
@@ -19,7 +29,9 @@ export class ConnectorRuntime {
   private readonly nowMs: () => number;
   private readonly maxClockSkewMs: number;
   private readonly retry: RetryOptions;
-  private instruments: DiscoveredInstrument[] | undefined;
+  private readonly reconnect: RetryOptions;
+  private readonly pollIntervalMs: number;
+  private instruments: DiscoveredInstrument[] = [];
   private connectionState: ConnectionState = "disconnected";
   private quarantined = false;
   private lastReceivedAtMs: number;
@@ -28,11 +40,14 @@ export class ConnectorRuntime {
   private rateLimit: VenueHealth["rateLimit"] = { state: "unknown" };
   private readonly errorCounters: Record<string, number> = {};
   private readonly sequences = new Map<string, number>();
+  private lastPublishedMaterial = "";
 
   constructor(private readonly options: ConnectorRuntimeOptions) {
     this.nowMs = options.nowMs ?? Date.now;
     this.maxClockSkewMs = options.maxClockSkewMs ?? 5_000;
     this.retry = options.retry ?? {};
+    this.reconnect = options.reconnect ?? {};
+    this.pollIntervalMs = options.pollIntervalMs ?? 1_000;
     this.lastReceivedAtMs = this.nowMs();
   }
 
@@ -50,64 +65,135 @@ export class ConnectorRuntime {
     });
   }
 
+  /** Persistent production lifecycle. It reconnects and keeps REST polling until cancelled. */
   async start(signal: AbortSignal): Promise<void> {
-    await this.runUntilDisconnected(signal);
+    let reconnectAttempt = 0;
+    while (!signal.aborted) {
+      const outcome = await this.session(signal, true);
+      if (signal.aborted) break;
+      try { await this.waitForReconnect(reconnectAttempt, outcome, signal); }
+      catch (error) {
+        if (toConnectorDiagnostic(error).code === "ABORTED" && signal.aborted) break;
+        throw toConnectorDiagnostic(error);
+      }
+      reconnectAttempt += 1;
+    }
   }
 
+  /** Bounded helper for deterministic snapshot tests. */
   async pollOnce(signal: AbortSignal = new AbortController().signal): Promise<void> {
-    const instruments = await this.ensureConnected(signal);
-    if (!instruments) return;
-    for (const instrument of instruments) {
+    await this.prepareSession(signal);
+  }
+
+  /** Bounded helper that consumes exactly one streaming session. */
+  async runUntilDisconnected(signal: AbortSignal = new AbortController().signal): Promise<void> {
+    await this.session(signal, false);
+  }
+
+  private async session(signal: AbortSignal, persistent: boolean): Promise<ConnectorDiagnosticError | undefined> {
+    const instruments = await this.prepareSession(signal);
+    if (!instruments.length || signal.aborted) return undefined;
+    if (!this.options.adapter.stream) return persistent ? this.pollUntilAborted(instruments, signal) : undefined;
+    try {
+      for await (const event of this.options.adapter.stream(instruments, signal)) {
+        if (signal.aborted) break;
+        await this.handleEvent(event);
+      }
+      if (signal.aborted) return undefined;
+      const diagnostic = new ConnectorDiagnosticError("ADAPTER_FAILURE");
+      await this.degrade(diagnostic);
+      return diagnostic;
+    } catch (error) {
+      const diagnostic = toConnectorDiagnostic(error);
+      if (diagnostic.code !== "ABORTED") await this.degrade(diagnostic);
+      return diagnostic;
+    }
+  }
+
+  private async pollUntilAborted(instruments: DiscoveredInstrument[], signal: AbortSignal): Promise<ConnectorDiagnosticError | undefined> {
+    while (!signal.aborted) {
       try {
-        await this.handleEvent(await this.call(() => this.options.adapter.snapshot(instrument, signal)));
+        await this.snapshotAll(instruments, signal);
+        if (signal.aborted) return undefined;
+        await waitForRetry(this.pollIntervalMs, { signal, sleep: this.options.sleep });
       } catch (error) {
-        await this.degrade(error);
-        return;
+        const diagnostic = toConnectorDiagnostic(error);
+        if (diagnostic.code !== "ABORTED") await this.degrade(diagnostic);
+        return diagnostic;
       }
     }
+    return undefined;
   }
 
-  async runUntilDisconnected(signal: AbortSignal = new AbortController().signal): Promise<void> {
-    const instruments = await this.ensureConnected(signal);
-    if (!instruments) return;
-    if (!this.options.adapter.stream) {
-      await this.pollOnce(signal);
-      return;
-    }
-    try {
-      for await (const event of this.options.adapter.stream(instruments, signal)) await this.handleEvent(event);
-      if (!signal.aborted) await this.degrade();
-    } catch (error) {
-      await this.degrade(error);
-    }
-  }
-
-  private async ensureConnected(signal: AbortSignal): Promise<DiscoveredInstrument[] | undefined> {
+  private async prepareSession(signal: AbortSignal): Promise<DiscoveredInstrument[]> {
     await this.transition("connecting");
     try {
-      const probe = await this.call(() => this.options.adapter.probe(signal));
+      const probe = await this.call(() => this.options.adapter.probe(signal), signal);
       if (!probe.available) {
-        await this.degrade();
-        return undefined;
+        await this.degrade(new ConnectorDiagnosticError("ADAPTER_FAILURE", probe.retryAfterMs));
+        return [];
       }
-      this.instruments ??= await this.call(() => this.options.adapter.discover(signal));
-      this.rateLimit = { state: "healthy" };
-      await this.transition("connected");
+      this.instruments = await this.call(() => this.options.adapter.discover(signal), signal);
+      this.resetRecoveredSession();
+      await this.markHealthy();
+      await this.snapshotAll(this.instruments, signal);
       return this.instruments;
     } catch (error) {
-      await this.degrade(error);
-      return undefined;
+      const diagnostic = toConnectorDiagnostic(error);
+      if (diagnostic.code !== "ABORTED") await this.degrade(diagnostic);
+      return [];
     }
   }
 
-  private async call<T>(operation: () => Promise<T>): Promise<T> {
-    return retryWithBackoff(operation, this.retry);
+  private resetRecoveredSession(): void {
+    this.quarantined = false;
+    this.lastClockSkewMs = 0;
+    this.sequenceIntegrity = "unknown";
+    this.sequences.clear();
+  }
+
+  private async snapshotAll(instruments: DiscoveredInstrument[], signal: AbortSignal): Promise<void> {
+    for (const instrument of instruments) {
+      await this.handleEvent(await this.call(() => this.options.adapter.snapshot(instrument, signal), signal));
+    }
+  }
+
+  private async call<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    const previousOnRetry = this.retry.onRetry;
+    const result = await retryWithBackoff(operation, {
+      ...this.retry,
+      signal,
+      onRetry: async context => {
+        this.rateLimit = context.code === "RATE_LIMITED"
+          ? { state: "limited", ...(context.retryAfterMs && context.retryAfterMs > 0 ? { retryAfterMs: context.retryAfterMs } : {}) }
+          : { state: "backing_off" };
+        await this.transition("degraded");
+        await previousOnRetry?.(context);
+      },
+    });
+    await this.markHealthy();
+    return result;
+  }
+
+  private async markHealthy(): Promise<void> {
+    this.rateLimit = { state: "healthy" };
+    await this.transition("connected");
+  }
+
+  private async waitForReconnect(attempt: number, error: ConnectorDiagnosticError | undefined, signal: AbortSignal): Promise<void> {
+    const retryAfterMs = error?.retryAfterMs;
+    const delayMs = backoffDelayMs(attempt, this.reconnect, retryAfterMs);
+    this.rateLimit = error?.code === "RATE_LIMITED"
+      ? { state: "limited", ...(retryAfterMs && retryAfterMs > 0 ? { retryAfterMs } : {}) }
+      : { state: "backing_off" };
+    await this.transition("degraded");
+    await waitForRetry(delayMs, { signal, sleep: this.reconnect.sleep ?? this.options.sleep });
   }
 
   private async handleEvent(event: RawVenueEvent): Promise<void> {
     const receivedTimestamp = this.nowMs();
     if (!isEpochMilliseconds(event.sourceTimestampMs)) {
-      await this.degrade(new Error("invalid source timestamp"));
+      await this.degrade(new ConnectorDiagnosticError("ADAPTER_FAILURE"));
       return;
     }
     this.lastReceivedAtMs = receivedTimestamp;
@@ -119,6 +205,7 @@ export class ConnectorRuntime {
       return;
     }
     if (this.quarantined) return;
+    await this.publishMaterialHealth();
 
     const observation = ObservationEnvelopeSchema.parse({
       eventId: event.eventId,
@@ -148,17 +235,29 @@ export class ConnectorRuntime {
     this.sequences.set(event.instrumentId, event.sequence);
   }
 
-  private async degrade(error?: unknown): Promise<void> {
-    if (error instanceof Error) {
-      const code = error.name || "Error";
-      this.errorCounters[code] = (this.errorCounters[code] ?? 0) + 1;
-    }
+  private async degrade(error: unknown): Promise<void> {
+    const diagnostic = toConnectorDiagnostic(error);
+    this.errorCounters[diagnostic.code] = (this.errorCounters[diagnostic.code] ?? 0) + 1;
     await this.transition("degraded");
   }
 
   private async transition(next: ConnectionState): Promise<void> {
-    if (this.connectionState === next) return;
     this.connectionState = next;
-    await this.options.eventBus.publish("venue.health.v1", this.options.adapter.venue, this.health());
+    await this.publishMaterialHealth();
+  }
+
+  private async publishMaterialHealth(): Promise<void> {
+    const health = this.health();
+    const material = JSON.stringify({
+      connectionState: health.connectionState,
+      clockSkewMs: health.clockSkewMs,
+      sequenceIntegrity: health.sequenceIntegrity,
+      rateLimit: health.rateLimit,
+      errorCounters: health.errorCounters,
+      quarantineReason: health.quarantineReason,
+    });
+    if (material === this.lastPublishedMaterial) return;
+    this.lastPublishedMaterial = material;
+    await this.options.eventBus.publish("venue.health.v1", this.options.adapter.venue, health);
   }
 }

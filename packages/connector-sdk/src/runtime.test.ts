@@ -108,13 +108,17 @@ it("enforces the shared adapter fixture contract without exposing credentials", 
 
   await expect(assertAdapterFixture({
     adapter: fakeAdapter(),
-    malformedMessage: async () => { throw new Error("invalid wire message"); },
+    expected: {
+      probe: { available: true }, instrumentIds: [instrument.instrumentId],
+      snapshots: [{ instrumentId: instrument.instrumentId, sourceTimestampMs: 10_000 }], retryAfterMs: 77,
+    },
+    parseMalformedMessage: async () => { throw new Error("invalid wire message"); },
     credentialValues: [credential],
-    credentialError: async () => { throw new Error(`authorization: Bearer ${credential}`); },
     rateLimitAttempt: async () => {
       rateLimitAttempts += 1;
       if (rateLimitAttempts === 1) throw new RetryAfterError("429", 77);
     },
+    capture: () => ({ logs: [], requestHeaders: [], health: [], errors: [] }),
     sleep: async () => {},
   })).resolves.toBeUndefined();
 });
@@ -122,10 +126,143 @@ it("enforces the shared adapter fixture contract without exposing credentials", 
 it("rejects an adapter fixture that does not simulate a Retry-After response", async () => {
   await expect(assertAdapterFixture({
     adapter: fakeAdapter(),
-    malformedMessage: async () => { throw new Error("invalid wire message"); },
+    expected: {
+      probe: { available: true }, instrumentIds: [instrument.instrumentId],
+      snapshots: [{ instrumentId: instrument.instrumentId, sourceTimestampMs: 10_000 }], retryAfterMs: 1,
+    },
+    parseMalformedMessage: async () => { throw new Error("invalid wire message"); },
     credentialValues: [],
-    credentialError: async () => { throw new Error("safe failure"); },
     rateLimitAttempt: async () => {},
+    capture: () => ({ logs: [], requestHeaders: [], health: [], errors: [] }),
     sleep: async () => {},
   })).rejects.toThrow("Retry-After");
+});
+
+it("reconnects after a stream disconnect and snapshots before the replacement session", async () => {
+  const bus = new InMemoryEventBus();
+  const healthEvents = await published(bus, "venue.health.v1");
+  const controller = new AbortController();
+  let streams = 0;
+  let snapshots = 0;
+  const adapter: ConnectorAdapter = {
+    venue: "bitget",
+    async probe() { return { available: true }; },
+    async discover() { return [instrument]; },
+    async snapshot() { snapshots += 1; return snapshot(); },
+    async *stream() {
+      streams += 1;
+      if (streams === 1) throw new Error("temporary disconnect");
+      yield snapshot();
+      controller.abort();
+    },
+  };
+  const runtime = new ConnectorRuntime({
+    adapter,
+    eventBus: bus,
+    nowMs: () => 10_000,
+    reconnect: { baseDelayMs: 0, sleep: async () => {} },
+  });
+
+  await runtime.start(controller.signal);
+
+  expect(streams).toBe(2);
+  expect(snapshots).toBe(2);
+  const degraded = healthEvents.findIndex(event => event.connectionState === "degraded");
+  expect(degraded).toBeGreaterThanOrEqual(0);
+  expect(healthEvents.slice(degraded + 1).some(event => event.connectionState === "connected" && event.rateLimit.state === "healthy")).toBe(true);
+});
+
+it("publishes degraded rate-limit health before Retry-After and healthy recovery afterwards", async () => {
+  const bus = new InMemoryEventBus();
+  const healthEvents = await published(bus, "venue.health.v1");
+  let calls = 0;
+  const adapter = fakeAdapter();
+  adapter.snapshot = async () => {
+    calls += 1;
+    if (calls === 1) throw new RetryAfterError("429", 250);
+    return snapshot();
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000, retry: { sleep: async () => {} } });
+
+  await runtime.pollOnce();
+
+  const limited = healthEvents.findIndex(event => event.connectionState === "degraded" && event.rateLimit.state === "limited" && event.rateLimit.retryAfterMs === 250);
+  expect(limited).toBeGreaterThanOrEqual(0);
+  expect(healthEvents.slice(limited + 1).some(event => event.connectionState === "connected" && event.rateLimit.state === "healthy")).toBe(true);
+});
+
+it("does not expose adapter credentials through health events or diagnostic codes", async () => {
+  const sentinel = "credential-SENTINEL-123";
+  const bus = new InMemoryEventBus();
+  const healthEvents = await published(bus, "venue.health.v1");
+  const adapter = fakeAdapter();
+  adapter.snapshot = async () => {
+    const error = new Error(`authorization: Bearer ${sentinel}`, { cause: new Error(sentinel) });
+    Object.assign(error, { headers: { authorization: `Bearer ${sentinel}` } });
+    throw error;
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000, retry: { sleep: async () => {} } });
+
+  await expect(runtime.pollOnce()).resolves.toBeUndefined();
+
+  expect(runtime.health().errorCounters).toEqual({ ADAPTER_FAILURE: 1 });
+  expect(JSON.stringify({ healthEvents, health: runtime.health() })).not.toContain(sentinel);
+});
+
+it("continues REST polling until cancellation instead of stopping after the clean snapshot", async () => {
+  const bus = new InMemoryEventBus();
+  const controller = new AbortController();
+  let snapshots = 0;
+  const adapter = fakeAdapter();
+  adapter.snapshot = async () => {
+    snapshots += 1;
+    if (snapshots === 2) controller.abort();
+    return snapshot();
+  };
+  const runtime = new ConnectorRuntime({
+    adapter,
+    eventBus: bus,
+    nowMs: () => 10_000,
+    pollIntervalMs: 0,
+    sleep: async () => {},
+  });
+
+  await runtime.start(controller.signal);
+
+  expect(snapshots).toBe(2);
+});
+
+it("publishes a health update when clock skew changes without a connection-state transition", async () => {
+  const bus = new InMemoryEventBus();
+  const healthEvents = await published(bus, "venue.health.v1");
+  const runtime = new ConnectorRuntime({ adapter: fakeAdapter({ sourceTimestampMs: 9_000 }), eventBus: bus, nowMs: () => 10_000 });
+
+  await runtime.pollOnce();
+
+  expect(healthEvents.some(event => event.connectionState === "connected" && event.clockSkewMs === 1_000)).toBe(true);
+});
+
+it("ends the persistent lifecycle cleanly when cancellation arrives during reconnect backoff", async () => {
+  const bus = new InMemoryEventBus();
+  const controller = new AbortController();
+  const adapter: ConnectorAdapter = {
+    venue: "bitget",
+    async probe() { return { available: true }; },
+    async discover() { return [instrument]; },
+    async snapshot() { return snapshot(); },
+    async *stream() { throw new Error("disconnect"); },
+  };
+  const runtime = new ConnectorRuntime({
+    adapter,
+    eventBus: bus,
+    nowMs: () => 10_000,
+    reconnect: {
+      sleep: async () => {
+        controller.abort();
+        await new Promise<void>(() => {});
+      },
+    },
+  });
+
+  await expect(runtime.start(controller.signal)).resolves.toBeUndefined();
 });
