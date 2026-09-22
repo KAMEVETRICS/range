@@ -1,0 +1,21 @@
+{
+  "provenance": {
+    "kind": "official_openapi_example",
+    "source": "https://docs.ondoperps.xyz/api-reference/rest-spec.json",
+    "accessibleAtCapture": true,
+    "capturedAt": "2026-09-22",
+    "note": "Official funding_rates 200 example; live AAPL field keys checked on 2026-09-22, values remain documentation examples"
+  },
+  "response": {
+    "success": true,
+    "result": {
+      "market": "AAPL-USD.P",
+      "rate": "0.0000125",
+      "intervalEnds": "2025-03-05T16:00:00Z",
+      "premiums": [
+        { "time": "2025-03-05T15:00:00Z", "premiumIndex": "0.000025" },
+        { "time": "2025-03-05T15:30:00Z", "premiumIndex": "0.000015" }
+      ]
+    }
+  }
+}

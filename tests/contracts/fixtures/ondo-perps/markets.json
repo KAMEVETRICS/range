@@ -1,0 +1,46 @@
+{
+  "provenance": {
+    "kind": "official_openapi_example",
+    "source": "https://docs.ondoperps.xyz/api-reference/rest-spec.json",
+    "accessibleAtCapture": true,
+    "capturedAt": "2026-09-22",
+    "note": "Official contracts 200 example; live AAPL field keys checked on 2026-09-22, values remain documentation examples"
+  },
+  "marketInfoResponse": {
+    "success": true,
+    "result": {
+      "perps": { "tradingPairs": [{ "market": "AAPL-USD.P", "baseIncrement": "0.01", "quoteIncrement": "0.01", "tags": ["Stock"] }] },
+      "tokenConfig": [{ "id": "USDC", "name": "USD Coin", "decimals": 2, "tokenDecimals": 6, "networks": {} }]
+    }
+  },
+  "response": {
+    "success": true,
+    "result": [{
+      "market": "AAPL-USD.P",
+      "productType": "perpetual",
+      "contractType": "linear",
+      "baseCurrency": "AAPL",
+      "quoteCurrency": "USDC",
+      "disabled": false,
+      "lastPrice": "227.50",
+      "baseVolume": "12500.00",
+      "quoteVolume": "2843750.00",
+      "usdVolume": "2843750.00",
+      "bid": "227.40",
+      "ask": "227.60",
+      "high": "230.00",
+      "low": "225.00",
+      "openInterest": "2394.23",
+      "openInterestUsd": "544683.50",
+      "indexPrice": "227.55",
+      "indexCurrency": "USD",
+      "fundingRate": "0.0000125",
+      "nextFundingRate": "0.0000130",
+      "nextFundingRateTimestamp": "2025-03-05T16:00:00Z",
+      "makerFee": "0.0002",
+      "takerFee": "0.0005",
+      "priceChangePercent": "1.12",
+      "tags": ["Stock"]
+    }]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@range/connector-ondo-perps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/adapter.ts" },
+  "scripts": { "probe": "tsx src/main.ts --probe" },
+  "dependencies": {
+    "@range/connector-sdk": "workspace:*",
+    "@range/domain": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": { "tsx": "^4.20.0" }
+}
