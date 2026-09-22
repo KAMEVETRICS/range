@@ -69,15 +69,22 @@ it("discovers only explicitly categorized HIP-3 equities with public-only info r
   const probe = await context.adapter.probe(signal());
   expect(probe).toMatchObject({
     available: true,
-    capabilities: expect.arrayContaining(["perpetual", "orderbook", "funding_current", "funding_history", "open_interest"]),
+    capabilities: expect.arrayContaining(["perpetual", "orderbook"]),
   });
+  expect(probe.capabilities).not.toEqual(expect.arrayContaining(["funding_current", "funding_history", "open_interest"]));
   const instruments = await context.adapter.discover(signal());
   expect(instruments).toHaveLength(1);
   expect(instruments[0]).toMatchObject({
     instrumentId: "ins_hyperliquid_hip3_xyz:TSLA",
     underlyingId: "equity:TSLA",
-    venueFamily: "xyz",
+    venueFamily: "hyperliquid",
     venueSymbol: "xyz:TSLA",
+    metadata: {
+      dex: "xyz",
+      category: "equities",
+      evidenceSource: "perpCategories",
+      collateralTokenIndex: 0,
+    },
   });
   expect(context.requests.every(request => request.url.href === "https://api.hyperliquid.xyz/info")).toBe(true);
   expect(context.requests.every(request => request.init.method === "POST")).toBe(true);
@@ -90,10 +97,10 @@ it("discovers only explicitly categorized HIP-3 equities with public-only info r
   expect(context.requests.every(request => !/action|signature|wallet|privateKey|apiKey/i.test(JSON.stringify(request.body)))).toBe(true);
 });
 
-it("preserves context and realized funding evidence separately from executable book depth", async () => {
+it("keeps current and realized funding explicitly research-only and out of runtime capabilities", async () => {
   const context = setup();
-  await context.adapter.probe(signal());
-  expect(context.adapter.marketEvidence()).toContainEqual(expect.objectContaining({
+  const instruments = await context.adapter.discover(signal());
+  expect(context.adapter.researchContextEvidence()).toContainEqual(expect.objectContaining({
     venueSymbol: "xyz:TSLA",
     markPx: "465.130000000000001",
     oraclePx: "450.780000000000001",
@@ -102,18 +109,31 @@ it("preserves context and realized funding evidence separately from executable b
     currentFunding: "0.000012500000000001",
     openInterest: "12.208000000000001",
     timestampProvenance: "client_receipt",
+    researchOnly: true,
+    canonicalBlockReason: "SETTLEMENT_SCHEDULE_UNAVAILABLE",
   }));
-  expect(context.adapter.fundingEvidence()).toHaveLength(2);
-  expect(context.adapter.fundingEvidence()[0]).toMatchObject({
+  expect(context.adapter.researchFundingEvidence()).toHaveLength(0);
+  const history = await context.adapter.fetchResearchFundingHistory(
+    instruments[0]!,
+    observedAtMs - 86_400_000,
+    observedAtMs,
+    signal(),
+  );
+  expect(history).toHaveLength(2);
+  expect(history[0]).toMatchObject({
     rateType: "realized",
     sourceTimestampMs: 1770526800076,
+    timestampProvenance: "venue_source",
+    researchOnly: true,
+    canonicalBlockReason: "PENDING_FUNDING_NORMALIZER",
   });
-  const instrument = (await context.adapter.discover(signal()))[0]!;
-  const book = await context.adapter.snapshot(instrument, signal());
+  expect(context.adapter.researchFundingEvidence()).toEqual(history);
+  const book = await context.adapter.snapshot(instruments[0]!, signal());
   expect(book.payload.kind).toBe("order_book");
   expect(book.payload).toMatchObject({ capacityUsd: "0" });
   expect(JSON.stringify(book.payload)).not.toContain("impactPxs");
   expect(JSON.stringify(book.payload)).not.toContain("midPx");
+  expect(instruments[0]?.capabilities).not.toEqual(expect.arrayContaining(["funding_current", "funding_history", "open_interest"]));
 });
 
 it("streams only public l2Book snapshots for discovered instruments", async () => {
@@ -185,6 +205,13 @@ it("paces weighted info requests, honors Retry-After, and aborts before transpor
   expect(context.requests).toHaveLength(requestCount);
 });
 
+it("reserves fundingHistory response-size weight before the next info request", async () => {
+  const context = setup();
+  await context.client.fundingHistory("xyz:TSLA", observedAtMs - 86_400_000, signal(), observedAtMs);
+  await context.client.l2Book("xyz:TSLA", signal());
+  expect(context.delays.some(delay => delay >= 2_250)).toBe(true);
+});
+
 it.skipIf(process.env.RUN_LIVE_HYPERLIQUID_PROBE !== "1")(
   "runs a redacted public HIP-3 live probe without credentials",
   async () => {
@@ -193,13 +220,18 @@ it.skipIf(process.env.RUN_LIVE_HYPERLIQUID_PROBE !== "1")(
       { async *stream() { /* REST probe only */ } },
     );
     const result = await adapter.probe(AbortSignal.timeout(60_000));
+    const instruments = await adapter.discover(AbortSignal.timeout(60_000));
+    const endTime = Date.now();
+    const history = instruments[0]
+      ? await adapter.fetchResearchFundingHistory(instruments[0], endTime - 86_400_000, endTime, AbortSignal.timeout(60_000))
+      : [];
     const summary = {
       venue: adapter.venue,
       credentialMode: "public",
       available: result.available,
       hip3DexCount: adapter.dexEvidence().length,
-      stockLinkedInstrumentCount: adapter.marketEvidence().length,
-      realizedFundingRows: adapter.fundingEvidence().length,
+      stockLinkedInstrumentCount: adapter.researchContextEvidence().length,
+      realizedFundingRows: history.length,
     };
     console.log(JSON.stringify(summary));
     expect(summary.available).toBe(true);

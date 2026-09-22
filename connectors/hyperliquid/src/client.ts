@@ -19,7 +19,12 @@ const requestTypes = new Set<HyperliquidInfoRequest["type"]>([
 ]);
 
 function requestWeight(request: HyperliquidInfoRequest): number {
-  return request.type === "l2Book" ? 2 : 20;
+  if (request.type === "l2Book") return 2;
+  // fundingHistory returns at most 500 rows and incurs additional weight per
+  // 20 returned rows. Reserve the full documented response-size allowance so
+  // a following request cannot outrun the aggregate IP budget.
+  if (request.type === "fundingHistory") return 20 + Math.ceil(500 / 20);
+  return 20;
 }
 
 /** Public `/info` only: callers cannot supply credentials, arbitrary headers, or exchange actions. */

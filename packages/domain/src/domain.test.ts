@@ -30,6 +30,12 @@ const instrument = {
   },
   fundingInterval: 28_800_000,
   capabilities: ["orderbook", "funding_current"],
+  metadata: {
+    dex: "xyz",
+    category: "stocks",
+    evidenceSource: "perpCategories",
+    collateralTokenIndex: 0,
+  },
   metadataVersion: 1,
   effectiveFrom: "2026-09-20T00:00:00.000Z",
 };
@@ -151,6 +157,16 @@ describe("canonical schemas", () => {
   it("rejects a perpetual without a funding interval", () => {
     const { fundingInterval: _fundingInterval, ...perpetualWithoutFundingInterval } = instrument;
     expect(() => InstrumentSchema.parse(perpetualWithoutFundingInterval)).toThrow();
+  });
+
+  it("preserves JSON-compatible venue metadata through the canonical instrument schema", () => {
+    expect(InstrumentSchema.parse(instrument).metadata).toEqual({
+      dex: "xyz",
+      category: "stocks",
+      evidenceSource: "perpCategories",
+      collateralTokenIndex: 0,
+    });
+    expect(() => InstrumentSchema.parse({ ...instrument, metadata: { invalid: () => undefined } })).toThrow();
   });
 
   it("rejects actionable opportunities without evidence", () => {

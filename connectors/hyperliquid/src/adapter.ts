@@ -7,16 +7,23 @@ import {
   mapHyperliquidMessage,
   mapMetaAndContexts,
   mapPerpDexs,
-  toDiscoveredInstrument,
   type HyperliquidDexEvidence,
   type HyperliquidFundingEvidence,
+  type HyperliquidMappedInstrument,
   type HyperliquidMarketEvidence,
 } from "./mapper.js";
 
 export interface HyperliquidAdapter extends ConnectorAdapter {
-  readonly marketEvidence: () => readonly HyperliquidMarketEvidence[];
-  readonly fundingEvidence: () => readonly HyperliquidFundingEvidence[];
+  discover(signal: AbortSignal): Promise<HyperliquidMappedInstrument[]>;
+  readonly researchContextEvidence: () => readonly HyperliquidMarketEvidence[];
+  readonly researchFundingEvidence: () => readonly HyperliquidFundingEvidence[];
   readonly dexEvidence: () => readonly HyperliquidDexEvidence[];
+  fetchResearchFundingHistory(
+    instrument: Instrument,
+    startTime: number,
+    endTime: number,
+    signal: AbortSignal,
+  ): Promise<readonly HyperliquidFundingEvidence[]>;
 }
 
 /**
@@ -34,14 +41,14 @@ export function createHyperliquidAdapter(
 
   const adapter: HyperliquidAdapter = {
     venue: "hyperliquid_hip3",
-    marketEvidence: () => [...markets.values()],
-    fundingEvidence: () => [...funding.values()].flat(),
+    researchContextEvidence: () => [...markets.values()],
+    researchFundingEvidence: () => [...funding.values()].flat(),
     dexEvidence: () => [...dexes],
 
     async discover(signal) {
       const categories = await http.perpCategories(signal);
       dexes = mapPerpDexs(await http.perpDexs(signal));
-      const instruments: Instrument[] = [];
+      const instruments: HyperliquidMappedInstrument[] = [];
       for (const dex of dexes) {
         const mapped = mapMetaAndContexts(
           await http.metaAndAssetCtxs(dex.name, signal),
@@ -50,7 +57,7 @@ export function createHyperliquidAdapter(
           nowMs(),
         );
         for (const row of mapped.evidence) markets.set(row.venueSymbol, row);
-        instruments.push(...mapped.instruments.map(toDiscoveredInstrument));
+        instruments.push(...mapped.instruments);
       }
       return instruments;
     },
@@ -60,16 +67,19 @@ export function createHyperliquidAdapter(
       if (instruments.length === 0) return { available: false, capabilities: [] };
       const first = instruments[0]!;
       await adapter.snapshot(first, signal);
-      const endTime = nowMs();
-      const history = mapFundingHistory(
-        await http.fundingHistory(first.venueSymbol, endTime - 30 * 24 * 60 * 60 * 1_000, signal, endTime),
-        first.venueSymbol,
-      );
-      funding.set(first.venueSymbol, history);
       return {
         available: true,
         capabilities: [...new Set(instruments.flatMap(instrument => instrument.capabilities))],
       };
+    },
+
+    async fetchResearchFundingHistory(instrument, startTime, endTime, signal) {
+      const history = mapFundingHistory(
+        await http.fundingHistory(instrument.venueSymbol, startTime, signal, endTime),
+        instrument.venueSymbol,
+      );
+      funding.set(instrument.venueSymbol, history);
+      return history;
     },
 
     async snapshot(instrument, signal) {

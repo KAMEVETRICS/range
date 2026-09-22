@@ -23,15 +23,20 @@ it("preserves HIP-3 dex and category-backed stock underlying evidence", () => {
   expect(mapped.instruments).toHaveLength(1);
   expect(mapped.instruments[0]).toMatchObject({
     venueSymbol: "xyz:TSLA",
-    underlyingHint: "equity:TSLA",
     underlyingId: "equity:TSLA",
     productType: "perpetual",
+    venueFamily: "hyperliquid",
     metadata: { dex: "xyz", category: "equities", evidenceSource: "perpCategories" },
   });
   expect(mapped.instruments[0]?.capabilities).toEqual(expect.arrayContaining([
     "dex=xyz",
     "perp_category=equities",
     "stock_underlying_evidence=perpCategories",
+  ]));
+  expect(mapped.instruments[0]?.capabilities).not.toEqual(expect.arrayContaining([
+    "funding_current",
+    "funding_history",
+    "open_interest",
   ]));
   expect(mapped.instruments.some(item => item.venueSymbol === "xyz:XYZ100")).toBe(false);
 });
@@ -54,6 +59,8 @@ it("keeps mark, oracle, mid, impact, funding, open interest, and receipt provena
     openInterest: "12.208000000000001",
     observedAtMs,
     timestampProvenance: "client_receipt",
+    researchOnly: true,
+    canonicalBlockReason: "SETTLEMENT_SCHEDULE_UNAVAILABLE",
   }));
 });
 
@@ -85,6 +92,9 @@ it("preserves realized funding timestamps and rejects malformed websocket frames
     premium: "-0.000521960000000001",
     sourceTimestampMs: 1770526800076,
     rateType: "realized",
+    timestampProvenance: "venue_source",
+    researchOnly: true,
+    canonicalBlockReason: "PENDING_FUNDING_NORMALIZER",
   });
   const instrument = mapMetaAndContexts(fixture("meta-and-contexts"), "xyz", fixture("perp-categories"), observedAtMs).instruments[0]!;
   expect(mapHyperliquidMessage({ channel: "subscriptionResponse", data: {} }, [instrument])).toBeUndefined();

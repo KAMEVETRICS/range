@@ -15,8 +15,9 @@ try {
     credentialMode: "public",
     ...result,
     hip3DexCount: adapter.dexEvidence().length,
-    stockLinkedInstrumentCount: adapter.marketEvidence().length,
-    realizedFundingRows: adapter.fundingEvidence().length,
+    stockLinkedInstrumentCount: adapter.researchContextEvidence().length,
+    canonicalFundingCapability: false,
+    cachedResearchFundingRows: adapter.researchFundingEvidence().length,
   }));
   if (!result.available) process.exitCode = 1;
 } catch {

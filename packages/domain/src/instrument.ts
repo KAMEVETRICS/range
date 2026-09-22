@@ -36,6 +36,8 @@ const instrumentFields = {
   minimumNotional: NonNegativeDecimalStringSchema,
   tradingSchedule: TradingScheduleSchema,
   capabilities: z.array(z.string().trim().min(1)).min(1),
+  /** Venue-specific discovery facts that must survive canonical transport. */
+  metadata: z.record(z.string(), z.json()).optional(),
   metadataVersion: z.number().int().positive(),
   effectiveFrom: IsoTimestampSchema,
 };

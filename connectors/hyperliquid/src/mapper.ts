@@ -68,18 +68,20 @@ export interface HyperliquidMarketEvidence {
   readonly openInterest: string;
   readonly observedAtMs: number;
   readonly timestampProvenance: "client_receipt";
+  readonly researchOnly: true;
+  readonly canonicalBlockReason: "SETTLEMENT_SCHEDULE_UNAVAILABLE";
 }
 
 export interface HyperliquidInstrumentMetadata {
+  readonly [key: string]: string | number;
   readonly dex: string;
   readonly category: string;
   readonly evidenceSource: "perpCategories";
   readonly collateralTokenIndex: number;
 }
 
-/** Mapping-only evidence is stripped at the adapter boundary after being encoded into canonical fields. */
+/** HIP-3 discovery metadata remains typed after crossing the canonical adapter boundary. */
 export type HyperliquidMappedInstrument = Instrument & {
-  readonly underlyingHint: string;
   readonly metadata: HyperliquidInstrumentMetadata;
 };
 
@@ -127,12 +129,15 @@ export function mapMetaAndContexts(
       const ticker = stripDexPrefix(row.name, dex);
       if (row.isDelisted || !ticker || !category || !equityCategories.has(category.toLowerCase())) continue;
       const underlyingHint = `equity:${ticker}`;
+      const metadata: HyperliquidInstrumentMetadata = {
+        dex,
+        category,
+        evidenceSource: "perpCategories",
+        collateralTokenIndex: meta.collateralToken,
+      };
       const capabilities = [
         "perpetual",
         "orderbook",
-        "funding_current",
-        "funding_history",
-        "open_interest",
         "equity_perpetual",
         `dex=${dex}`,
         `perp_category=${category}`,
@@ -147,7 +152,7 @@ export function mapMetaAndContexts(
         underlyingId: underlyingHint,
         productType: "perpetual",
         venue: "hyperliquid_hip3",
-        venueFamily: dex,
+        venueFamily: "hyperliquid",
         venueSymbol: row.name,
         quoteAsset: "USD",
         settlementAsset: `hyperliquid:spot-token:${meta.collateralToken}`,
@@ -164,18 +169,13 @@ export function mapMetaAndContexts(
         },
         fundingInterval: 3_600_000,
         capabilities,
+        metadata,
         metadataVersion: 1,
         effectiveFrom: new Date(observedAtMs).toISOString(),
       });
       instruments.push({
         ...canonical,
-        underlyingHint,
-        metadata: {
-          dex,
-          category,
-          evidenceSource: "perpCategories",
-          collateralTokenIndex: meta.collateralToken,
-        },
+        metadata,
       });
       evidence.push({
         venueSymbol: row.name,
@@ -188,15 +188,12 @@ export function mapMetaAndContexts(
         openInterest: ctx.openInterest,
         observedAtMs,
         timestampProvenance: "client_receipt",
+        researchOnly: true,
+        canonicalBlockReason: "SETTLEMENT_SCHEDULE_UNAVAILABLE",
       });
     }
     return { instruments, evidence };
   });
-}
-
-export function toDiscoveredInstrument(mapped: HyperliquidMappedInstrument): Instrument {
-  const { underlyingHint: _underlyingHint, metadata: _metadata, ...canonical } = mapped;
-  return InstrumentSchema.parse(canonical);
 }
 
 const bookLevel = z.object({ px: positive, sz: nonnegative, n: z.number().int().nonnegative() });
@@ -258,6 +255,9 @@ export interface HyperliquidFundingEvidence {
   readonly premium: string;
   readonly sourceTimestampMs: number;
   readonly rateType: "realized";
+  readonly timestampProvenance: "venue_source";
+  readonly researchOnly: true;
+  readonly canonicalBlockReason: "PENDING_FUNDING_NORMALIZER";
 }
 
 export function mapFundingHistory(input: unknown, venueSymbol: string): HyperliquidFundingEvidence[] {
@@ -269,6 +269,9 @@ export function mapFundingHistory(input: unknown, venueSymbol: string): Hyperliq
       premium: row.premium,
       sourceTimestampMs: row.time,
       rateType: "realized" as const,
+      timestampProvenance: "venue_source" as const,
+      researchOnly: true as const,
+      canonicalBlockReason: "PENDING_FUNDING_NORMALIZER" as const,
     };
   }));
 }
