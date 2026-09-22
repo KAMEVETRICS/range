@@ -34,6 +34,22 @@ importers:
         specifier: ^4.20.0
         version: 4.23.15
 
+  connectors/extended:
+    dependencies:
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
   connectors/hyperliquid:
     dependencies:
       '@range/connector-sdk':
