@@ -1,0 +1,12 @@
+[
+  null,
+  {
+    "name": "xyz",
+    "fullName": "XYZ Markets",
+    "deployer": "0x5e89b26d8d66da9888c835c9bfcc2aa51813e152",
+    "oracleUpdater": "0x1111111111111111111111111111111111111111",
+    "feeRecipient": null,
+    "assetToStreamingOiCap": [["TSLA", "1000000.0"], ["XYZ100", "200000.0"]],
+    "assetToFundingMultiplier": [["TSLA", "1.0"], ["XYZ100", "1.0"]]
+  }
+]
