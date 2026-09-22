@@ -25,8 +25,9 @@ export function createBitgetAdapter(http: BitgetPublicClient, ws: BitgetWebSocke
       for (const category of BITGET_CATEGORIES) {
         const group = instruments.filter(i => bitgetCategory(i) === category);
         if (!group.length) continue;
-        const events = remember(mapBitgetTickers(await http.market("tickers", category, signal), group));
-        if (events.some(e => e.payload.kind === "funding")) capabilities.add("funding_current");
+        const mapped = mapBitgetTickers(await http.market("tickers", category, signal), group);
+        remember(mapped);
+        if (mapped.evidence.some(row => row.fundingRate !== undefined)) capabilities.add("funding_current");
         if (group.some(i => evidence.get(i.instrumentId)?.openInterest !== undefined)) capabilities.add("open_interest");
         const bookInstrument = group.find(i => !isReality(i));
         if (bookInstrument) {

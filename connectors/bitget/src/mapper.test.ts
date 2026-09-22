@@ -14,15 +14,24 @@ it("uses explicit RWA evidence, retains category identity and excludes lookalike
   expect(result[0]?.underlyingId).toBe("bitget:rAAPL");
 });
 
-it("preserves ticker funding decimals, millisecond timestamps and platform evidence", () => {
+it("retains REST current funding evidence without inventing a settlement time or canonical funding event", () => {
   const instruments = mapBitgetInstruments(fixture("instruments"));
   const result = mapBitgetTickers(fixture("tickers"), instruments);
   expect(result.evidence[0]?.platformTurnover24h).toBe("23456.789");
   expect(result.evidence[1]?.openInterest).toBe("12345.6789");
+  expect(result.evidence[1]?.fundingRate).toBe("-0.00001234");
+  expect(result.evidence[1]?.sourceTimestampMs).toBe(1770531248000);
+  expect(result.events.some(e => e.payload.kind === "funding")).toBe(false);
+  expect(result.events.find(e => e.instrumentId === instruments[0]?.instrumentId)?.eligibility).toBe("reference_only");
+});
+
+it("emits canonical WS funding only when an explicit settlement time is present", () => {
+  const instruments = mapBitgetInstruments(fixture("instruments"));
+  const result = mapBitgetMessage(fixture("ticker-ws"), instruments);
   const funding = result.events.find(e => e.payload.kind === "funding");
   expect(funding?.sourceTimestampMs).toBe(1770531248000);
   expect(funding?.payload).toEqual({kind:"funding",rateType:"current",rate:"-0.00001234",intervalMs:28800000,nextSettlementMs:1770560000000});
-  expect(result.events.find(e => e.instrumentId === instruments[0]?.instrumentId)?.eligibility).toBe("reference_only");
+  expect(funding?.transport).toBe("websocket");
 });
 
 it("parses actual V3 a/b depth and retains precision without inventing USD capacity", () => {

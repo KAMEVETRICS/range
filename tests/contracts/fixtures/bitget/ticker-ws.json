@@ -1,0 +1,3 @@
+{"arg":{"instType":"usdt-futures","symbol":"AAPLUSDT","topic":"ticker"},"action":"snapshot","ts":1770531248000,"data":[
+{"lastPrice":"200.20","indexPrice":"200.10","markPrice":"200.15","fundingRate":"-0.00001234","openInterest":"12345.6789","nextFundingTime":"1770560000000"}
+]}

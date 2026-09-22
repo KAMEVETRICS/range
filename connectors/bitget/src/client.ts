@@ -79,11 +79,13 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
           const timeout = setTimeout(() => stop(true), 15_000);
           const onOpen = () => {
             clearTimeout(timeout);
-            socket.send(JSON.stringify({ op:"subscribe", args }));
+            try { socket.send(JSON.stringify({ op:"subscribe", args })); }
+            catch { stop(true); return; }
             heartbeat = setInterval(() => {
               if (awaitingPong) { stop(true); return; }
               awaitingPong = true;
-              socket.send("ping");
+              try { socket.send("ping"); }
+              catch { stop(true); }
             }, 30_000);
           };
           const onMessage = (message: MessageEvent) => {

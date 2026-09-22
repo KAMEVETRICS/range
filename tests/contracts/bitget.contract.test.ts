@@ -40,11 +40,20 @@ it("discovers response-backed capabilities using public requests and avoids Real
   expect(context.requests.some(r => r.url.pathname.endsWith("orderbook") && r.url.searchParams.get("symbol") === "RAAPLUSDT")).toBe(false);
 });
 
+it("advertises current funding from validated REST rate evidence without nextFundingTime", async () => {
+  const context = setup();
+  expect(fixture("tickers").data[1]).not.toHaveProperty("nextFundingTime");
+  expect((await context.adapter.probe(signal())).capabilities).toContain("funding_current");
+  expect(context.adapter.tickerEvidence()).toContainEqual(expect.objectContaining({
+    instrumentId:"ins_bitget_USDT-FUTURES_AAPLUSDT", fundingRate:"-0.00001234",
+  }));
+});
+
 it("ingests WS ticker funding and snapshot books with correct public subscriptions", async () => {
   const context = setup();
   const instruments = await context.adapter.discover(signal());
   context.frames([
-    {arg:{instType:"usdt-futures",symbol:"AAPLUSDT",topic:"ticker"}, action:"snapshot", ts:1770531248000, data:[fixture("tickers").data[1]]},
+    fixture("ticker-ws"),
     {arg:{instType:"usdt-futures",symbol:"AAPLUSDT",topic:"books5"}, action:"snapshot", ts:1770531248000, data:[fixture("orderbook").data]},
   ]);
   const events = [];

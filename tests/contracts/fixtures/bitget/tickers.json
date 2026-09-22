@@ -1,5 +1,5 @@
 {"code":"00000","msg":"success","requestTime":1770531248742,"data":[
 {"category":"SPOT","symbol":"RAAPLUSDT","lastPrice":"200.10","ask1Price":"200.11","bid1Price":"200.09","bid1Size":"2","ask1Size":"3","turnover24h":"123456.789","platformTurnover24h":"23456.789","volume24h":"617","ts":"1770531248000"},
-{"category":"USDT-FUTURES","symbol":"AAPLUSDT","lastPrice":"200.20","indexPrice":"200.10","markPrice":"200.15","fundingRate":"-0.00001234","openInterest":"12345.6789","nextFundingTime":"1770560000000","ts":"1770531248000"},
+{"category":"USDT-FUTURES","symbol":"AAPLUSDT","lastPrice":"200.20","indexPrice":"200.10","markPrice":"200.15","fundingRate":"-0.00001234","openInterest":"12345.6789","ts":"1770531248000"},
 {"category":"SPOT","symbol":"AAPLXUSDT","lastPrice":"200.10","ts":"1770531248000"}
 ]}
