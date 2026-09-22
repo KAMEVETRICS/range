@@ -9,7 +9,11 @@ interface ClientTiming {
   readonly nowMs?: () => number;
   readonly sleep?: (delayMs: number) => Promise<void>;
   readonly userAgent?: string;
+  readonly maxResponseBytes?: number;
 }
+
+const DEFAULT_MAX_RESPONSE_BYTES = 2_000_000;
+const DEFAULT_MAX_MESSAGE_BYTES = 256_000;
 
 export class ExtendedCredentialError extends Error {
   readonly status: 401 | 403;
@@ -39,6 +43,50 @@ function retryDelay(response: Response, nowMs: number): number {
   if (/^\d+(?:\.\d+)?$/.test(header)) return Math.ceil(Number(header) * 1_000);
   const delay = Date.parse(header) - nowMs;
   return Number.isFinite(delay) && delay >= 0 ? delay : 1_000;
+}
+
+async function readBoundedBody(response: Response, maximumBytes: number): Promise<string> {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+  }
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (!Number.isSafeInteger(parsedLength) || parsedLength < 0 || parsedLength > maximumBytes) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+    }
+  }
+  if (!response.body) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      totalBytes += result.value.byteLength;
+      if (totalBytes > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+      }
+      chunks.push(result.value);
+    }
+  } catch (error) {
+    if (error instanceof ConnectorDiagnosticError) throw error;
+    await reader.cancel().catch(() => undefined);
+    throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(body); }
+  catch { throw new ConnectorDiagnosticError("ADAPTER_FAILURE"); }
 }
 
 /** Fixed-host, GET-only client. No account, order, transfer, or withdrawal method exists. */
@@ -87,7 +135,10 @@ export class ExtendedReadonlyClient implements ExtendedHttpPort {
         throw new ConnectorDiagnosticError("RATE_LIMITED", retryAfterMs);
       }
       if (!response.ok) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
-      const parsed = JSON.parse(await response.text()) as unknown;
+      const parsed = JSON.parse(await readBoundedBody(
+        response,
+        this.timing.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+      )) as unknown;
       if (!parsed || typeof parsed !== "object" || (parsed as { status?: unknown }).status !== "OK") {
         throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
       }
@@ -122,9 +173,34 @@ export interface ExtendedWebSocketPort {
 
 type SocketFactory = (url: string) => WebSocket;
 
+interface ExtendedWebSocketOptions {
+  readonly maxMessageBytes?: number;
+}
+
+function boundedSocketText(data: unknown, maximumBytes: number): string {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+  }
+  if (typeof data === "string") {
+    if (data.length > maximumBytes) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+    const encoded = new TextEncoder().encode(data);
+    if (encoded.byteLength > maximumBytes) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+    return data;
+  }
+  const bytes = data instanceof ArrayBuffer
+    ? new Uint8Array(data)
+    : ArrayBuffer.isView(data)
+      ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+      : undefined;
+  if (!bytes || bytes.byteLength > maximumBytes) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { throw new ConnectorDiagnosticError("ADAPTER_FAILURE"); }
+}
+
 /** Public market-data sockets only. Browsers provide their User-Agent during the handshake. */
 export function createExtendedPublicWebSocket(
   makeSocket: SocketFactory = url => new WebSocket(url),
+  options: ExtendedWebSocketOptions = {},
 ): ExtendedWebSocketPort {
   return {
     async *stream(requests, signal) {
@@ -154,11 +230,17 @@ export function createExtendedPublicWebSocket(
           const timeout = setTimeout(() => stop(true), 15_000);
           const onOpen = () => clearTimeout(timeout);
           const onMessage = (message: MessageEvent) => {
-            if (typeof message.data !== "string" || queue.length >= 10_000) {
+            if (queue.length >= 10_000) {
               stop(true);
               return;
             }
-            try { queue.push(JSON.parse(message.data)); }
+            try {
+              const text = boundedSocketText(
+                message.data,
+                options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES,
+              );
+              queue.push(JSON.parse(text));
+            }
             catch { stop(true); return; }
             wake?.();
           };

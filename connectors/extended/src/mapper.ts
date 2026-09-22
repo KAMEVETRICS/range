@@ -59,11 +59,13 @@ export interface ExtendedMarketEvidence {
   readonly assetClass: "equity";
   readonly evidenceSource: "extended_official_rwa_markets";
   readonly fundingRate: string;
-  readonly nextFundingRateMs: number;
+  readonly providerNextFundingValue: number;
   readonly openInterestUsd: string;
   readonly isRfq: boolean;
   readonly isOffHours: boolean;
   readonly tradingHours: "CONTINUOUS" | "WEEKDAYS" | "NO_OVERNIGHT" | "REGULAR";
+  readonly researchOnly: true;
+  readonly canonicalBlockReason: "NO_CANONICAL_MARKET_STATS_EVENT_PATH";
 }
 
 export interface ExtendedMappedMarkets {
@@ -77,12 +79,6 @@ function safe<T>(operation: () => T): T {
     if (error instanceof ConnectorDiagnosticError) throw error;
     throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
   }
-}
-
-function nextFundingMs(value: number): number {
-  const normalized = value < 10_000_000_000 ? value * 1_000 : value;
-  if (!Number.isSafeInteger(normalized) || !isEpochMilliseconds(normalized)) throw new Error();
-  return normalized;
 }
 
 function tradingSchedule(value: z.infer<typeof marketRow>["tradingHours"]) {
@@ -100,18 +96,18 @@ export function mapExtendedMarkets(input: unknown, observedAtMs: number): Extend
     for (const row of z.array(marketRow).parse(response.parse(input).data)) {
       if (row.type !== "PERPETUAL" || !row.active || row.status !== "ACTIVE") continue;
       if (!OFFICIAL_EXTENDED_EQUITIES.has(row.assetName)) continue;
-      const settlementTime = nextFundingMs(row.marketStats.nextFundingRate);
       const capabilities = [
         "perpetual",
         "tokenized_stock",
         "orderbook",
-        "funding_current",
-        "open_interest",
         "explicit_equity_evidence",
+        "market_stats_research_only",
         row.isRfq ? "rfq_real_book_stream" : "central_limit_order_book",
         `trading_hours=${row.tradingHours}`,
       ];
-      if (row.tradingHours !== "CONTINUOUS") capabilities.push("holiday_calendar_unmodeled");
+      if (row.tradingHours !== "CONTINUOUS") {
+        capabilities.push("holiday_calendar_unmodeled", "session_state_requires_refresh");
+      }
       if (row.isOffHours) capabilities.push("market_off_hours");
       const marketEvidence: ExtendedMarketEvidence = {
         venueSymbol: row.name,
@@ -119,11 +115,13 @@ export function mapExtendedMarkets(input: unknown, observedAtMs: number): Extend
         assetClass: "equity",
         evidenceSource: "extended_official_rwa_markets",
         fundingRate: row.marketStats.fundingRate,
-        nextFundingRateMs: settlementTime,
+        providerNextFundingValue: row.marketStats.nextFundingRate,
         openInterestUsd: row.marketStats.openInterest,
         isRfq: row.isRfq,
         isOffHours: row.isOffHours,
         tradingHours: row.tradingHours,
+        researchOnly: true,
+        canonicalBlockReason: "NO_CANONICAL_MARKET_STATS_EVENT_PATH",
       };
       evidence.push(marketEvidence);
       instruments.push(InstrumentSchema.parse({
@@ -149,9 +147,11 @@ export function mapExtendedMarkets(input: unknown, observedAtMs: number): Extend
           isRfq: row.isRfq,
           isOffHours: row.isOffHours,
           tradingHours: row.tradingHours,
-          currentFundingRate: row.marketStats.fundingRate,
-          nextFundingRateMs: settlementTime,
-          openInterestUsd: row.marketStats.openInterest,
+          researchOnlyMarketStats: {
+            fundingRate: row.marketStats.fundingRate,
+            providerNextFundingValue: row.marketStats.nextFundingRate,
+            openInterestUsd: row.marketStats.openInterest,
+          },
         },
         metadataVersion: 1,
         effectiveFrom: new Date(observedAtMs).toISOString(),
@@ -170,6 +170,10 @@ function isOffHours(instrument: Instrument): boolean {
   return instrument.metadata?.isOffHours === true;
 }
 
+function isContinuous(instrument: Instrument): boolean {
+  return instrument.metadata?.tradingHours === "CONTINUOUS";
+}
+
 function rawEvent(
   instrument: Instrument,
   raw: unknown,
@@ -181,12 +185,15 @@ function rawEvent(
   bookKind: "rest" | "standard" | "rfq_real",
 ): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
-  const referenceOnly = isOffHours(instrument) || (bookKind === "rest" && isRfq(instrument));
+  const isSequencedRealStream = sequence !== undefined && bookKind !== "rest";
+  const referenceOnly = !isContinuous(instrument) || isOffHours(instrument) || !isSequencedRealStream;
   const qualityFlags = ["explicit_equity_evidence", "capacity_usd_uncomputed"];
-  if (bookKind === "rest") qualityFlags.push("client_receipt_timestamp");
+  if (bookKind === "rest") qualityFlags.push("client_receipt_timestamp", "reference_book");
   if (bookKind === "rest" && isRfq(instrument)) qualityFlags.push("rfq_indicative_book");
   if (bookKind === "rfq_real") qualityFlags.push("rfq_real_book");
   if (isOffHours(instrument)) qualityFlags.push("market_off_hours");
+  if (!isContinuous(instrument)) qualityFlags.push("non_continuous_schedule", "session_state_requires_refresh");
+  if (isSequencedRealStream) qualityFlags.push("sequence_validated");
   return {
     eventId: `evt_extended_${instrument.instrumentId}_order_book_${sourceTimestampMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
     instrumentId: instrument.instrumentId,
