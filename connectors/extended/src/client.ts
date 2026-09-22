@@ -15,6 +15,15 @@ interface ClientTiming {
 const DEFAULT_MAX_RESPONSE_BYTES = 2_000_000;
 const DEFAULT_MAX_MESSAGE_BYTES = 256_000;
 
+type CancellableBody = { cancel(reason?: unknown): Promise<unknown> };
+
+/** Starts cleanup without awaiting provider-controlled streams or retaining their failure details. */
+function cancelBodySafely(body: CancellableBody | null | undefined): void {
+  if (!body) return;
+  try { void body.cancel().catch(() => undefined); }
+  catch { /* Static outward diagnostics deliberately discard cancellation details. */ }
+}
+
 export class ExtendedCredentialError extends Error {
   readonly status: 401 | 403;
 
@@ -53,7 +62,7 @@ async function readBoundedBody(response: Response, maximumBytes: number): Promis
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
     if (!Number.isSafeInteger(parsedLength) || parsedLength < 0 || parsedLength > maximumBytes) {
-      await response.body?.cancel().catch(() => undefined);
+      cancelBodySafely(response.body);
       throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
     }
   }
@@ -67,14 +76,14 @@ async function readBoundedBody(response: Response, maximumBytes: number): Promis
       if (result.done) break;
       totalBytes += result.value.byteLength;
       if (totalBytes > maximumBytes) {
-        await reader.cancel().catch(() => undefined);
+        cancelBodySafely(reader);
         throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
       }
       chunks.push(result.value);
     }
   } catch (error) {
     if (error instanceof ConnectorDiagnosticError) throw error;
-    await reader.cancel().catch(() => undefined);
+    cancelBodySafely(reader);
     throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
   } finally {
     reader.releaseLock();
@@ -127,14 +136,19 @@ export class ExtendedReadonlyClient implements ExtendedHttpPort {
         credentials: "omit",
       });
       if (response.status === 401 || response.status === 403) {
+        cancelBodySafely(response.body);
         throw new ExtendedCredentialError(response.status);
       }
       if (response.status === 429) {
         const retryAfterMs = retryDelay(response, now());
         this.nextRequestAt = Math.max(this.nextRequestAt, now() + retryAfterMs);
+        cancelBodySafely(response.body);
         throw new ConnectorDiagnosticError("RATE_LIMITED", retryAfterMs);
       }
-      if (!response.ok) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+      if (!response.ok) {
+        cancelBodySafely(response.body);
+        throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+      }
       const parsed = JSON.parse(await readBoundedBody(
         response,
         this.timing.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,

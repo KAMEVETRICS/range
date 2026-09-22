@@ -398,6 +398,44 @@ it("rejects oversized REST bodies before and during consumption without retainin
   expect(cancelled).toBe(true);
 });
 
+for (const scenario of [
+  { name: "credential 401", status: 401, expected: { status: 401, message: "Extended read-only credential rejected" } },
+  { name: "credential 403", status: 403, expected: { status: 403, message: "Extended read-only credential rejected" } },
+  { name: "rate limit", status: 429, expected: { code: "RATE_LIMITED", message: "Venue rate limit encountered" } },
+  { name: "generic non-OK", status: 503, expected: { code: "ADAPTER_FAILURE", message: "Connector adapter operation failed" } },
+] as const) {
+  it(`cancels a long-lived ${scenario.name} response body before returning a static redacted error`, async () => {
+    let cancelInvoked = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("fixture-secret-error-body"));
+      },
+      cancel() {
+        cancelInvoked = true;
+        return new Promise<void>(() => { /* deliberately never settles */ });
+      },
+    });
+    const client = new ExtendedReadonlyClient(async () => new Response(body, {
+      status: scenario.status,
+      headers: scenario.status === 429 ? { "retry-after": "2" } : undefined,
+    }));
+    const outcome = await Promise.race([
+      client.markets(key, signal()).then(
+        () => ({ error: undefined, timedOut: false }),
+        (error: unknown) => ({ error, timedOut: false }),
+      ),
+      new Promise<{ error: undefined; timedOut: true }>(resolve => {
+        setTimeout(() => resolve({ error: undefined, timedOut: true }), 100);
+      }),
+    ]);
+    expect(outcome.timedOut).toBe(false);
+    expect(cancelInvoked).toBe(true);
+    expect(outcome.error).toMatchObject(scenario.expected);
+    expect(JSON.stringify(outcome.error)).not.toContain(key);
+    expect(JSON.stringify(outcome.error)).not.toContain("fixture-secret-error-body");
+  });
+}
+
 class SocketDouble {
   readonly listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
   closed = false;
