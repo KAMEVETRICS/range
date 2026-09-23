@@ -30,6 +30,17 @@ const allowedPaths = new Set([
   "/v1/perps/funding_rate_history", "/v1/perps/open_interest", "/v1/perps/depth",
 ]);
 
+function retryAfterMs(header: string | null, nowMs: number): number {
+  if (header === null) return 10_000;
+  const value = header.trim();
+  const delay = /^\d+$/.test(value)
+    ? Number(value) * 1_000
+    : Date.parse(value) - nowMs;
+  if (Number.isNaN(delay)) return 10_000;
+  if (!Number.isFinite(delay)) return 60_000;
+  return Math.max(1_000, Math.min(60_000, Math.ceil(delay)));
+}
+
 /** Fixed-host, unauthenticated, documented GET endpoints only. */
 export class OndoPerpsPublicClient implements OndoPerpsHttpPort {
   private tail: Promise<void> = Promise.resolve();
@@ -63,8 +74,7 @@ export class OndoPerpsPublicClient implements OndoPerpsHttpPort {
       }
       if (response.status === 429) {
         void response.body?.cancel().catch(() => undefined);
-        const header = response.headers.get("retry-after");
-        const delay = header && /^\d+(?:\.\d+)?$/.test(header) ? Math.ceil(Number(header) * 1_000) : 10_000;
+        const delay = retryAfterMs(response.headers.get("retry-after"), now());
         this.nextRequestAt = Math.max(this.nextRequestAt, now() + delay);
         throw new ConnectorDiagnosticError("RATE_LIMITED", delay);
       }

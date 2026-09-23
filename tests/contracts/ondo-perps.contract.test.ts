@@ -9,7 +9,7 @@ import { mapOndoPerpsMarket, mapFundingEvidence } from "../../connectors/ondo-pe
 const nowMs = Date.parse("2025-03-05T15:30:00Z");
 const signal = () => new AbortController().signal;
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/ondo-perps/${name}.json`, import.meta.url), "utf8")) as {
-  provenance: { kind: string; source: string; accessibleAtCapture: boolean };
+  provenance: { kind: string; accessibleAtCapture: boolean };
   response: unknown;
   marketInfoResponse?: unknown;
 };
@@ -22,7 +22,6 @@ const history = { success: true, result: [
   { market: "AAPL-USD.P", time: "2025-03-05T04:00:00Z", fundingRate: "0.0000100" },
 ] };
 const oi = { success: true, result: [{ market: "AAPL-USD.P", openInterest: "2394.23", notionalValue: "544683.50" }] };
-const candles = { success: true, result: [{ startTime: "2025-03-05T15:00:00Z", open: "226.80", high: "228.10", low: "226.50", close: "227.50", volume: "12345.67" }] };
 const depth = { success: true, result: { market: "AAPL-USD.P", time: "2025-03-05T15:30:00Z", bids: [["227.40", "100.0"]], asks: [["227.60", "80.0"]] } };
 
 function fixtureHttp(): OndoPerpsHttpPort {
@@ -32,7 +31,6 @@ function fixtureHttp(): OndoPerpsHttpPort {
     fundingRates: async () => funding,
     fundingHistory: async () => history,
     openInterest: async () => oi,
-    candles: async () => candles,
     depth: async () => depth,
   };
 }
@@ -81,12 +79,33 @@ describe("Ondo Perps public connector", () => {
     expect(await adapter.discover(signal())).toEqual([]);
   });
 
+  it("skips untagged contracts without dropping a tagged stock in the same catalog", async () => {
+    const tagged = (contracts as { result: Record<string, unknown>[] }).result[0]!;
+    const untagged = { ...tagged, market: "MSFT-USD.P", baseCurrency: "MSFT" };
+    delete untagged.tags;
+    const requestedFundingMarkets: string[] = [];
+    const adapter = createOndoPerpsAdapter({
+      ...fixtureHttp(),
+      contracts: async () => ({ success: true, result: [untagged, tagged] }),
+      fundingRates: async market => { requestedFundingMarkets.push(market); return funding; },
+    }, () => nowMs);
+    const instruments = await adapter.discover(signal());
+    expect(instruments.map(instrument => instrument.venueSymbol)).toEqual(["AAPL-USD.P"]);
+    expect(requestedFundingMarkets).toEqual(["AAPL-USD.P"]);
+  });
+
   it("sends fixed-host GET requests with no auth or action methods", async () => {
     const requests: { url: URL; init: RequestInit }[] = [];
     const client = new OndoPerpsPublicClient(async (url, init) => {
       requests.push({ url: new URL(url), init });
       const path = new URL(url).pathname;
-      return Response.json(path === "/v1/markets" ? marketInfo : path.endsWith("/contracts") ? contracts : path.endsWith("/funding_rates") ? funding : path.endsWith("/funding_rate_history") ? history : path.endsWith("/open_interest") ? oi : path.endsWith("/depth") ? depth : candles);
+      if (path === "/v1/markets") return Response.json(marketInfo);
+      if (path.endsWith("/contracts")) return Response.json(contracts);
+      if (path.endsWith("/funding_rates")) return Response.json(funding);
+      if (path.endsWith("/funding_rate_history")) return Response.json(history);
+      if (path.endsWith("/open_interest")) return Response.json(oi);
+      if (path.endsWith("/depth")) return Response.json(depth);
+      throw new Error("Unexpected public path");
     }, { nowMs: () => nowMs, sleep: async () => undefined });
     await createOndoPerpsAdapter(client, () => nowMs).probe(signal());
     expect(requests.length).toBeGreaterThan(0);
@@ -117,5 +136,29 @@ describe("Ondo Perps public connector", () => {
     try { await oversized.contracts(signal()); } catch (caught) { error = caught; }
     expect(error).toMatchObject({ code: "ADAPTER_FAILURE" });
     expect(JSON.stringify(error)).not.toContain("private-provider-detail");
+  });
+
+  it("honors an HTTP-date Retry-After using the injected clock", async () => {
+    const clock = Date.parse("2026-09-22T10:00:00Z");
+    const delays: number[] = [];
+    let calls = 0;
+    const client = new OndoPerpsPublicClient(async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("rate limited", { status: 429, headers: { "retry-after": new Date(clock + 12_000).toUTCString() } })
+        : Response.json(contracts);
+    }, { nowMs: () => clock, sleep: async delay => { delays.push(delay); } });
+    await expect(client.contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 12_000 });
+    await client.contracts(signal());
+    expect(delays).toContain(12_000);
+  });
+
+  it("clamps extreme Retry-After values and uses a bounded fallback for invalid dates", async () => {
+    const clientWith = (value: string) => new OndoPerpsPublicClient(async () => new Response("rate limited", {
+      status: 429, headers: { "retry-after": value },
+    }), { nowMs: () => Date.parse("2026-09-22T10:00:00Z") });
+    await expect(clientWith("999999999999999999999").contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 60_000 });
+    await expect(clientWith(new Date("2026-09-23T10:00:00Z").toUTCString()).contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 60_000 });
+    await expect(clientWith("not-a-date").contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 10_000 });
   });
 });

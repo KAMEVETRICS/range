@@ -18,7 +18,7 @@ const contractRow = z.object({
   quoteCurrency: text,
   disabled: z.boolean(),
   isClosed: z.boolean().optional(),
-  tags: z.array(text),
+  tags: z.array(text).optional(),
   nextFundingRateTimestamp: timestamp.optional(),
 }).passthrough();
 const pairRow = z.object({ market: text, baseIncrement: positive, quoteIncrement: positive, tags: z.array(text).optional() }).passthrough();
@@ -58,7 +58,7 @@ export function mapOndoPerpsMarket(
     const contract = contractRow.parse(rawContract);
     const pair = pairRow.parse(rawPair);
     if (contract.market !== pair.market || contract.disabled || contract.isClosed ||
-        !contract.tags.includes("Stock") || !pair.market.endsWith("-USD.P") ||
+        contract.tags?.includes("Stock") !== true || !pair.market.endsWith("-USD.P") ||
         !Number.isSafeInteger(observedIntervalMs) || observedIntervalMs < 60_000) throw new Error();
     const base = pair.market.slice(0, -"-USD.P".length);
     if (base !== contract.baseCurrency || !Number.isSafeInteger(observedAtMs)) throw new Error();
@@ -79,7 +79,7 @@ export function mapOndoPerpsMarket(
       tradingSchedule: { timezone: "UTC", sessions: [{ daysOfWeek: [1, 2, 3, 4, 5, 6, 7], opensAt: "00:00", closesAt: "23:59" }] },
       fundingInterval: observedIntervalMs,
       capabilities: ["perpetual", "orderbook_reference_only", "stock_underlying_evidence=venue_tag", "settlement_unverified", "collateral_unverified", "trading_schedule_unverified", "funding_interval_observed_history"],
-      metadata: { tags: contract.tags, intervalSource: "three_recent_realized_settlements", intervalConfidence: "historical_only", minimumNotionalVerified: false, contractMultiplierVerified: false },
+      metadata: { tags: contract.tags ?? [], intervalSource: "three_recent_realized_settlements", intervalConfidence: "historical_only", minimumNotionalVerified: false, contractMultiplierVerified: false },
       metadataVersion: 1,
       effectiveFrom: new Date(observedAtMs).toISOString(),
     });

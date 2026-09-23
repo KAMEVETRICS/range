@@ -38,7 +38,7 @@ export function createOndoPerpsAdapter(http: OndoPerpsHttpPort, nowMs: () => num
       const instruments: Instrument[] = [];
       for (const contract of contracts) {
         if (signal.aborted) break;
-        if (contract.disabled || contract.isClosed || !contract.tags.includes("Stock")) continue;
+        if (contract.disabled || contract.isClosed || contract.tags?.includes("Stock") !== true) continue;
         const pair = pairs.get(contract.market);
         if (!pair) continue;
         // The REST contract has no funding interval field. Derive only a

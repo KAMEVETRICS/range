@@ -1,10 +1,12 @@
 {
   "provenance": {
-    "kind": "official_openapi_example",
-    "source": "https://docs.ondoperps.xyz/api-reference/rest-spec.json",
+    "kind": "official_openapi_examples_augmented_with_live_fields",
+    "officialExampleSource": "https://docs.ondoperps.xyz/api-reference/rest-spec.json",
+    "liveFieldSource": "https://api.ondoperps.xyz/v1/perps/contracts and https://api.ondoperps.xyz/v1/markets",
     "accessibleAtCapture": true,
     "capturedAt": "2026-09-22",
-    "note": "Official contracts 200 example; live AAPL field keys checked on 2026-09-22, values remain documentation examples"
+    "augmentedFields": ["response.result[0].tags", "marketInfoResponse.result.perps.tradingPairs[0].tags"],
+    "note": "Contract and market-info values are official OpenAPI 200 examples; Stock tags were added from 2026-09-22 live anonymous AAPL response fields. This file is neither an unmodified official example nor an archived live response."
   },
   "marketInfoResponse": {
     "success": true,
