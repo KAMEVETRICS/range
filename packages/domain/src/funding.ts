@@ -15,6 +15,7 @@ export const ExecutableQuoteSchema = z.object({
   capacityUsd: DecimalStringSchema,
   depthUtilization: DecimalStringSchema,
   sourceBookEventId: EventIdSchema,
+  sourceEventIds: z.array(EventIdSchema).min(1).optional(),
   ageMs: z.number().int().nonnegative(),
 }).strict();
 
