@@ -210,7 +210,7 @@ describe("funding normalization and horizon projection", () => {
       { startMs: T, endMs: T + HOUR }, [normalized("handoff", T + HOUR)]);
     expect(FundingProjectionSchema.safeParse(result).success).toBe(true);
     const opportunity = {
-      opportunityId: "opp_funding_1", strategy: "funding_differential", underlyingId: "equity:TSLA",
+      opportunityId: "opp_funding_1", stateRevision: 0, strategy: "funding_differential", underlyingId: "equity:TSLA",
       legs: [{ legId: "leg_1", instrumentId: "ins_a", side: "sell",
         executableQuote: { side: "sell", requestedNotional: "10000", averagePrice: "100", worstPrice: "100",
           filledQuantity: "100", capacityUsd: "10000", depthUtilization: "1", sourceBookEventId: "evt_book_1", ageMs: 10 },

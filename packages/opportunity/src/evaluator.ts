@@ -263,7 +263,7 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
     input.strategy, input.underlyingId, input.legs.map(leg => [leg.instrumentId, leg.side]), input.nowMs, evidence?.evidenceHash ?? "none",
   ])).digest("hex").slice(0, 24)}`;
   const record = {
-    opportunityId, strategy: input.strategy, underlyingId: input.underlyingId,
+    opportunityId, stateRevision: 0, strategy: input.strategy, underlyingId: input.underlyingId,
     legs: input.legs.flatMap((leg, index) => quoteValues[index] ? [{
       legId: `leg_${index + 1}`, instrumentId: leg.instrumentId, side: leg.side,
       executableQuote: quoteValues[index], ...(projections[index] ? { fundingProjection: projections[index] } : {}),

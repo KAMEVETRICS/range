@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryEventBus } from "@range/event-bus";
+import type { Opportunity } from "@range/domain";
 import { InstrumentRegistry } from "@range/instruments";
 import { startOpportunityWorker } from "./main.js";
 
@@ -181,16 +182,12 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
-  it("serializes invalidation behind awaited evidence publication", async () => {
+  it("cancels an evaluation invalidated during awaited evidence publication", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
     const published: Array<{ status: string }> = [];
     await bus.subscribe("opportunity.v1", "generation", async event => { published.push(event); });
     let invalidationAccepted = false;
-    let actionableAfterAcceptance = false;
-    await bus.subscribe("opportunity.v1", "evidence-order", async event => {
-      if (event.status === "actionable" && invalidationAccepted) actionableAfterAcceptance = true;
-    });
     let release!: () => void;
     let reached!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -207,18 +204,17 @@ describe("opportunity worker", () => {
     const invalidating = bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_invalidated"), eligibility: "reference_only" } as never)
       .then(() => { invalidationAccepted = true; });
     await new Promise<void>(resolve => setImmediate(resolve));
-    expect(invalidationAccepted).toBe(false);
+    expect(invalidationAccepted).toBe(true);
     release();
     await flushing;
     await invalidating;
-    expect(published.at(-1)?.status).not.toBe("actionable");
+    expect(published.some(item => item.status === "actionable")).toBe(false);
     await worker.flush();
-    expect(actionableAfterAcceptance).toBe(false);
     expect(published.at(-1)?.status).not.toBe("actionable");
     await worker.stop();
   });
 
-  it("never delivers actionable after a concurrently accepted invalidation", async () => {
+  it("marks an in-flight actionable stale when invalidation is accepted", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
     const published: Array<{ opportunityId: string; status: string }> = [];
@@ -230,9 +226,9 @@ describe("opportunity worker", () => {
     const originalPublish = bus.publish.bind(bus);
     let blocked = false;
     let invalidationAccepted = false;
-    let actionableAfterAcceptance = false;
+    let actionableCurrentOnDelivery = true;
     await bus.subscribe("opportunity.v1", "publication-order", async event => {
-      if (event.status === "actionable" && invalidationAccepted) actionableAfterAcceptance = true;
+      if (event.status === "actionable" && invalidationAccepted) actionableCurrentOnDelivery = worker.isCurrent(event);
     });
     bus.publish = (async (topic: Parameters<typeof originalPublish>[0], key: string, event: never) => {
       if (topic === "opportunity.v1" && !blocked) { blocked = true; reached(); await gate; }
@@ -245,14 +241,99 @@ describe("opportunity worker", () => {
     const invalidating = bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_during_opportunity"), eligibility: "reference_only" } as never)
       .then(() => { invalidationAccepted = true; });
     await new Promise<void>(resolve => setImmediate(resolve));
-    expect(invalidationAccepted).toBe(false);
+    expect(invalidationAccepted).toBe(true);
     release();
     await flushing;
     await invalidating;
-    expect(published.at(-1)?.status).not.toBe("actionable");
     await worker.flush();
-    expect(actionableAfterAcceptance).toBe(false);
+    expect(actionableCurrentOnDelivery).toBe(false);
     expect(published.at(-1)?.status).not.toBe("actionable");
+    await worker.stop();
+  });
+  it.each(["book", "funding", "health", "registry"] as const)(
+    "accepts a %s invalidation awaited by a reentrant opportunity subscriber", async kind => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    const seen: Array<{ status: string; stateRevision: number; opportunityId: string }> = [];
+    let currentDuringCallback = true;
+    let nested = false;
+    await bus.subscribe("opportunity.v1", "reentrant-invalidation", async event => {
+      seen.push(event);
+      if (event.status !== "actionable" || nested) return;
+      nested = true;
+      if (kind === "book") {
+        await bus.publish("book.state.v1", "ins_a", {
+          ...book("ins_a", "venue_a", "100", "evt_reentrant_ref"), eligibility: "reference_only",
+          receivedTimestamp: NOW - 1,
+        } as never);
+      } else if (kind === "funding") {
+        await bus.publish("funding.observation.v1", "ins_a", {
+          eventId: "evt_reentrant_funding", schemaVersion: 1, venue: "venue_a", instrumentId: "ins_a",
+          transport: "websocket", sourceTimestamp: NOW - 2, receivedTimestamp: NOW - 1,
+          freshnessBudgetMs: 2_000, qualityFlags: [], rawPayloadRefOrHash: "sha256:reentrant",
+          eligibility: "reference_only", payload: { kind: "funding", rateType: "predicted",
+            rate: "0.0002", positiveRatePayer: "long", intervalMs: 28_800_000, nextSettlementMs: NOW + 1_000 },
+        } as never);
+      } else if (kind === "health") {
+        await bus.publish("venue.health.v1", "venue_a", { venue: "venue_a", connectionState: "disconnected",
+          lastEventAgeMs: 1_000, clockSkewMs: 0, sequenceIntegrity: "consistent",
+          rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
+      } else {
+        await bus.publish("instrument.registry.v1", "ins_a", { kind: "upsert", instrument: {
+          ...instrument("ins_a", "venue_a"), contractMultiplier: "2", effectiveFrom: "2026-09-21T00:00:00.000Z",
+        } } as never);
+      }
+      currentDuringCallback = worker.isCurrent(event);
+    });
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    expect(nested).toBe(true);
+    expect(currentDuringCallback).toBe(false);
+    const actionable = seen.find(event => event.status === "actionable")!;
+    const expiry = seen.find(event => event.opportunityId === actionable.opportunityId && event.status === "expired")!;
+    expect(expiry.stateRevision).toBeGreaterThan(actionable.stateRevision);
+    await worker.stop();
+  }, 1000);
+
+  it("checks currentness against accepted revisions despite broker ack and reordered output delivery", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const delivered: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "async-delivery", async event => { delivered.push(event); });
+    const originalPublish = bus.publish.bind(bus);
+    let releaseActionable: (() => Promise<void>) | undefined;
+    let releaseInvalidation: (() => Promise<void>) | undefined;
+    bus.publish = (async (topic: Parameters<typeof originalPublish>[0], key: string, event: never) => {
+      if (topic === "opportunity.v1" && (event as { status: string }).status === "actionable" && !releaseActionable) {
+        releaseActionable = () => originalPublish(topic, key, event);
+        return; // Simulate a broker ack before subscriber delivery.
+      }
+      if (topic === "book.state.v1" && (event as { eventId: string }).eventId === "evt_async_ref") {
+        releaseInvalidation = () => originalPublish(topic, key, event);
+        return; // The worker has not accepted this input yet.
+      }
+      return originalPublish(topic, key, event);
+    }) as typeof bus.publish;
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    expect(releaseActionable).toBeDefined();
+    const revisionBefore = worker.currentRevision("equity:TSLA");
+    await bus.publish("book.state.v1", "ins_a", {
+      ...book("ins_a", "venue_a", "100", "evt_async_ref"), eligibility: "reference_only",
+      receivedTimestamp: NOW - 1,
+    } as never);
+    expect(worker.currentRevision("equity:TSLA")).toBe(revisionBefore);
+    await releaseInvalidation!();
+    expect(worker.currentRevision("equity:TSLA")).toBeGreaterThan(revisionBefore);
+    await worker.flush();
+    await releaseActionable!(); // Delivers stale actionable after the expiry.
+    const stale = delivered.at(-1)!;
+    expect(stale.status).toBe("actionable");
+    expect(worker.isCurrent(stale)).toBe(false);
+    expect(delivered.some(event => event.opportunityId === stale.opportunityId &&
+      event.status === "expired" && event.stateRevision > stale.stateRevision)).toBe(true);
     await worker.stop();
   });
   it("publishes an informative rejected candidate without reviewed mapping", async () => {

@@ -1,5 +1,5 @@
 import type { EventBus } from "@range/event-bus";
-import type { ObservationEnvelope, Opportunity, VenueHealth } from "@range/domain";
+import { isCurrentAtRevision, type ObservationEnvelope, type Opportunity, type VenueHealth } from "@range/domain";
 import { InstrumentRegistry } from "@range/instruments";
 import { OrderBook, normalizeFunding, projectFunding, quoteAtNotional, type NormalizedFunding } from "@range/market-state";
 import { activeLifecycle, evaluateOpportunityWithEvidence, type EvaluationInput, type EvaluationLeg, type Strategy } from "@range/opportunity";
@@ -27,6 +27,8 @@ export interface OpportunityWorker {
   flush(): Promise<void>;
   drain(): Promise<void>;
   stop(): Promise<void>;
+  currentRevision(underlyingId: string): number;
+  isCurrent(opportunity: Opportunity): boolean;
 }
 
 /** Consumes normalized state and evaluates only affected underlyings after a bounded debounce. */
@@ -42,14 +44,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const active = new Map<string, ReturnType<typeof activeLifecycle>>();
   const unsubscribe: Array<() => Promise<void>> = [];
   let publishing = Promise.resolve();
-  let stateFence = Promise.resolve();
-  const withStateFence = async <T>(operation: () => Promise<T> | T): Promise<T> => {
-    const previous = stateFence;
-    let release!: () => void;
-    stateFence = new Promise<void>(resolve => { release = resolve; });
-    await previous;
-    try { return await operation(); }
-    finally { release(); }
+  const revisionOf = (underlyingId: string) => generations.get(underlyingId) ?? 0;
+  const bump = (underlyingId: string) => {
+    const revision = revisionOf(underlyingId) + 1;
+    generations.set(underlyingId, revision);
+    return revision;
   };
   const publish = async (opportunity: Opportunity) => {
     await bus.publish("opportunity.v1", opportunity.underlyingId, opportunity);
@@ -57,45 +56,50 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const queuePublish = (opportunity: Opportunity) => {
     publishing = publishing.then(() => publish(opportunity));
   };
-  const expireInstrument = (instrumentId: string) => {
+  const expireInstrument = (instrumentId: string, revision: number) => {
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
       if (before.status !== "actionable") continue;
       const after = lifecycle.onCapabilityWithdrawal(instrumentId);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id); queuePublish(after);
+        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        queuePublish({ ...after, stateRevision: revision });
       }
     }
   };
-  const expireBook = (instrumentId: string) => {
+  const expireBook = (instrumentId: string, revision: number) => {
     for (const [id, lifecycle] of active) {
       if (lifecycle.current(now()).status !== "actionable") continue;
       const after = lifecycle.onQuoteWithdrawal(instrumentId);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id); queuePublish(after);
+        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        queuePublish({ ...after, stateRevision: revision });
       }
     }
   };
-  const expireMapping = (underlyingId: string) => {
+  const expireMapping = (underlyingId: string, revision: number) => {
     for (const [id, lifecycle] of active) {
       if (lifecycle.current(now()).status !== "actionable") continue;
       const after = lifecycle.onMappingWithdrawal(underlyingId);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id); queuePublish(after);
+        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        queuePublish({ ...after, stateRevision: revision });
       }
     }
   };
-  const bump = (underlyingId: string) => generations.set(underlyingId, (generations.get(underlyingId) ?? 0) + 1);
   const removeWithdrawal = registry.onCapabilityWithdrawal(event => {
     const underlyingId = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
     books.delete(event.instrumentId);
     funding.delete(event.instrumentId);
-    if (underlyingId) bump(underlyingId);
-    expireInstrument(event.instrumentId);
+    if (underlyingId) {
+      const revision = bump(underlyingId);
+      expireInstrument(event.instrumentId, revision);
+      schedule(underlyingId);
+    }
   });
 
   const evaluateUnlocked = async (underlyingId: string) => {
-    const generation = generations.get(underlyingId) ?? 0;
+    const generation = revisionOf(underlyingId);
     const at = now();
     const instrumentIds = [...books.keys()].filter(id => registry.getCurrent(id)?.instrument.underlyingId === underlyingId);
     for (let left = 0; left < instrumentIds.length; left++) for (let right = left + 1; right < instrumentIds.length; right++) {
@@ -155,29 +159,30 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         };
         const { opportunity, evidence } = evaluateOpportunityWithEvidence(input);
         if (evidence) await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
-        if ((generations.get(underlyingId) ?? 0) !== generation) return;
-        await publish(opportunity);
-        if ((generations.get(underlyingId) ?? 0) !== generation) return;
-        if (opportunity.status === "actionable") {
-          const lifecycle = activeLifecycle(opportunity);
-          active.set(opportunity.opportunityId, lifecycle);
-          const delay = Math.max(0, Date.parse(opportunity.expiresAt) - now());
+        if (revisionOf(underlyingId) !== generation) return;
+        const versioned: Opportunity = { ...opportunity, stateRevision: generation };
+        if (versioned.status === "actionable") {
+          const lifecycle = activeLifecycle(versioned);
+          active.set(versioned.opportunityId, lifecycle);
+          const delay = Math.max(0, Date.parse(versioned.expiresAt) - now());
           const timer = setTimeout(() => {
-            const expired = lifecycle.current(Date.parse(opportunity.expiresAt));
-            active.delete(opportunity.opportunityId);
-            expiryTimers.delete(opportunity.opportunityId);
+            if (!active.has(versioned.opportunityId)) return;
+            const expired = lifecycle.current(Date.parse(versioned.expiresAt));
+            active.delete(versioned.opportunityId);
+            expiryTimers.delete(versioned.opportunityId);
             queuePublish(expired);
           }, delay);
-          expiryTimers.set(opportunity.opportunityId, timer);
+          expiryTimers.set(versioned.opportunityId, timer);
         }
+        await publish(versioned);
+        if (revisionOf(underlyingId) !== generation) return;
       }
     }
   };
-  // Publication/promotion and invalidation acceptance share this fence. If an
-  // actionable publish is already in flight, a concurrent invalidation waits;
-  // publication and lifecycle registration finish first, then invalidation
-  // expires that lifecycle and queues the later event in topic order.
-  const evaluate = (underlyingId: string) => withStateFence(() => evaluateUnlocked(underlyingId));
+  // Inputs linearize in their synchronous handlers. EventBus.publish may await
+  // subscriber callbacks (in-memory) or only broker ack (Redpanda), so no
+  // acceptance or currentness decision may depend on awaiting publication.
+  const evaluate = evaluateUnlocked;
   const schedule = (underlyingId: string) => {
     if (pending.has(underlyingId)) return;
     pending.set(underlyingId, setTimeout(() => {
@@ -185,18 +190,19 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       publishing = publishing.then(() => evaluate(underlyingId));
     }, debounceMs));
   };
-  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", event => withStateFence(async () => {
+  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", async event => {
     const book = books.get(event.instrumentId) ?? new OrderBook();
     const current = book.metadata();
     if (current && (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp ||
         event.sourceTimestamp === current.sourceTimestamp && event.receivedTimestamp < current.receivedTimestamp)) return;
-    expireBook(event.instrumentId);
+    const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+    const revision = underlying ? bump(underlying) : undefined;
+    if (revision !== undefined) expireBook(event.instrumentId, revision);
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
-    const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    if (underlying) { bump(underlying); schedule(underlying); }
-  })));
-  unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", event => withStateFence(async () => {
+    if (underlying) schedule(underlying);
+  }));
+  unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", async event => {
     const observations = funding.get(event.instrumentId) ?? [];
     let accepted = false;
     if (event.payload.rateType !== "realized") {
@@ -212,40 +218,58 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       } else { observations.push(event); accepted = true; }
     }
     if (!accepted) return;
-    expireBook(event.instrumentId);
+    const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+    const revision = underlying ? bump(underlying) : undefined;
+    if (revision !== undefined) expireBook(event.instrumentId, revision);
     if (observations.length > 10_000) observations.shift();
     funding.set(event.instrumentId, observations);
-    const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    if (underlying) { bump(underlying); schedule(underlying); }
-  })));
-  unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", event => withStateFence(async () => {
+    if (underlying) schedule(underlying);
+  }));
+  unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", async event => {
     health.set(event.venue, event);
+    const affected = new Set<string>();
+    for (const id of books.keys()) {
+      const instrument = registry.getCurrent(id)?.instrument;
+      if (instrument?.venue === event.venue) affected.add(instrument.underlyingId);
+    }
+    for (const lifecycle of active.values()) {
+      const current = lifecycle.current(now());
+      if (current.legs.some(leg => registry.getCurrent(leg.instrumentId)?.instrument.venue === event.venue)) {
+        affected.add(current.underlyingId);
+      }
+    }
+    for (const underlying of affected) { bump(underlying); schedule(underlying); }
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
       if (before.status !== "actionable" || !before.legs.some(leg => registry.getCurrent(leg.instrumentId)?.instrument.venue === event.venue)) continue;
       const after = lifecycle.onVenueHealth(event);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id); queuePublish(after);
+        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        queuePublish({ ...after, stateRevision: revisionOf(before.underlyingId) });
       }
     }
-    for (const id of books.keys()) {
-      const instrument = registry.getCurrent(id)?.instrument;
-      if (instrument?.venue === event.venue) { bump(instrument.underlyingId); schedule(instrument.underlyingId); }
-    }
-  })));
-  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", event => withStateFence(async () => {
+  }));
+  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", async event => {
     if (event.kind === "upsert") {
+      const before = revisionOf(event.instrument.underlyingId);
       registry.upsert(event.instrument);
-      bump(event.instrument.underlyingId);
+      if (revisionOf(event.instrument.underlyingId) === before) bump(event.instrument.underlyingId);
       schedule(event.instrument.underlyingId);
     } else {
-      expireMapping(event.mapping.underlyingId);
+      const revision = bump(event.mapping.underlyingId);
+      expireMapping(event.mapping.underlyingId, revision);
       registry.addReviewedMapping(event.mapping);
-      bump(event.mapping.underlyingId);
       schedule(event.mapping.underlyingId);
     }
-  })));
+  }));
   return {
+    currentRevision: revisionOf,
+    isCurrent(opportunity) {
+      if (!isCurrentAtRevision(opportunity, revisionOf(opportunity.underlyingId), now())) return false;
+      const current = active.get(opportunity.opportunityId)?.current(now());
+      return current?.status === "actionable" && current.stateRevision === opportunity.stateRevision &&
+        current.evidenceHash === opportunity.evidenceHash;
+    },
     async flush() {
       const affected = [...pending.keys()];
       for (const timer of pending.values()) clearTimeout(timer);
@@ -262,7 +286,6 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         }
         const publicationSnapshot = publishing;
         await publicationSnapshot;
-        await stateFence;
         if (pending.size === 0 && publicationSnapshot === publishing) return;
       }
     },

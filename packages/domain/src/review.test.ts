@@ -36,6 +36,7 @@ const internalObservation = {
 
 const actionableOpportunity = {
   opportunityId: "opp_1",
+  stateRevision: 0,
   strategy: "spot_perpetual_basis",
   underlyingId: "equity:TSLA",
   legs: [{
@@ -67,6 +68,13 @@ const actionableOpportunity = {
 };
 
 describe("schema review fixes", () => {
+  it("rejects an actionable record behind the accepted underlying revision or past expiry", () => {
+    const current = domain.OpportunitySchema.parse(actionableOpportunity);
+    const beforeExpiry = Date.parse(current.expiresAt) - 1;
+    expect(domain.isCurrentAtRevision(current, 0, beforeExpiry)).toBe(true);
+    expect(domain.isCurrentAtRevision(current, 1, beforeExpiry)).toBe(false);
+    expect(domain.isCurrentAtRevision(current, 0, Date.parse(current.expiresAt))).toBe(false);
+  });
   it.each(["live", "delayed", "stale", "reference_only"] as const)(
     "preserves the required %s observation eligibility state",
     (eligibility) => {

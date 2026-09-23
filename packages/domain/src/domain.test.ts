@@ -72,6 +72,7 @@ const fundingProjection = {
 
 const opportunity = {
   opportunityId: "opp_1",
+  stateRevision: 0,
   strategy: "spot_perpetual_basis",
   underlyingId: "equity:TSLA",
   legs: [

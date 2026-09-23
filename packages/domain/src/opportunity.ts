@@ -49,6 +49,7 @@ const ActionableFreshnessSchema = OpportunityFreshnessSchema.extend({
 
 const opportunityFields = {
   opportunityId: OpportunityIdSchema,
+  stateRevision: z.number().int().nonnegative(),
   strategy: z.string().trim().min(1),
   underlyingId: UnderlyingIdSchema,
   legs: z.array(OpportunityLegSchema).min(1).superRefine((legs, context) => {
@@ -130,3 +131,11 @@ export const EvidenceBundleSchema = z.object({
 export type RejectionCode = z.infer<typeof RejectionCodeSchema>;
 export type Opportunity = z.infer<typeof OpportunitySchema>;
 export type EvidenceBundle = z.infer<typeof EvidenceBundleSchema>;
+
+/** Compare against the authoritative revision accepted for this underlying.
+ * Delivery order and a broker publish acknowledgement do not establish it.
+ */
+export function isCurrentAtRevision(opportunity: Opportunity, acceptedRevision: number, nowMs: number): boolean {
+  return opportunity.status === "actionable" && opportunity.stateRevision === acceptedRevision &&
+    nowMs < Date.parse(opportunity.expiresAt);
+}
