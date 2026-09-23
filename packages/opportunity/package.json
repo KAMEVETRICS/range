@@ -1,14 +1,14 @@
 {
-  "name": "@range/event-bus",
+  "name": "@range/opportunity",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
     "@range/domain": "workspace:*",
+    "@range/evidence": "workspace:*",
     "@range/instruments": "workspace:*",
-    "kafkajs": "^2.2.4",
-    "zod": "^4.0.0"
-  },
-  "devDependencies": { "@testcontainers/redpanda": "^11.0.0" }
+    "@range/market-state": "workspace:*",
+    "decimal.js": "^10.6.0"
+  }
 }

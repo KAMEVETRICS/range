@@ -1,7 +1,8 @@
 import {
-  EvidenceBundleSchema, FundingObservationPayloadSchema, ObservationEnvelopeSchema,
+  EvidenceBundleSchema, FundingObservationPayloadSchema, InstrumentSchema, ObservationEnvelopeSchema,
   OpportunitySchema, OrderBookObservationPayloadSchema, UnsignedIntentSchema, VenueHealthSchema,
 } from "@range/domain";
+import { ReviewedMappingSchema } from "@range/instruments";
 import { z } from "zod";
 
 // Raw bytes belong in object storage. The bus carries their canonical metadata
@@ -21,6 +22,10 @@ export const topicSchemas = {
   "book.state.v1": ObservationEnvelopeSchema.extend({ payload: OrderBookObservationPayloadSchema }),
   "funding.observation.v1": ObservationEnvelopeSchema.extend({ payload: FundingObservationPayloadSchema }),
   "venue.health.v1": VenueHealthSchema,
+  "instrument.registry.v1": z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("upsert"), instrument: InstrumentSchema }).strict(),
+    z.object({ kind: z.literal("mapping"), mapping: ReviewedMappingSchema }).strict(),
+  ]),
   "opportunity.v1": OpportunitySchema,
   "evidence.bundle.v1": EvidenceBundleSchema,
   "intent.lifecycle.v1": UnsignedIntentSchema,

@@ -24,6 +24,7 @@ export const RejectionCodeSchema = z.enum([
   "VENUE_DEGRADED",
   "CLOCK_SKEW_EXCEEDED",
   "CAPABILITY_WITHDRAWN",
+  "COST_DATA_MISSING",
 ]);
 
 const OpportunityLegSchema = z.object({
@@ -85,6 +86,13 @@ const ActionableOpportunitySchema = z.object({
 
 const RejectedOpportunitySchema = z.object({
   ...opportunityFields,
+  legs: z.array(OpportunityLegSchema).superRefine((legs, context) => {
+    const ids = new Set<string>();
+    for (const [index, leg] of legs.entries()) {
+      if (ids.has(leg.legId)) context.addIssue({ code: "custom", message: "Opportunity leg IDs must be unique.", path: [index, "legId"] });
+      ids.add(leg.legId);
+    }
+  }),
   status: z.literal("rejected"),
   evidenceHash: EvidenceHashSchema.optional(),
   rejectionReasons: z.array(RejectionCodeSchema).min(1),

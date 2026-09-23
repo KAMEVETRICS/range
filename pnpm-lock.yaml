@@ -21,6 +21,27 @@ importers:
         specifier: ^4.0.0
         version: 4.1.11(@types/node@24.13.6)(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/opportunity-worker:
+    dependencies:
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@range/event-bus':
+        specifier: workspace:*
+        version: link:../../packages/event-bus
+      '@range/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
+      '@range/instruments':
+        specifier: workspace:*
+        version: link:../../packages/instruments
+      '@range/market-state':
+        specifier: workspace:*
+        version: link:../../packages/market-state
+      '@range/opportunity':
+        specifier: workspace:*
+        version: link:../../packages/opportunity
+
   connectors/bitget:
     dependencies:
       '@range/connector-sdk':
@@ -114,6 +135,9 @@ importers:
       '@range/domain':
         specifier: workspace:*
         version: link:../domain
+      '@range/instruments':
+        specifier: workspace:*
+        version: link:../instruments
       kafkajs:
         specifier: ^2.2.4
         version: 2.2.4
@@ -124,6 +148,12 @@ importers:
       '@testcontainers/redpanda':
         specifier: ^11.0.0
         version: 11.14.0
+
+  packages/evidence:
+    dependencies:
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/instruments:
     dependencies:
@@ -139,6 +169,24 @@ importers:
       '@range/domain':
         specifier: workspace:*
         version: link:../domain
+      decimal.js:
+        specifier: ^10.6.0
+        version: 10.6.0
+
+  packages/opportunity:
+    dependencies:
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@range/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@range/instruments':
+        specifier: workspace:*
+        version: link:../instruments
+      '@range/market-state':
+        specifier: workspace:*
+        version: link:../market-state
       decimal.js:
         specifier: ^10.6.0
         version: 10.6.0
