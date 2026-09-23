@@ -28,6 +28,7 @@ export const FundingObservationPayloadSchema = z.object({
   kind: z.literal("funding"),
   rateType: z.enum(["current", "predicted", "realized"]),
   rate: DecimalStringSchema,
+  positiveRatePayer: z.enum(["long", "short"]).optional(),
   intervalMs: z.number().int().positive(),
   nextSettlementMs: EpochMillisecondsSchema,
 }).strict();
