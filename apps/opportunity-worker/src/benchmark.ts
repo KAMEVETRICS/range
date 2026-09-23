@@ -27,21 +27,37 @@ registry.addReviewedMapping({
 });
 
 const bus = new InMemoryEventBus();
-const observationStarted = new Map<string, number>();
-const evidenceStarted = new Map<string, number>();
+const observationStarted: number[] = [];
+const evidenceCoverage = new Map<string, { earliestStarted: number; processedThrough: number }>();
+const observationLatencies: number[] = [];
 const actionableLatencies: number[] = [];
+let nextCoveredObservation = 0;
+let finalSentinelProcessed = false;
 let publishedOpportunities = 0;
 let actionableOpportunities = 0;
 await bus.subscribe("evidence.bundle.v1", "benchmark-evidence", async evidence => {
-  const starts = evidence.sourceEventIds.flatMap(id => observationStarted.has(id) ? [observationStarted.get(id)!] : []);
-  if (starts.length) evidenceStarted.set(evidence.evidenceHash, Math.min(...starts));
+  const indices = evidence.sourceEventIds.flatMap(id => {
+    const match = /^evt_benchmark_(\d+)$/.exec(id);
+    return match ? [Number(match[1])] : [];
+  });
+  if (indices.includes(COUNT - 1)) finalSentinelProcessed = true;
+  if (indices.length) evidenceCoverage.set(evidence.evidenceHash, {
+    earliestStarted: Math.min(...indices.map(index => observationStarted[index]!)),
+    processedThrough: Math.max(...indices),
+  });
 });
 await bus.subscribe("opportunity.v1", "benchmark-count", async opportunity => {
   publishedOpportunities += 1;
   if (opportunity.status !== "actionable") return;
   actionableOpportunities += 1;
-  const started = evidenceStarted.get(opportunity.evidenceHash);
-  if (started !== undefined) actionableLatencies.push(performance.now() - started);
+  const coverage = evidenceCoverage.get(opportunity.evidenceHash);
+  if (!coverage) return;
+  const publishedAt = performance.now();
+  actionableLatencies.push(publishedAt - coverage.earliestStarted);
+  while (nextCoveredObservation <= coverage.processedThrough) {
+    observationLatencies.push(publishedAt - observationStarted[nextCoveredObservation]!);
+    nextCoveredObservation += 1;
+  }
 });
 
 const worker = await startOpportunityWorker(bus, registry, {
@@ -67,7 +83,7 @@ for (let index = 0; index < COUNT; index++) {
   const venue = index % 2 ? "venue_a" : "venue_b";
   const id = index % 2 ? "ins_a" : "ins_b";
   const eventId = `evt_benchmark_${index}`;
-  observationStarted.set(eventId, performance.now());
+  observationStarted.push(performance.now());
   await bus.publish("book.state.v1", id, {
     eventId, schemaVersion: 1, venue, instrumentId: id,
     transport: "websocket", sourceTimestamp: T - 10, receivedTimestamp: T - 5,
@@ -79,17 +95,25 @@ for (let index = 0; index < COUNT; index++) {
   if ((index + 1) % 100 === 0) await new Promise<void>(resolve => setImmediate(resolve));
 }
 
-// Let the final naturally scheduled debounce window and publication chain drain.
-await new Promise(resolve => setTimeout(resolve, 100));
+await worker.drain();
 await worker.stop();
+observationLatencies.sort((x, y) => x - y);
 actionableLatencies.sort((x, y) => x - y);
-const p95 = actionableLatencies[Math.ceil(actionableLatencies.length * 0.95) - 1];
+const percentile95 = (values: readonly number[]) => values[Math.ceil(values.length * 0.95) - 1];
+const observationP95 = percentile95(observationLatencies);
+const actionableP95 = percentile95(actionableLatencies);
 const report = {
   fixtureObservations: COUNT,
   publishedOpportunities,
   actionableOpportunities,
+  observationLatencySamples: observationLatencies.length,
+  observationCoveragePercent: Number((observationLatencies.length / COUNT * 100).toFixed(2)),
+  coalescedObservationsPerActionableSample: actionableLatencies.length === 0 ? null :
+    Number((observationLatencies.length / actionableLatencies.length).toFixed(2)),
   actionableLatencySamples: actionableLatencies.length,
-  actionableObservationToPublicationP95Ms: p95 === undefined ? null : Number(p95.toFixed(3)),
+  observationToPublicationP95Ms: observationP95 === undefined ? null : Number(observationP95.toFixed(3)),
+  actionableObservationToPublicationP95Ms: actionableP95 === undefined ? null : Number(actionableP95.toFixed(3)),
+  finalSentinelProcessed,
   targetMs: 500,
   node: process.version, platform: process.platform, arch: process.arch,
   cpu: cpus()[0]?.model ?? "unknown", logicalCpus: cpus().length,
@@ -97,4 +121,7 @@ const report = {
   fixture: "synthetic benchmark only; two reviewed perpetual instruments with eligible health, books, and funding; live mapping seed remains empty",
 };
 console.log(JSON.stringify(report));
-if (p95 === undefined || actionableOpportunities === 0 || p95 >= 500) process.exitCode = 1;
+if (!finalSentinelProcessed || observationLatencies.length !== COUNT || observationP95 === undefined ||
+    actionableP95 === undefined || actionableOpportunities === 0 || observationP95 >= 500 || actionableP95 >= 500) {
+  process.exitCode = 1;
+}

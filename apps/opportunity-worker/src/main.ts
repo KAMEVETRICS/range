@@ -25,6 +25,7 @@ export interface WorkerPolicy {
 
 export interface OpportunityWorker {
   flush(): Promise<void>;
+  drain(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -41,6 +42,15 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const active = new Map<string, ReturnType<typeof activeLifecycle>>();
   const unsubscribe: Array<() => Promise<void>> = [];
   let publishing = Promise.resolve();
+  let stateFence = Promise.resolve();
+  const withStateFence = async <T>(operation: () => Promise<T> | T): Promise<T> => {
+    const previous = stateFence;
+    let release!: () => void;
+    stateFence = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await operation(); }
+    finally { release(); }
+  };
   const publish = async (opportunity: Opportunity) => {
     await bus.publish("opportunity.v1", opportunity.underlyingId, opportunity);
   };
@@ -84,7 +94,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     expireInstrument(event.instrumentId);
   });
 
-  const evaluate = async (underlyingId: string) => {
+  const evaluateUnlocked = async (underlyingId: string) => {
     const generation = generations.get(underlyingId) ?? 0;
     const at = now();
     const instrumentIds = [...books.keys()].filter(id => registry.getCurrent(id)?.instrument.underlyingId === underlyingId);
@@ -163,6 +173,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     }
   };
+  // Publication/promotion and invalidation acceptance share this fence. If an
+  // actionable publish is already in flight, a concurrent invalidation waits;
+  // publication and lifecycle registration finish first, then invalidation
+  // expires that lifecycle and queues the later event in topic order.
+  const evaluate = (underlyingId: string) => withStateFence(() => evaluateUnlocked(underlyingId));
   const schedule = (underlyingId: string) => {
     if (pending.has(underlyingId)) return;
     pending.set(underlyingId, setTimeout(() => {
@@ -170,17 +185,18 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       publishing = publishing.then(() => evaluate(underlyingId));
     }, debounceMs));
   };
-  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", async event => {
+  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", event => withStateFence(async () => {
     const book = books.get(event.instrumentId) ?? new OrderBook();
     const current = book.metadata();
-    if (current && (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp)) return;
+    if (current && (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp ||
+        event.sourceTimestamp === current.sourceTimestamp && event.receivedTimestamp < current.receivedTimestamp)) return;
     expireBook(event.instrumentId);
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
     if (underlying) { bump(underlying); schedule(underlying); }
-  }));
-  unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", async event => {
+  })));
+  unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", event => withStateFence(async () => {
     const observations = funding.get(event.instrumentId) ?? [];
     let accepted = false;
     if (event.payload.rateType !== "realized") {
@@ -201,8 +217,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     funding.set(event.instrumentId, observations);
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
     if (underlying) { bump(underlying); schedule(underlying); }
-  }));
-  unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", async event => {
+  })));
+  unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", event => withStateFence(async () => {
     health.set(event.venue, event);
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
@@ -216,8 +232,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       const instrument = registry.getCurrent(id)?.instrument;
       if (instrument?.venue === event.venue) { bump(instrument.underlyingId); schedule(instrument.underlyingId); }
     }
-  }));
-  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", async event => {
+  })));
+  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", event => withStateFence(async () => {
     if (event.kind === "upsert") {
       registry.upsert(event.instrument);
       bump(event.instrument.underlyingId);
@@ -228,7 +244,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       bump(event.mapping.underlyingId);
       schedule(event.mapping.underlyingId);
     }
-  }));
+  })));
   return {
     async flush() {
       const affected = [...pending.keys()];
@@ -237,6 +253,18 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       await publishing;
       for (const underlying of affected) await evaluate(underlying);
       await publishing;
+    },
+    async drain() {
+      for (;;) {
+        if (pending.size > 0) {
+          await new Promise(resolve => setTimeout(resolve, Math.max(1, debounceMs)));
+          continue;
+        }
+        const publicationSnapshot = publishing;
+        await publicationSnapshot;
+        await stateFence;
+        if (pending.size === 0 && publicationSnapshot === publishing) return;
+      }
     },
     async stop() {
       for (const timer of pending.values()) clearTimeout(timer);

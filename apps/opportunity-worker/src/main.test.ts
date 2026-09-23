@@ -65,6 +65,30 @@ async function publishEligibleInputs(bus: InMemoryEventBus) {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunity worker", () => {
+  it("drains the final naturally scheduled sentinel before resolving", async () => {
+    vi.useFakeTimers();
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    let sentinelSeen = false;
+    const seenEvidenceIds: string[][] = [];
+    await bus.subscribe("evidence.bundle.v1", "drain-sentinel", async event => {
+      seenEvidenceIds.push([...event.sourceEventIds]);
+      if (event.sourceEventIds.includes("evt_final_sentinel")) sentinelSeen = true;
+    });
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, debounceMs: 25 });
+    await publishEligibleInputs(bus);
+    await bus.publish("book.state.v1", "ins_b", { ...book("ins_b", "venue_b", "100.3", "evt_final_sentinel"), receivedTimestamp: NOW - 4,
+      payload: { kind: "order_book", bids: [{ price: "125", quantity: "20" }], asks: [{ price: "200", quantity: "20" }], capacityUsd: "2000" } } as never);
+    let drained = false;
+    const draining = worker.drain().then(() => { drained = true; });
+    await vi.advanceTimersByTimeAsync(24);
+    expect(drained).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await draining;
+    expect(sentinelSeen, JSON.stringify(seenEvidenceIds)).toBe(true);
+    await worker.stop();
+  });
+
   it("publishes within 25ms of the first event during a continuous fast stream", async () => {
     vi.useFakeTimers();
     const bus = new InMemoryEventBus();
@@ -115,6 +139,22 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
+  it("ignores a new event id with equal source time and older receive time", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const published: Array<{ opportunityId: string; status: string }> = [];
+    await bus.subscribe("opportunity.v1", "equal-source-older-receive", async event => { published.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const actionable = published.find(item => item.status === "actionable")!;
+    const before = published.length;
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_old_receive"), receivedTimestamp: NOW - 60 } as never);
+    await worker.flush();
+    expect(published.slice(before).some(item => item.opportunityId === actionable.opportunityId && item.status === "expired")).toBe(false);
+    await worker.stop();
+  });
+
   it("clears version-pinned market caches before evaluating a replacement mapping", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
@@ -141,11 +181,16 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
-  it("drops an actionable publication when invalidated during awaited evidence publication", async () => {
+  it("serializes invalidation behind awaited evidence publication", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
     const published: Array<{ status: string }> = [];
     await bus.subscribe("opportunity.v1", "generation", async event => { published.push(event); });
+    let invalidationAccepted = false;
+    let actionableAfterAcceptance = false;
+    await bus.subscribe("opportunity.v1", "evidence-order", async event => {
+      if (event.status === "actionable" && invalidationAccepted) actionableAfterAcceptance = true;
+    });
     let release!: () => void;
     let reached!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -159,14 +204,21 @@ describe("opportunity worker", () => {
     await publishEligibleInputs(bus);
     const flushing = worker.flush();
     await atEvidence;
-    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_invalidated"), eligibility: "reference_only" } as never);
+    const invalidating = bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_invalidated"), eligibility: "reference_only" } as never)
+      .then(() => { invalidationAccepted = true; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(invalidationAccepted).toBe(false);
     release();
     await flushing;
-    expect(published.some(item => item.status === "actionable")).toBe(false);
+    await invalidating;
+    expect(published.at(-1)?.status).not.toBe("actionable");
+    await worker.flush();
+    expect(actionableAfterAcceptance).toBe(false);
+    expect(published.at(-1)?.status).not.toBe("actionable");
     await worker.stop();
   });
 
-  it("does not register an actionable lifecycle invalidated during awaited opportunity publication", async () => {
+  it("never delivers actionable after a concurrently accepted invalidation", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
     const published: Array<{ opportunityId: string; status: string }> = [];
@@ -177,6 +229,11 @@ describe("opportunity worker", () => {
     const atOpportunity = new Promise<void>(resolve => { reached = resolve; });
     const originalPublish = bus.publish.bind(bus);
     let blocked = false;
+    let invalidationAccepted = false;
+    let actionableAfterAcceptance = false;
+    await bus.subscribe("opportunity.v1", "publication-order", async event => {
+      if (event.status === "actionable" && invalidationAccepted) actionableAfterAcceptance = true;
+    });
     bus.publish = (async (topic: Parameters<typeof originalPublish>[0], key: string, event: never) => {
       if (topic === "opportunity.v1" && !blocked) { blocked = true; reached(); await gate; }
       return originalPublish(topic, key, event);
@@ -185,14 +242,17 @@ describe("opportunity worker", () => {
     await publishEligibleInputs(bus);
     const flushing = worker.flush();
     await atOpportunity;
-    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_during_opportunity"), eligibility: "reference_only" } as never);
+    const invalidating = bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_during_opportunity"), eligibility: "reference_only" } as never)
+      .then(() => { invalidationAccepted = true; });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(invalidationAccepted).toBe(false);
     release();
     await flushing;
-    const stalePublication = published.find(item => item.status === "actionable")!;
-    await bus.publish("venue.health.v1", "venue_a", { venue: "venue_a", connectionState: "degraded", lastEventAgeMs: 10,
-      clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
+    await invalidating;
+    expect(published.at(-1)?.status).not.toBe("actionable");
     await worker.flush();
-    expect(published.some(item => item.opportunityId === stalePublication.opportunityId && item.status === "expired")).toBe(false);
+    expect(actionableAfterAcceptance).toBe(false);
+    expect(published.at(-1)?.status).not.toBe("actionable");
     await worker.stop();
   });
   it("publishes an informative rejected candidate without reviewed mapping", async () => {

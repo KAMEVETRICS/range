@@ -23,7 +23,7 @@ export interface EvaluationLeg {
   slippageBps?: string;
   funding?: FundingProjection;
   fundingEvaluatedAtMs?: number;
-  fundingSourceExpiresAtMs?: number;
+  fundingSourceExpiresAtMs: number | undefined;
   venueLimitUsd?: string;
   depthCapUsd?: string;
   qualityFlags?: string[];
@@ -126,6 +126,9 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
   const requiredFunding = input.legs.map((leg, index) => current[index]?.instrument.productType === "perpetual");
   const projections = input.legs.map((leg, index) => {
     if (!requiredFunding[index]) return undefined;
+    if (!Number.isSafeInteger(leg.fundingSourceExpiresAtMs) || leg.fundingSourceExpiresAtMs! <= input.nowMs) {
+      reasons.add("FUNDING_SEMANTICS_UNKNOWN");
+    }
     const parsed = FundingProjectionSchema.safeParse(leg.funding);
     if (!parsed.success || parsed.data.instrumentId !== leg.instrumentId ||
         parsed.data.venue !== current[index]?.instrument.venue ||
@@ -221,6 +224,9 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
         [`leg${index}Eligibility`, { kind: "string" as const, value: leg.eligibility }],
         [`leg${index}VenueHealth`, { kind: "string" as const, value: canonicalJson(leg.health ?? null) }],
         [`leg${index}QualityFlags`, { kind: "string" as const, value: canonicalJson(leg.qualityFlags ?? []) }],
+        [`leg${index}Quote`, { kind: "string" as const, value: canonicalJson(leg.quote ?? null) }],
+        [`leg${index}FundingProjection`, { kind: "string" as const, value: canonicalJson(leg.funding ?? null) }],
+        [`leg${index}FundingEvaluatedAtMs`, { kind: "string" as const, value: leg.fundingEvaluatedAtMs?.toString() ?? "missing" }],
         [`leg${index}VenueLimitUsd`, { kind: "string" as const, value: leg.venueLimitUsd ?? "missing" }],
         [`leg${index}DepthCapUsd`, { kind: "string" as const, value: leg.depthCapUsd ?? "missing" }],
         [`leg${index}FundingSourceExpiresAtMs`, { kind: "string" as const, value: leg.fundingSourceExpiresAtMs?.toString() ?? "missing" }],
@@ -249,8 +255,8 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
   } : undefined;
   const evidence = evidenceInput ? buildEvidence(evidenceInput) : undefined;
   const oldest = Math.max(0, ...ageValues);
-  const fundingDeadline = Math.min(...input.legs.flatMap(leg =>
-    Number.isSafeInteger(leg.fundingSourceExpiresAtMs) ? [leg.fundingSourceExpiresAtMs!] : []), Number.POSITIVE_INFINITY);
+  const fundingDeadline = Math.min(...input.legs.flatMap((leg, index) =>
+    requiredFunding[index] && Number.isSafeInteger(leg.fundingSourceExpiresAtMs) ? [leg.fundingSourceExpiresAtMs!] : []), Number.POSITIVE_INFINITY);
   const ttl = Math.max(0, Math.min(TTL[input.strategy], budget - oldest, fundingDeadline - input.nowMs));
   const expiresAt = new Date(input.nowMs + ttl).toISOString();
   const opportunityId = `opp_${createHash("sha256").update(JSON.stringify([

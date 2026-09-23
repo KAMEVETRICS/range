@@ -58,8 +58,8 @@ function candidate(overrides: Partial<EvaluationInput> = {}, firstProductType: "
     holdingHorizonMs: 2_000,
     costs: { financingBps: "2", gasAndTransferBps: "1", fxConversionBps: "0.5", uncertaintyBufferBps: "3.5" },
     legs: [
-      { instrumentId: "ins_a", side: "buy", eligibility: "live", quote: quote("buy", "100", "evt_book_a", "5000"), health: health("venue_a"), tradingFeeBps: "3", slippageBps: "2", funding: projection("ins_a", "venue_a", "long", "5"), fundingEvaluatedAtMs: NOW },
-      { instrumentId: "ins_b", side: "sell", eligibility: "live", quote: quote("sell", "100.3", "evt_book_b", "1200"), health: health("venue_b"), tradingFeeBps: "3", slippageBps: "2", funding: projection("ins_b", "venue_b", "short", "3"), fundingEvaluatedAtMs: NOW },
+      { instrumentId: "ins_a", side: "buy", eligibility: "live", quote: quote("buy", "100", "evt_book_a", "5000"), health: health("venue_a"), tradingFeeBps: "3", slippageBps: "2", funding: projection("ins_a", "venue_a", "long", "5"), fundingEvaluatedAtMs: NOW, fundingSourceExpiresAtMs: NOW + 1_000 },
+      { instrumentId: "ins_b", side: "sell", eligibility: "live", quote: quote("sell", "100.3", "evt_book_b", "1200"), health: health("venue_b"), tradingFeeBps: "3", slippageBps: "2", funding: projection("ins_b", "venue_b", "short", "3"), fundingEvaluatedAtMs: NOW, fundingSourceExpiresAtMs: NOW + 1_000 },
     ],
     ...overrides,
   } as EvaluationInput;
@@ -92,6 +92,14 @@ describe("evaluateOpportunity", () => {
     expect(Date.parse(result.expiresAt)).toBe(NOW + 250);
   });
 
+  it("rejects a funding-sensitive candidate without every source expiry", () => {
+    const input = candidate();
+    input.legs[1]!.fundingSourceExpiresAtMs = undefined;
+    const result = evaluateOpportunity(input);
+    expect(result.status).toBe("rejected");
+    expect(result.rejectionReasons).toContain("FUNDING_SEMANTICS_UNKNOWN");
+  });
+
   it("hashes every policy, health, borrow, and capacity decision input", () => {
     const base = candidate({ strategy: "spot_perp_basis", borrow: { costBps: "1", capacityUsd: "2000", observedAtMs: NOW - 10 } }, "tokenized_spot");
     base.legs[0]!.funding = undefined;
@@ -109,6 +117,36 @@ describe("evaluateOpportunity", () => {
       input => { input.borrow!.capacityUsd = "1900"; },
       input => { input.legs[0]!.venueLimitUsd = "1600"; },
       input => { input.legs[0]!.depthCapUsd = "1500"; },
+    ];
+    for (const mutate of mutations) {
+      const changed = structuredClone(base);
+      changed.registry = base.registry;
+      mutate(changed);
+      expect(hash(changed)).not.toBe(original);
+    }
+  });
+
+  it("hashes every quote and funding projection decision field", () => {
+    const base = candidate();
+    const hash = (input: EvaluationInput) => evaluateOpportunityWithEvidence(input).evidence!.evidenceHash;
+    const original = hash(base);
+    const mutations: Array<(input: EvaluationInput) => void> = [
+      input => { input.legs[0]!.quote!.side = "sell"; },
+      input => { input.legs[0]!.quote!.requestedNotional = "1001" as never; },
+      input => { input.legs[0]!.quote!.filledNotionalUsd = "999" as never; },
+      input => { input.legs[0]!.quote!.ageMs = 101; },
+      input => { input.legs[0]!.funding!.rateTypes = ["current"]; },
+      input => { input.legs[0]!.funding!.positiveRatePayer = "short"; },
+      input => { input.legs[0]!.funding!.intervalMs += 1; },
+      input => { input.legs[0]!.funding!.nextSettlementMs = NOW + 1_001 as never; },
+      input => { input.legs[0]!.funding!.holdingStartMs = NOW + 1 as never; },
+      input => { input.legs[0]!.funding!.holdingEndMs = NOW + 2_001 as never; },
+      input => { input.legs[0]!.funding!.holdingHorizonMs += 1; },
+      input => { input.legs[0]!.funding!.settlementCount += 1; },
+      input => { input.legs[0]!.funding!.positionSide = "short"; },
+      input => { input.legs[0]!.funding!.expectedCashflowBps = "6" as never; },
+      input => { input.legs[0]!.funding!.expectedCashflowUsd = "0.9" as never; },
+      input => { input.legs[0]!.funding!.sourceObservationIds = ["evt_funding_changed" as never]; },
     ];
     for (const mutate of mutations) {
       const changed = structuredClone(base);
