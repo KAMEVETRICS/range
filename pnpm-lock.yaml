@@ -122,6 +122,15 @@ importers:
         specifier: ^11.0.0
         version: 11.14.0
 
+  packages/instruments:
+    dependencies:
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+
 packages:
 
   '@balena/dockerignore@1.0.2':

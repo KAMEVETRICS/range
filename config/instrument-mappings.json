@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "mappings": [],
+  "refusedCandidates": [
+    {
+      "venue": "bitget",
+      "venueSymbol": "stock-linked symbols",
+      "reason": "Public Bitget discovery was DNS-blocked; contract multiplier, economic exposure, and trading schedule were not verified against live primary data."
+    },
+    {
+      "venue": "hyperliquid_hip3",
+      "venueSymbol": "equity HIP-3 symbols",
+      "reason": "Live classification was observed, but collateral token identity, minimum notional, and trading schedule remain unverified."
+    },
+    {
+      "venue": "extended",
+      "venueSymbol": "stock-linked symbols",
+      "reason": "Live product classification was observed, but continuous economic exposure and cross-venue settlement, collateral, and trading schedule equivalence remain unreviewed."
+    },
+    {
+      "venue": "ondo_perps",
+      "venueSymbol": "AAPL and other Stock-tagged contracts",
+      "reason": "Live stock classification was observed, but settlement asset, collateral asset, contract multiplier, and full holiday schedule remain unverified."
+    }
+  ]
+}
