@@ -3,6 +3,7 @@ import { IsoTimestampSchema, InstrumentIdSchema, UnderlyingIdSchema } from "../.
 
 const MemberSchema = z.object({
   instrumentId: InstrumentIdSchema,
+  instrumentVersion: z.number().int().positive(),
   metadataHash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 
@@ -30,6 +31,7 @@ export const SeedMappingSchema = ReviewedMappingSchema.omit({ members: true }).e
     venue: z.string().trim().min(1),
     venueFamily: z.string().trim().min(1).optional(),
     venueSymbol: z.string().trim().min(1),
+    instrumentVersion: z.number().int().positive(),
     metadataHash: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict()).min(2),
 }).strict();

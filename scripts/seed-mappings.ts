@@ -16,13 +16,19 @@ export function prepareSeed(configInput: unknown, discoveredInput: unknown = [])
   const config = SeedConfigSchema.parse(configInput);
   const discovered = InstrumentSchema.array().parse(discoveredInput);
   const registry = new InstrumentRegistry();
-  for (const instrument of discovered) registry.upsert(instrument);
+  const catalogIds = new Set<string>();
+  for (const instrument of discovered) {
+    if (catalogIds.has(instrument.instrumentId)) throw new Error(`Duplicate catalog instrument: ${instrument.instrumentId}`);
+    catalogIds.add(instrument.instrumentId);
+    registry.upsert(instrument);
+  }
   for (const declaration of config.mappings) {
     const members = declaration.members.map(member => {
       const resolved = registry.resolveVenueSymbol(member.venue, member.venueSymbol, member.venueFamily);
       if (!resolved) throw new Error(`Unknown or ambiguous venue symbol: ${member.venue}/${member.venueFamily ?? "?"}/${member.venueSymbol}`);
+      if (resolved.version !== member.instrumentVersion) throw new Error(`Instrument version mismatch: ${member.venue}/${member.venueSymbol}`);
       if (resolved.metadataHash !== member.metadataHash) throw new Error(`Metadata hash mismatch: ${member.venue}/${member.venueSymbol}`);
-      return { instrumentId: resolved.instrument.instrumentId, metadataHash: resolved.metadataHash };
+      return { instrumentId: resolved.instrument.instrumentId, instrumentVersion: resolved.version, metadataHash: resolved.metadataHash };
     });
     registry.addReviewedMapping(ReviewedMappingSchema.parse({ ...declaration, members }));
   }
@@ -33,8 +39,27 @@ export function prepareSeed(configInput: unknown, discoveredInput: unknown = [])
   };
 }
 
-function mappingLabels(state: ReturnType<typeof prepareSeed>): string[] {
-  return state.reviewedMappings.map(mapping => `${mapping.underlyingId}@${mapping.mappingVersion}`);
+function showDiff<T>(kind: string, before: readonly T[], after: readonly T[], keyOf: (item: T) => string,
+  log: (line: string) => void): string[] {
+  const oldByKey = new Map(before.map(item => [keyOf(item), item]));
+  const newByKey = new Map(after.map(item => [keyOf(item), item]));
+  const changed: string[] = [];
+  const keys = [...new Set([...oldByKey.keys(), ...newByKey.keys()])].sort();
+  for (const key of keys) {
+    const old = oldByKey.get(key);
+    const next = newByKey.get(key);
+    if (old === undefined) {
+      log(`+ ${kind} ${key}: ${JSON.stringify(next)}`);
+    } else if (next === undefined) {
+      log(`- ${kind} ${key}: ${JSON.stringify(old)}`);
+    } else if (JSON.stringify(old) !== JSON.stringify(next)) {
+      changed.push(key);
+      log(`~ ${kind} ${key}`);
+      log(`  before: ${JSON.stringify(old)}`);
+      log(`  after:  ${JSON.stringify(next)}`);
+    }
+  }
+  return changed;
 }
 
 export async function runSeed(options: SeedOptions): Promise<void> {
@@ -57,14 +82,20 @@ export async function runSeed(options: SeedOptions): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") previousInvalid = true;
   }
-  const before = previous ? mappingLabels(previous) : [];
-  const after = mappingLabels(next);
+  const before = previous?.reviewedMappings ?? [];
+  const after = next.reviewedMappings;
   log(`${options.dryRun ? "Dry run" : "Apply"} diff: ${previousInvalid ? "existing output is invalid; " : ""}${before.length} -> ${after.length} reviewed mappings`);
-  for (const label of before.filter(item => !after.includes(item))) log(`- ${label}`);
-  for (const label of after.filter(item => !before.includes(item))) log(`+ ${label}`);
+  const editedSameVersion = showDiff("mapping", before, after, mapping => `${mapping.underlyingId}@${mapping.mappingVersion}`, log);
+  showDiff("instrument", previous?.instruments ?? [], next.instruments, instrument => instrument.instrumentId, log);
   if (!before.length && !after.length) log("  no reviewed equivalence mappings");
   if (options.dryRun) return;
   if (previousInvalid) throw new Error("Existing seed output is invalid; refusing to overwrite");
+  if (editedSameVersion.length) throw new Error(`Same-version mapping content changed: ${editedSameVersion.join(", ")}`);
+  for (const mapping of after) {
+    const previousVersion = before.filter(item => item.underlyingId === mapping.underlyingId)
+      .reduce((max, item) => Math.max(max, item.mappingVersion), 0);
+    if (previousVersion > mapping.mappingVersion) throw new Error(`Mapping version rollback: ${mapping.underlyingId}`);
+  }
   await writeFile(options.outputPath, `${JSON.stringify(next, null, 2)}\n`, { flag: "w" });
   log(`Applied ${after.length} reviewed mappings to ${options.outputPath}`);
 }

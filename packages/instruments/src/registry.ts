@@ -70,7 +70,10 @@ export class InstrumentRegistry {
       reason: "CAPABILITY_WITHDRAWN", instrumentId: id, withdrawnVersion: current.version,
       metadataHash: current.metadataHash, replacementVersion: version,
     };
-    for (const listener of this.withdrawalListeners) listener(clone(event));
+    for (const listener of this.withdrawalListeners) {
+      // Registry state and the remaining subscribers must not depend on one callback.
+      try { listener(clone(event)); } catch { /* subscriber failure is isolated */ }
+    }
     return { status: "versioned", version, metadataHash, withdrawnInstrumentIds: [id] };
   }
 
@@ -102,6 +105,7 @@ export class InstrumentRegistry {
     const members = mapping.members.map(member => {
       const current = this.versions.get(member.instrumentId)?.at(-1);
       if (!current) throw new Error(`Unknown instrument: ${member.instrumentId}`);
+      if (current.version !== member.instrumentVersion) throw new Error(`Instrument version mismatch: ${member.instrumentId}`);
       if (current.metadataHash !== member.metadataHash) throw new Error(`Metadata hash mismatch: ${member.instrumentId}`);
       if (current.instrument.capabilities.some(capability => unsafeCapability.test(capability))) {
         throw new Error(`Unverified capability: ${member.instrumentId}`);
@@ -121,7 +125,9 @@ export class InstrumentRegistry {
     const mapping = this.mappings.get(underlyingId);
     if (!mapping) return [];
     const members = mapping.members.map(member => this.versions.get(member.instrumentId)?.at(-1));
-    if (members.some((current, index) => !current || current.withdrawn || current.metadataHash !== mapping.members[index]!.metadataHash)) return [];
+    if (members.some((current, index) => !current || current.withdrawn ||
+      current.version !== mapping.members[index]!.instrumentVersion ||
+      current.metadataHash !== mapping.members[index]!.metadataHash)) return [];
     return clone(members as InstrumentVersion[]);
   }
 

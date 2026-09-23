@@ -11,6 +11,7 @@
     "test": "pnpm test:unit && pnpm test:e2e",
     "test:unit": "vitest --run",
     "vitest": "vitest",
+    "seed:mappings": "tsx scripts/seed-mappings.ts",
     "test:e2e": "playwright test",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --project tsconfig.base.json",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
+    "tsx": "^4.20.0",
     "vitest": "^4.0.0"
   }
 }

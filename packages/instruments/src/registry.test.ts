@@ -19,7 +19,9 @@ function reviewed(registry: InstrumentRegistry) {
   return {
     underlyingId: "equity:AAPL", mappingVersion: 1, compatibleExposure: "one AAPL share price unit per contract",
     reviewer: "research-team", reviewedAt: "2026-09-21T00:00:00.000Z",
-    members: [first, second].map(item => ({ instrumentId: item.instrumentId, metadataHash: registry.getCurrent(item.instrumentId)!.metadataHash })),
+    members: [first, second].map(item => ({ instrumentId: item.instrumentId,
+      instrumentVersion: registry.getCurrent(item.instrumentId)!.version,
+      metadataHash: registry.getCurrent(item.instrumentId)!.metadataHash })),
     proof: {
       contractMultiplier: "official instrument specs checked for both contracts",
       settlementAsset: "official settlement documentation checked for both contracts",
@@ -67,6 +69,21 @@ describe("InstrumentRegistry", () => {
     expect(registry.resolveEquivalentInstruments("equity:AAPL")).toEqual([]);
   });
 
+  it("does not reactivate a withdrawn review when metadata cycles A to B to A", () => {
+    const registry = new InstrumentRegistry();
+    registry.upsert(first); registry.upsert(second);
+    const original = reviewed(registry);
+    registry.addReviewedMapping(original);
+    registry.upsert({ ...first, contractMultiplier: "2", effectiveFrom: "2026-09-22T00:00:00.000Z" });
+    registry.upsert({ ...first, effectiveFrom: "2026-09-23T00:00:00.000Z" });
+    expect(registry.getCurrent(first.instrumentId)?.metadataHash).toBe(original.members[0]?.metadataHash);
+    expect(registry.getCurrent(first.instrumentId)?.version).toBe(3);
+    expect(registry.resolveEquivalentInstruments("equity:AAPL")).toEqual([]);
+    expect(() => registry.addReviewedMapping({ ...original, mappingVersion: 2 })).toThrow(/instrument version/i);
+    registry.addReviewedMapping({ ...reviewed(registry), mappingVersion: 2 });
+    expect(registry.resolveEquivalentInstruments("equity:AAPL").map(item => item.version)).toEqual([3, 1]);
+  });
+
   it("versions capability changes and ignores stale observations", () => {
     const registry = new InstrumentRegistry();
     registry.upsert(first);
@@ -100,7 +117,7 @@ describe("InstrumentRegistry", () => {
     registry.upsert(first); registry.upsert(second);
     const valid = reviewed(registry);
     expect(() => registry.addReviewedMapping({ ...valid, members: [...valid.members, valid.members[0]!] })).toThrow();
-    expect(() => registry.addReviewedMapping({ ...valid, members: [{ instrumentId: "ins_missing", metadataHash: "a".repeat(64) }, valid.members[1]!] })).toThrow(/unknown instrument/i);
+    expect(() => registry.addReviewedMapping({ ...valid, members: [{ instrumentId: "ins_missing", instrumentVersion: 1, metadataHash: "a".repeat(64) }, valid.members[1]!] })).toThrow(/unknown instrument/i);
     expect(() => registry.addReviewedMapping({ ...valid, members: [{ ...valid.members[0]!, metadataHash: "b".repeat(64) }, valid.members[1]!] })).toThrow(/metadata hash/i);
     const uncertain = { ...second, capabilities: [...second.capabilities, "trading_schedule_unverified"] };
     registry.upsert({ ...uncertain, effectiveFrom: "2026-09-22T00:00:00.000Z" });
@@ -125,5 +142,16 @@ describe("InstrumentRegistry", () => {
     unsubscribe();
     registry.upsert({ ...first, contractMultiplier: "2", effectiveFrom: "2026-09-22T00:00:00.000Z" });
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("delivers withdrawal to later listeners when an earlier listener throws", () => {
+    const registry = new InstrumentRegistry();
+    registry.upsert(first);
+    registry.onCapabilityWithdrawal(() => { throw new Error("subscriber failure"); });
+    const received: unknown[] = [];
+    registry.onCapabilityWithdrawal(event => received.push(event));
+    expect(registry.upsert({ ...first, contractMultiplier: "2", effectiveFrom: "2026-09-22T00:00:00.000Z" }))
+      .toMatchObject({ status: "versioned", version: 2, withdrawnInstrumentIds: [first.instrumentId] });
+    expect(received).toMatchObject([{ reason: "CAPABILITY_WITHDRAWN", withdrawnVersion: 1, replacementVersion: 2 }]);
   });
 });
