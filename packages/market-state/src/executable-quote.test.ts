@@ -63,6 +63,42 @@ describe("quoteAtNotional", () => {
     });
   });
 
+  it("does not conceal a low-price fractional overshoot behind decimal context rounding", () => {
+    const price = `0.${"0".repeat(39)}7`;
+    const source = book([], [[price, `1${"0".repeat(40)}`]]);
+    const quote = quoteAtNotional(source, "buy", "1", T + 10);
+    expect(quote.status).toBe("partial_fill");
+    if (quote.status === "partial_fill") {
+      const auditDecimal = Decimal.clone({ precision: 250 });
+      const emittedCost = new auditDecimal(quote.filledQuantity).times(price);
+      expect(emittedCost.equals(quote.filledNotionalUsd)).toBe(true);
+      expect(emittedCost.lessThan(quote.requestedNotional)).toBe(true);
+      expect(new auditDecimal(quote.filledNotionalUsd).plus(quote.remainingNotionalUsd).equals("1")).toBe(true);
+    }
+  });
+
+  it("keeps an exactly divisible low-price high-quantity fill executable", () => {
+    const price = `0.${"0".repeat(39)}1`;
+    expect(quoteAtNotional(book([], [[price, `1${"0".repeat(40)}`]]), "buy", "1", T + 10)).toMatchObject({
+      status: "executable", filledQuantity: `1${"0".repeat(40)}`, filledNotionalUsd: "1",
+    });
+  });
+
+  it("accepts exact arithmetic at the supported 128-digit operand boundary", () => {
+    const price = `0.${"0".repeat(126)}1`;
+    const quantity = `1${"0".repeat(127)}`;
+    expect(quoteAtNotional(book([], [[price, quantity]]), "buy", "1", T + 10)).toMatchObject({
+      status: "executable", filledQuantity: quantity, filledNotionalUsd: "1", capacityUsd: "1",
+    });
+  });
+
+  it("rejects unsupported numeric syntax and book precision", () => {
+    const source = book([], [["1", "1"]]);
+    expect(quoteAtNotional(source, "buy", "1e1000", T + 10).status).toBe("invalid_request");
+    const extreme = book([], [[`0.${"0".repeat(128)}1`, "1"]]);
+    expect(quoteAtNotional(extreme, "buy", "1", T + 10).status).toBe("invalid_book");
+  });
+
   it("reports insufficient depth without an executable fill", () => {
     const quote = quoteAtNotional(book([], [["100", "1"]]), "buy", "250", T + 10);
     expect(quote).toEqual(expect.objectContaining({ status: "insufficient_depth", capacityUsd: "100" }));
