@@ -96,6 +96,7 @@ describe("Ondo Perps public connector", () => {
 
   it("sends fixed-host GET requests with no auth or action methods", async () => {
     const requests: { url: URL; init: RequestInit }[] = [];
+    let requestClock = nowMs;
     const client = new OndoPerpsPublicClient(async (url, init) => {
       requests.push({ url: new URL(url), init });
       const path = new URL(url).pathname;
@@ -106,7 +107,7 @@ describe("Ondo Perps public connector", () => {
       if (path.endsWith("/open_interest")) return Response.json(oi);
       if (path.endsWith("/depth")) return Response.json(depth);
       throw new Error("Unexpected public path");
-    }, { nowMs: () => nowMs, sleep: async () => undefined });
+    }, { nowMs: () => requestClock, sleep: async delay => { requestClock += delay; } });
     await createOndoPerpsAdapter(client, () => nowMs).probe(signal());
     expect(requests.length).toBeGreaterThan(0);
     for (const request of requests) {
@@ -140,6 +141,7 @@ describe("Ondo Perps public connector", () => {
 
   it("honors an HTTP-date Retry-After using the injected clock", async () => {
     const clock = Date.parse("2026-09-22T10:00:00Z");
+    let currentTime = clock;
     const delays: number[] = [];
     let calls = 0;
     const client = new OndoPerpsPublicClient(async () => {
@@ -147,18 +149,62 @@ describe("Ondo Perps public connector", () => {
       return calls === 1
         ? new Response("rate limited", { status: 429, headers: { "retry-after": new Date(clock + 12_000).toUTCString() } })
         : Response.json(contracts);
-    }, { nowMs: () => clock, sleep: async delay => { delays.push(delay); } });
+    }, { nowMs: () => currentTime, sleep: async delay => { delays.push(delay); currentTime += delay; } });
     await expect(client.contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 12_000 });
     await client.contracts(signal());
     expect(delays).toContain(12_000);
   });
 
-  it("clamps extreme Retry-After values and uses a bounded fallback for invalid dates", async () => {
+  it("uses a bounded fallback for invalid or overflowing Retry-After values", async () => {
     const clientWith = (value: string) => new OndoPerpsPublicClient(async () => new Response("rate limited", {
       status: 429, headers: { "retry-after": value },
     }), { nowMs: () => Date.parse("2026-09-22T10:00:00Z") });
-    await expect(clientWith("999999999999999999999").contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 60_000 });
-    await expect(clientWith(new Date("2026-09-23T10:00:00Z").toUTCString()).contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 60_000 });
+    await expect(clientWith("999999999999999999999").contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 10_000 });
+    await expect(clientWith("-120").contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 10_000 });
     await expect(clientWith("not-a-date").contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 10_000 });
+  });
+
+  for (const [name, header, expectedMs] of [
+    ["120-second delta", "120", 120_000],
+    ["next-day HTTP date", new Date(Date.parse("2026-09-22T10:00:00Z") + 86_400_000).toUTCString(), 86_400_000],
+    ["30-day HTTP date", new Date(Date.parse("2026-09-22T10:00:00Z") + 30 * 86_400_000).toUTCString(), 30 * 86_400_000],
+  ] as const) {
+    it(`does not send another request before a valid ${name} Retry-After deadline`, async () => {
+      const startedAt = Date.parse("2026-09-22T10:00:00Z");
+      let currentTime = startedAt;
+      const requestTimes: number[] = [];
+      const sleeps: number[] = [];
+      const client = new OndoPerpsPublicClient(async () => {
+        requestTimes.push(currentTime);
+        return requestTimes.length === 1
+          ? new Response("rate limited", { status: 429, headers: { "retry-after": header } })
+          : Response.json(contracts);
+      }, { nowMs: () => currentTime, sleep: async delay => { sleeps.push(delay); currentTime += delay; } });
+      await expect(client.contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: expectedMs });
+      await client.contracts(signal());
+      expect(requestTimes).toHaveLength(2);
+      expect(requestTimes[1]).toBeGreaterThanOrEqual(startedAt + expectedMs);
+      expect(sleeps.every(delay => delay <= 2_147_483_647)).toBe(true);
+    });
+  }
+
+  it("cancels a long Retry-After wait before any second request", async () => {
+    const startedAt = Date.parse("2026-09-22T10:00:00Z");
+    let requests = 0;
+    let sleepStarted!: () => void;
+    const enteredSleep = new Promise<void>(resolve => { sleepStarted = resolve; });
+    const client = new OndoPerpsPublicClient(async () => {
+      requests += 1;
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "120" } });
+    }, { nowMs: () => startedAt, sleep: async delay => {
+      if (delay > 0) { sleepStarted(); await new Promise<void>(() => undefined); }
+    } });
+    await expect(client.contracts(signal())).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 120_000 });
+    const controller = new AbortController();
+    const pending = client.contracts(controller.signal);
+    await enteredSleep;
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "ABORTED" });
+    expect(requests).toBe(1);
   });
 });

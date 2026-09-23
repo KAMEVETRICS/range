@@ -29,16 +29,21 @@ const allowedPaths = new Set([
   "/v1/markets", "/v1/perps/contracts", "/v1/perps/funding_rates",
   "/v1/perps/funding_rate_history", "/v1/perps/open_interest", "/v1/perps/depth",
 ]);
+const MAX_TIMER_MS = 2_147_483_647;
 
 function retryAfterMs(header: string | null, nowMs: number): number {
   if (header === null) return 10_000;
   const value = header.trim();
-  const delay = /^\d+$/.test(value)
-    ? Number(value) * 1_000
-    : Date.parse(value) - nowMs;
-  if (Number.isNaN(delay)) return 10_000;
-  if (!Number.isFinite(delay)) return 60_000;
-  return Math.max(1_000, Math.min(60_000, Math.ceil(delay)));
+  let delay: number;
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    if (!Number.isSafeInteger(seconds) || seconds > Math.floor((Number.MAX_SAFE_INTEGER - nowMs) / 1_000)) return 10_000;
+    delay = seconds * 1_000;
+  } else {
+    delay = Date.parse(value) - nowMs;
+  }
+  if (!Number.isSafeInteger(delay) || delay < 0) return 10_000;
+  return Math.max(1_000, delay);
 }
 
 /** Fixed-host, unauthenticated, documented GET endpoints only. */
@@ -58,7 +63,11 @@ export class OndoPerpsPublicClient implements OndoPerpsHttpPort {
       if (signal.aborted) throw new ConnectorDiagnosticError("ABORTED");
       const now = this.timing.nowMs ?? Date.now;
       // At most two requests per second per client, including discovery and research reads.
-      await waitForRetry(Math.max(0, this.nextRequestAt - now()), { signal, sleep: this.timing.sleep });
+      while (this.nextRequestAt > now()) {
+        // setTimeout overflows above 2^31-1 ms. Keep the absolute deadline
+        // and wait in cancellable chunks so long server cooldowns are honored.
+        await waitForRetry(Math.min(this.nextRequestAt - now(), MAX_TIMER_MS), { signal, sleep: this.timing.sleep });
+      }
       this.nextRequestAt = Math.max(now(), this.nextRequestAt) + 500;
       const url = `${ONDO_PERPS_API_ORIGIN}${path}${query.size ? `?${query}` : ""}`;
       const response = await this.request(url, {
