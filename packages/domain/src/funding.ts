@@ -12,6 +12,7 @@ export const ExecutableQuoteSchema = z.object({
   averagePrice: DecimalStringSchema,
   worstPrice: DecimalStringSchema,
   filledQuantity: DecimalStringSchema,
+  filledNotionalUsd: DecimalStringSchema.optional(),
   capacityUsd: DecimalStringSchema,
   depthUtilization: DecimalStringSchema,
   sourceBookEventId: EventIdSchema,

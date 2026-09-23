@@ -248,8 +248,8 @@ it("reconstructs a real RFQ stream only across contiguous sequence numbers", asy
   expect(events).toHaveLength(2);
   expect(events[1]).toMatchObject({
     sequence: 2,
-    eligibility: "live",
-    qualityFlags: expect.arrayContaining(["rfq_real_book"]),
+    eligibility: "reference_only",
+    qualityFlags: expect.arrayContaining(["rfq_real_book", "book_update_mode_ambiguous"]),
     payload: {
       kind: "order_book",
       bids: [{ price: "339.40", quantity: "1.50" }],

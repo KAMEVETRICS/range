@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { Decimal } from "decimal.js";
 import { OrderBook } from "./order-book.js";
-import { observation } from "./test-fixtures.js";
+import { observation, T } from "./test-fixtures.js";
 
 describe("OrderBook", () => {
   it("sorts levels by exact decimal price and removes a zero quantity delta", () => {
@@ -56,6 +57,17 @@ describe("OrderBook", () => {
     expect(book.levels("sell")).toEqual([]);
   });
 
+  it("deletes a sparse delta level while preserving untouched level provenance", () => {
+    const book = new OrderBook();
+    const snapshot = observation("1", [["99", "1"]], [["100", "1"], ["101", "1"]]);
+    book.applySnapshot(snapshot);
+    book.applyDelta(observation("2", [], [["100", "0"]], {
+      sourceTimestamp: T + 100, receivedTimestamp: T + 110,
+    }));
+    expect(book.levels("buy")).toEqual([{ price: "101", quantity: "1" }]);
+    expect(book.entries("buy")[0]).toMatchObject({ eventId: snapshot.eventId, sourceTimestamp: T });
+  });
+
   it("invalidates crossed books and leaves a prior valid snapshot unusable", () => {
     const book = new OrderBook();
     book.applySnapshot(observation("1", [["99", "1"]], [["101", "1"]]));
@@ -80,10 +92,10 @@ describe("OrderBook", () => {
         expect(book.status()).toBe("valid");
         const bids = book.levels("sell");
         const asks = book.levels("buy");
-        expect(bids.every(level => Number(level.quantity) >= 0)).toBe(true);
-        expect(asks.every(level => Number(level.quantity) >= 0)).toBe(true);
-        expect(bids.map(level => Number(level.price))).toEqual([...bids].map(level => Number(level.price)).sort((a, b) => b - a));
-        expect(asks.map(level => Number(level.price))).toEqual([...asks].map(level => Number(level.price)).sort((a, b) => a - b));
+        expect(bids.every(level => new Decimal(level.quantity).greaterThanOrEqualTo(0))).toBe(true);
+        expect(asks.every(level => new Decimal(level.quantity).greaterThanOrEqualTo(0))).toBe(true);
+        expect(bids.every((level, index) => index === 0 || new Decimal(bids[index - 1]!.price).greaterThanOrEqualTo(level.price))).toBe(true);
+        expect(asks.every((level, index) => index === 0 || new Decimal(asks[index - 1]!.price).lessThanOrEqualTo(level.price))).toBe(true);
       }
     }
   });

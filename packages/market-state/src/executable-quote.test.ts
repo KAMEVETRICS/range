@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ExecutableQuoteSchema } from "@range/domain";
+import { Decimal } from "decimal.js";
 import { OrderBook } from "./order-book.js";
 import { quoteAtNotional } from "./executable-quote.js";
 import { observation, T } from "./test-fixtures.js";
+
+const ExactDecimal = Decimal.clone({ precision: 100 });
 
 function book(bids: [string, string][], asks: [string, string][], overrides: Record<string, unknown> = {}) {
   const result = new OrderBook();
@@ -39,6 +42,10 @@ describe("quoteAtNotional", () => {
     const sell = quoteAtNotional(source, "sell", "1", T + 10);
     expect(buy).toMatchObject({ status: "executable", averagePrice: "4", worstPrice: "4" });
     expect(sell).toMatchObject({ status: "executable", averagePrice: "3", worstPrice: "3" });
+    if (sell.status === "executable") {
+      expect(new ExactDecimal(sell.filledNotionalUsd).equals(new ExactDecimal(sell.filledQuantity).times("3"))).toBe(true);
+      expect(new ExactDecimal(sell.filledNotionalUsd).lessThanOrEqualTo(sell.requestedNotional)).toBe(true);
+    }
   });
 
   it("reports insufficient depth without an executable fill", () => {
@@ -95,6 +102,29 @@ describe("quoteAtNotional", () => {
     expect(quoteAtNotional(source, "buy", "50", T + 10).status).toBe("reference_only");
   });
 
+  it("measures capacity from fresh contiguous ask depth only", () => {
+    const source = new OrderBook();
+    source.applySnapshot(observation("1", [["99", "1"]], [["100", "1"], ["101", "100"]]));
+    source.applyDelta(observation("2", [], [["100", "1"]], {
+      sourceTimestamp: T + 1_200, receivedTimestamp: T + 1_210,
+    }));
+    expect(quoteAtNotional(source, "buy", "50", T + 1_500)).toMatchObject({
+      status: "executable", capacityUsd: "100", depthUtilization: "0.5",
+    });
+    expect(quoteAtNotional(source, "buy", "150", T + 1_500)).toMatchObject({
+      status: "insufficient_depth", capacityUsd: "100",
+    });
+  });
+
+  it("excludes reference-only tail levels from executable capacity", () => {
+    const source = new OrderBook();
+    source.applySnapshot(observation("1", [["99", "1"]], [["100", "1"], ["101", "100"]], { eligibility: "reference_only" }));
+    source.applyDelta(observation("2", [], [["100", "1"]]));
+    expect(quoteAtNotional(source, "buy", "50", T + 10)).toMatchObject({
+      status: "executable", capacityUsd: "100", depthUtilization: "0.5",
+    });
+  });
+
   it("rejects stale, reference-only, and invalid books", () => {
     expect(quoteAtNotional(book([["99", "1"]], [["101", "1"]]), "buy", "50", T + 1_001).status).toBe("stale_input");
     expect(quoteAtNotional(book([["99", "1"]], [["101", "1"]], { eligibility: "reference_only" }), "buy", "50", T + 10).status).toBe("reference_only");
@@ -109,20 +139,34 @@ describe("quoteAtNotional", () => {
   it("keeps generated VWAP within best/worst and worsens monotonically with size", () => {
     for (let seed = 1; seed <= 40; seed++) {
       const source = book([["99", String(seed)], ["98", String(seed)]], [["101", String(seed)], ["102", String(seed)]]);
-      const firstBuy = quoteAtNotional(source, "buy", "101", T + 10);
-      const nextBuy = quoteAtNotional(source, "buy", "202", T + 10);
-      const firstSell = quoteAtNotional(source, "sell", "98", T + 10);
-      const nextSell = quoteAtNotional(source, "sell", "196", T + 10);
+      const firstBuy = quoteAtNotional(source, "buy", String(50 * seed), T + 10);
+      const nextBuy = quoteAtNotional(source, "buy", String(150 * seed), T + 10);
+      const firstSell = quoteAtNotional(source, "sell", String(49 * seed), T + 10);
+      const nextSell = quoteAtNotional(source, "sell", String(147 * seed), T + 10);
       for (const quote of [firstBuy, nextBuy, firstSell, nextSell]) {
         expect(quote.status).toBe("executable");
         if (quote.status === "executable") {
-          const average = Number(quote.averagePrice);
-          const worst = Number(quote.worstPrice);
-          expect(quote.side === "buy" ? average <= worst : average >= worst).toBe(true);
+          const average = new Decimal(quote.averagePrice);
+          const worst = new Decimal(quote.worstPrice);
+          expect(quote.side === "buy" ? average.lessThanOrEqualTo(worst) : average.greaterThanOrEqualTo(worst)).toBe(true);
+          expect(new Decimal(quote.filledNotionalUsd).lessThanOrEqualTo(quote.requestedNotional)).toBe(true);
+          expect(new Decimal(quote.filledNotionalUsd).lessThanOrEqualTo(quote.capacityUsd)).toBe(true);
         }
       }
-      if (firstBuy.status === "executable" && nextBuy.status === "executable") expect(Number(nextBuy.averagePrice)).toBeGreaterThanOrEqual(Number(firstBuy.averagePrice));
-      if (firstSell.status === "executable" && nextSell.status === "executable") expect(Number(nextSell.averagePrice)).toBeLessThanOrEqual(Number(firstSell.averagePrice));
+      if (firstBuy.status === "executable" && nextBuy.status === "executable") {
+        expect(nextBuy.worstPrice).toBe("102");
+        expect(new Decimal(nextBuy.averagePrice).greaterThanOrEqualTo(firstBuy.averagePrice)).toBe(true);
+        const actualCost = new ExactDecimal(101).times(seed)
+          .plus(new ExactDecimal(102).times(new ExactDecimal(nextBuy.filledQuantity).minus(seed)));
+        expect(new ExactDecimal(nextBuy.filledNotionalUsd).equals(actualCost)).toBe(true);
+      }
+      if (firstSell.status === "executable" && nextSell.status === "executable") {
+        expect(nextSell.worstPrice).toBe("98");
+        expect(new Decimal(nextSell.averagePrice).lessThanOrEqualTo(firstSell.averagePrice)).toBe(true);
+        const actualCost = new ExactDecimal(99).times(seed)
+          .plus(new ExactDecimal(98).times(new ExactDecimal(nextSell.filledQuantity).minus(seed)));
+        expect(new ExactDecimal(nextSell.filledNotionalUsd).equals(actualCost)).toBe(true);
+      }
     }
   });
 });

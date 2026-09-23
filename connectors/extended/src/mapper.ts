@@ -100,6 +100,7 @@ export function mapExtendedMarkets(input: unknown, observedAtMs: number): Extend
         "perpetual",
         "tokenized_stock",
         "orderbook",
+        "orderbook_reference_only",
         "explicit_equity_evidence",
         "market_stats_research_only",
         row.isRfq ? "rfq_real_book_stream" : "central_limit_order_book",
@@ -186,9 +187,9 @@ function rawEvent(
 ): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
   const isSequencedRealStream = sequence !== undefined && bookKind !== "rest";
-  const referenceOnly = !isContinuous(instrument) || isOffHours(instrument) || !isSequencedRealStream;
   const qualityFlags = ["explicit_equity_evidence", "capacity_usd_uncomputed"];
   if (bookKind === "rest") qualityFlags.push("client_receipt_timestamp", "reference_book");
+  else qualityFlags.push("book_update_mode_ambiguous");
   if (bookKind === "rest" && isRfq(instrument)) qualityFlags.push("rfq_indicative_book");
   if (bookKind === "rfq_real") qualityFlags.push("rfq_real_book");
   if (isOffHours(instrument)) qualityFlags.push("market_off_hours");
@@ -203,7 +204,7 @@ function rawEvent(
     freshnessBudgetMs: 5_000,
     qualityFlags,
     rawPayloadRefOrHash,
-    eligibility: referenceOnly ? "reference_only" : "live",
+    eligibility: "reference_only",
     payload: CanonicalObservationPayloadSchema.parse({ kind: "order_book", bids, asks, capacityUsd: "0" }),
   };
 }
