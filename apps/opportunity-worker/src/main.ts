@@ -36,12 +36,12 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const funding = new Map<string, ObservationEnvelope[]>();
   const health = new Map<string, VenueHealth>();
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  const generations = new Map<string, number>();
   const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const active = new Map<string, ReturnType<typeof activeLifecycle>>();
   const unsubscribe: Array<() => Promise<void>> = [];
   let publishing = Promise.resolve();
-  const publish = async (opportunity: Opportunity, evidence?: ReturnType<typeof evaluateOpportunityWithEvidence>["evidence"]) => {
-    if (evidence) await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
+  const publish = async (opportunity: Opportunity) => {
     await bus.publish("opportunity.v1", opportunity.underlyingId, opportunity);
   };
   const queuePublish = (opportunity: Opportunity) => {
@@ -75,9 +75,17 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     }
   };
-  const removeWithdrawal = registry.onCapabilityWithdrawal(event => expireInstrument(event.instrumentId));
+  const bump = (underlyingId: string) => generations.set(underlyingId, (generations.get(underlyingId) ?? 0) + 1);
+  const removeWithdrawal = registry.onCapabilityWithdrawal(event => {
+    const underlyingId = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+    books.delete(event.instrumentId);
+    funding.delete(event.instrumentId);
+    if (underlyingId) bump(underlyingId);
+    expireInstrument(event.instrumentId);
+  });
 
   const evaluate = async (underlyingId: string) => {
+    const generation = generations.get(underlyingId) ?? 0;
     const at = now();
     const instrumentIds = [...books.keys()].filter(id => registry.getCurrent(id)?.instrument.underlyingId === underlyingId);
     for (let left = 0; left < instrumentIds.length; left++) for (let right = left + 1; right < instrumentIds.length; right++) {
@@ -94,6 +102,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           const result = quoteAtNotional(books.get(instrument.instrumentId)!, side, policy.requestedNotionalUsd, at);
           const quote = result.status === "executable" ? (({ status: _status, ...value }) => value)(result) : undefined;
           let projection;
+          let fundingSourceExpiresAtMs: number | undefined;
           if (instrument.productType === "perpetual") {
             const observations = funding.get(instrument.instrumentId) ?? [];
             const normalized: NormalizedFunding[] = observations.flatMap(item => {
@@ -102,15 +111,22 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
             });
             const projected = projectFunding({ side: side === "buy" ? "long" : "short", notionalUsd: policy.requestedNotionalUsd },
               { startMs: at, endMs: at + policy.holdingHorizonMs }, normalized, at);
-            if (projected.status === "projected") projection = projected;
+            if (projected.status === "projected") {
+              projection = projected;
+              fundingSourceExpiresAtMs = Math.min(...normalized
+                .filter(item => projected.sourceObservationIds.includes(item.sourceObservationId as never))
+                .map(item => item.sourceTimestampMs + item.freshnessBudgetMs));
+            }
           }
+          const metadata = books.get(instrument.instrumentId)?.metadata();
           return {
             instrumentId: instrument.instrumentId, side,
             eligibility: quote ? "live" : "reference_only",
-            quote, health: health.get(instrument.venue),
+            quote, health: health.get(instrument.venue), qualityFlags: metadata ? [...metadata.qualityFlags] : [],
             tradingFeeBps: policy.feesBpsByVenue[instrument.venue],
             slippageBps: policy.slippageBpsByVenue[instrument.venue],
             funding: projection, fundingEvaluatedAtMs: projection ? at : undefined,
+            fundingSourceExpiresAtMs,
           };
         });
         const input: EvaluationInput = {
@@ -121,13 +137,17 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           synchronizationBudgetMs: policy.synchronizationBudgetMs ?? 2_000,
           maxClockSkewMs: policy.maxClockSkewMs ?? 500,
           calculationVersion: policy.calculationVersion ?? "calc.v1",
+          holdingHorizonMs: policy.holdingHorizonMs,
           costs: { financingBps: policy.financingBps, gasAndTransferBps: policy.gasAndTransferBps,
             fxConversionBps: policy.fxConversionBps, uncertaintyBufferBps: policy.uncertaintyBufferBps },
           borrow: policy.borrowByInstrument?.[pair.find(item => item.productType === "tokenized_spot")?.instrumentId ?? ""],
           legs,
         };
         const { opportunity, evidence } = evaluateOpportunityWithEvidence(input);
-        await publish(opportunity, evidence);
+        if (evidence) await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
+        if ((generations.get(underlyingId) ?? 0) !== generation) return;
+        await publish(opportunity);
+        if ((generations.get(underlyingId) ?? 0) !== generation) return;
         if (opportunity.status === "actionable") {
           const lifecycle = activeLifecycle(opportunity);
           active.set(opportunity.opportunityId, lifecycle);
@@ -144,24 +164,25 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     }
   };
   const schedule = (underlyingId: string) => {
-    const existing = pending.get(underlyingId);
-    if (existing) clearTimeout(existing);
+    if (pending.has(underlyingId)) return;
     pending.set(underlyingId, setTimeout(() => {
       pending.delete(underlyingId);
       publishing = publishing.then(() => evaluate(underlyingId));
     }, debounceMs));
   };
   unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", async event => {
-    expireBook(event.instrumentId);
     const book = books.get(event.instrumentId) ?? new OrderBook();
+    const current = book.metadata();
+    if (current && (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp)) return;
+    expireBook(event.instrumentId);
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    if (underlying) schedule(underlying);
+    if (underlying) { bump(underlying); schedule(underlying); }
   }));
   unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", async event => {
-    expireBook(event.instrumentId);
     const observations = funding.get(event.instrumentId) ?? [];
+    let accepted = false;
     if (event.payload.rateType !== "realized") {
       const previous = observations.findIndex(item => item.payload.kind === "funding" &&
         item.payload.nextSettlementMs === event.payload.nextSettlementMs);
@@ -170,13 +191,16 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         if (event.sourceTimestamp > old.sourceTimestamp ||
             event.sourceTimestamp === old.sourceTimestamp && event.receivedTimestamp > old.receivedTimestamp) {
           observations[previous] = event;
+          accepted = true;
         }
-      } else observations.push(event);
+      } else { observations.push(event); accepted = true; }
     }
+    if (!accepted) return;
+    expireBook(event.instrumentId);
     if (observations.length > 10_000) observations.shift();
     funding.set(event.instrumentId, observations);
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    if (underlying) schedule(underlying);
+    if (underlying) { bump(underlying); schedule(underlying); }
   }));
   unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", async event => {
     health.set(event.venue, event);
@@ -190,16 +214,18 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     }
     for (const id of books.keys()) {
       const instrument = registry.getCurrent(id)?.instrument;
-      if (instrument?.venue === event.venue) schedule(instrument.underlyingId);
+      if (instrument?.venue === event.venue) { bump(instrument.underlyingId); schedule(instrument.underlyingId); }
     }
   }));
   unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", async event => {
     if (event.kind === "upsert") {
       registry.upsert(event.instrument);
+      bump(event.instrument.underlyingId);
       schedule(event.instrument.underlyingId);
     } else {
       expireMapping(event.mapping.underlyingId);
       registry.addReviewedMapping(event.mapping);
+      bump(event.mapping.underlyingId);
       schedule(event.mapping.underlyingId);
     }
   }));

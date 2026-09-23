@@ -5,7 +5,7 @@ import {
   type RejectionCode, type VenueHealth,
 } from "@range/domain";
 import type { InstrumentRegistry } from "@range/instruments";
-import { buildEvidence, type EvidenceInput } from "@range/evidence";
+import { buildEvidence, canonicalJson, type EvidenceInput } from "@range/evidence";
 import { costBps, decimal, format, netEdgeBps } from "./cost-model.js";
 import { perpSpreadBps, validPerpSpread } from "./strategies/perp-spread.js";
 import { validSpotPerp } from "./strategies/spot-perp.js";
@@ -23,6 +23,7 @@ export interface EvaluationLeg {
   slippageBps?: string;
   funding?: FundingProjection;
   fundingEvaluatedAtMs?: number;
+  fundingSourceExpiresAtMs?: number;
   venueLimitUsd?: string;
   depthCapUsd?: string;
   qualityFlags?: string[];
@@ -39,6 +40,7 @@ export interface EvaluationInput {
   synchronizationBudgetMs: number;
   maxClockSkewMs: number;
   calculationVersion: string;
+  holdingHorizonMs: number;
   quoteFreshnessBudgetMs?: number;
   costs: {
     financingBps?: string;
@@ -203,12 +205,25 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
       minimumNotionalUsd: { kind: "decimal", value: input.minimumNotionalUsd as never },
       minNetEdgeBps: { kind: "decimal", value: input.minNetEdgeBps as never },
       quoteFreshnessBudgetMs: { kind: "integer", value: budget },
+      evaluationTimeMs: { kind: "integer", value: input.nowMs },
+      holdingHorizonMs: { kind: "integer", value: input.holdingHorizonMs },
+      synchronizationBudgetMs: { kind: "integer", value: input.synchronizationBudgetMs },
+      maxClockSkewMs: { kind: "integer", value: input.maxClockSkewMs },
       strategy: { kind: "string", value: input.strategy },
+      financingBps: { kind: "string", value: input.costs.financingBps ?? "missing" },
+      gasAndTransferBps: { kind: "string", value: input.costs.gasAndTransferBps ?? "missing" },
+      fxConversionBps: { kind: "string", value: input.costs.fxConversionBps ?? "missing" },
+      uncertaintyBufferBps: { kind: "string", value: input.costs.uncertaintyBufferBps ?? "missing" },
+      borrow: { kind: "string", value: canonicalJson(input.borrow ?? null) },
       ...Object.fromEntries(input.legs.flatMap((leg, index) => [
         [`leg${index}InstrumentId`, { kind: "string" as const, value: leg.instrumentId }],
         [`leg${index}Side`, { kind: "string" as const, value: leg.side }],
         [`leg${index}Eligibility`, { kind: "string" as const, value: leg.eligibility }],
-        [`leg${index}VenueHealth`, { kind: "string" as const, value: leg.health?.connectionState ?? "missing" }],
+        [`leg${index}VenueHealth`, { kind: "string" as const, value: canonicalJson(leg.health ?? null) }],
+        [`leg${index}QualityFlags`, { kind: "string" as const, value: canonicalJson(leg.qualityFlags ?? []) }],
+        [`leg${index}VenueLimitUsd`, { kind: "string" as const, value: leg.venueLimitUsd ?? "missing" }],
+        [`leg${index}DepthCapUsd`, { kind: "string" as const, value: leg.depthCapUsd ?? "missing" }],
+        [`leg${index}FundingSourceExpiresAtMs`, { kind: "string" as const, value: leg.fundingSourceExpiresAtMs?.toString() ?? "missing" }],
       ])),
     },
     intermediateValues: {
@@ -234,7 +249,9 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
   } : undefined;
   const evidence = evidenceInput ? buildEvidence(evidenceInput) : undefined;
   const oldest = Math.max(0, ...ageValues);
-  const ttl = Math.max(0, Math.min(TTL[input.strategy], budget - oldest));
+  const fundingDeadline = Math.min(...input.legs.flatMap(leg =>
+    Number.isSafeInteger(leg.fundingSourceExpiresAtMs) ? [leg.fundingSourceExpiresAtMs!] : []), Number.POSITIVE_INFINITY);
+  const ttl = Math.max(0, Math.min(TTL[input.strategy], budget - oldest, fundingDeadline - input.nowMs));
   const expiresAt = new Date(input.nowMs + ttl).toISOString();
   const opportunityId = `opp_${createHash("sha256").update(JSON.stringify([
     input.strategy, input.underlyingId, input.legs.map(leg => [leg.instrumentId, leg.side]), input.nowMs, evidence?.evidenceHash ?? "none",

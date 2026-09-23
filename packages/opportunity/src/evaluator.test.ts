@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InstrumentRegistry } from "@range/instruments";
 import { FundingProjectionSchema, OpportunitySchema, type FundingProjection } from "@range/domain";
-import { evaluateOpportunity, type EvaluationInput } from "./evaluator.js";
+import { evaluateOpportunity, evaluateOpportunityWithEvidence, type EvaluationInput } from "./evaluator.js";
 import { activeLifecycle } from "./lifecycle.js";
 
 const NOW = 1_790_000_000_000;
@@ -55,6 +55,7 @@ function candidate(overrides: Partial<EvaluationInput> = {}, firstProductType: "
     registry, strategy: "perp_spread", underlyingId: "equity:TSLA", nowMs: NOW,
     requestedNotionalUsd: "1000", minimumNotionalUsd: "100", minNetEdgeBps: "0",
     synchronizationBudgetMs: 2_000, maxClockSkewMs: 500, calculationVersion: "calc.v1",
+    holdingHorizonMs: 2_000,
     costs: { financingBps: "2", gasAndTransferBps: "1", fxConversionBps: "0.5", uncertaintyBufferBps: "3.5" },
     legs: [
       { instrumentId: "ins_a", side: "buy", eligibility: "live", quote: quote("buy", "100", "evt_book_a", "5000"), health: health("venue_a"), tradingFeeBps: "3", slippageBps: "2", funding: projection("ins_a", "venue_a", "long", "5"), fundingEvaluatedAtMs: NOW },
@@ -80,6 +81,41 @@ describe("evaluateOpportunity", () => {
     expect(result.status).toBe("rejected");
     expect(result.rejectionReasons).toContain("STALE_INPUT");
     expect(OpportunitySchema.safeParse(result).success).toBe(true);
+  });
+
+  it("expires at the earliest funding source freshness deadline", () => {
+    const input = candidate();
+    input.legs[0]!.fundingSourceExpiresAtMs = NOW + 250;
+    input.legs[1]!.fundingSourceExpiresAtMs = NOW + 700;
+    const result = evaluateOpportunity(input);
+    expect(result.status).toBe("actionable");
+    expect(Date.parse(result.expiresAt)).toBe(NOW + 250);
+  });
+
+  it("hashes every policy, health, borrow, and capacity decision input", () => {
+    const base = candidate({ strategy: "spot_perp_basis", borrow: { costBps: "1", capacityUsd: "2000", observedAtMs: NOW - 10 } }, "tokenized_spot");
+    base.legs[0]!.funding = undefined;
+    base.legs[0]!.fundingEvaluatedAtMs = undefined;
+    base.legs[0]!.venueLimitUsd = "1800";
+    base.legs[0]!.depthCapUsd = "1700";
+    const hash = (input: EvaluationInput) => evaluateOpportunityWithEvidence(input).evidence!.evidenceHash;
+    const original = hash(base);
+    const mutations: Array<(input: EvaluationInput) => void> = [
+      input => { input.nowMs += 1; input.legs[1]!.fundingEvaluatedAtMs = input.nowMs; input.legs[1]!.funding!.holdingStartMs = input.nowMs as never; input.legs[1]!.funding!.holdingEndMs = input.nowMs + 2_000 as never; },
+      input => { input.holdingHorizonMs = 3_000; },
+      input => { input.synchronizationBudgetMs += 1; },
+      input => { input.maxClockSkewMs += 1; },
+      input => { input.legs[0]!.health!.errorCounters = { disconnect: 1 }; },
+      input => { input.borrow!.capacityUsd = "1900"; },
+      input => { input.legs[0]!.venueLimitUsd = "1600"; },
+      input => { input.legs[0]!.depthCapUsd = "1500"; },
+    ];
+    for (const mutate of mutations) {
+      const changed = structuredClone(base);
+      changed.registry = base.registry;
+      mutate(changed);
+      expect(hash(changed)).not.toBe(original);
+    }
   });
 
   it("requires a current reviewed mapping", () => {
