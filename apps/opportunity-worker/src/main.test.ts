@@ -3,7 +3,7 @@ import { InMemoryEventBus } from "@range/event-bus";
 import { isCurrentAtRevision, type Opportunity } from "@range/domain";
 import { InstrumentRegistry } from "@range/instruments";
 import { startOpportunityWorker } from "./main.js";
-import { createInMemoryRevisionAuthority } from "./revision-authority.js";
+import { createInMemoryRevisionAuthority, type RevisionAuthority } from "./revision-authority.js";
 
 const NOW = 1_790_000_000_000;
 
@@ -92,6 +92,83 @@ describe("opportunity worker", () => {
     expect(worker.currentRevision("equity:TSLA")).toBe(invalidRevision);
     expect(seen.slice(marker).some(event => event.status === "actionable")).toBe(false);
     await worker.stop();
+  });
+
+  it("rejects a lower sequence at equal source time even when received later", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "sequence-replay", async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_crossed_seq_101"),
+      sequence: "101", sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 2,
+      payload: { kind: "order_book", bids: [{ price: "101", quantity: "20" }],
+        asks: [{ price: "100", quantity: "20" }], capacityUsd: "2000" } } as never);
+    await worker.flush();
+    const revision = worker.currentRevision("equity:TSLA");
+    const marker = seen.length;
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_delayed_seq_100"),
+      sequence: "100", sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1,
+      payload: { kind: "order_book", bids: [{ price: "99", quantity: "20" }],
+        asks: [{ price: "100", quantity: "20" }], capacityUsd: "2000" } } as never);
+    await worker.flush();
+    expect(worker.currentRevision("equity:TSLA")).toBe(revision);
+    expect(seen.slice(marker).some(event => event.status === "actionable")).toBe(false);
+    await worker.stop();
+  });
+
+  it("does not drop a sequence boundary when a later snapshot omits sequence", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_seq_101"),
+      sequence: "101", sourceTimestamp: NOW - 2 } as never);
+    const revision = worker.currentRevision("equity:TSLA");
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_unsequenced"),
+      sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1 } as never);
+    expect(worker.currentRevision("equity:TSLA")).toBe(revision);
+    await worker.stop();
+  });
+
+  it.each([undefined, null, 0])("fails closed when authority advance rejects %s", async reason => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const backing = createInMemoryRevisionAuthority();
+    let failNext = false;
+    const authority: RevisionAuthority = {
+      kind: "volatile",
+      async advance(underlyingId) {
+        if (failNext) { failNext = false; return Promise.reject(reason); }
+        return backing.advance(underlyingId);
+      },
+      read: underlyingId => backing.read(underlyingId),
+    };
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", `authority-falsy-${String(reason)}`, async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority });
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const actionable = seen.find(event => event.status === "actionable")!;
+    failNext = true;
+    await expect(bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_authority_fails"),
+      sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1, eligibility: "reference_only" } as never))
+      .rejects.toThrow(/revision authority unavailable/i);
+    expect(worker.isCurrent(actionable)).toBe(false);
+    expect(() => worker.currentRevision("equity:TSLA")).toThrow(/revision authority unavailable/i);
+    await worker.stop();
+  });
+
+  it.each([undefined, null, 0])("fails production startup when authority read rejects %s", async reason => {
+    const authority: RevisionAuthority = {
+      kind: "durable",
+      advance: async () => 1,
+      read: async () => Promise.reject(reason),
+    };
+    await expect(startOpportunityWorker(new InMemoryEventBus(), reviewedRegistry(), {
+      ...policy, runtime: "production", revisionAuthority: authority,
+    })).rejects.toThrow(/revision authority unavailable/i);
   });
 
   it("does not advance currentness for stale or unchanged registry upserts", async () => {

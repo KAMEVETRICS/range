@@ -34,6 +34,21 @@ export interface OpportunityWorker {
   isCurrent(opportunity: Opportunity): boolean;
 }
 
+interface BookCursor {
+  eventId: string;
+  sourceTimestamp: number;
+  receivedTimestamp: number;
+  sequencePresent: boolean;
+  sequence?: bigint;
+}
+
+const DECIMAL_SEQUENCE = /^(?:0|[1-9]\d*)$/;
+function bookSequence(value: ObservationEnvelope["sequence"]): bigint | undefined {
+  if (value === undefined || typeof value === "number" && !Number.isSafeInteger(value)) return undefined;
+  const text = String(value);
+  return DECIMAL_SEQUENCE.test(text) ? BigInt(text) : undefined;
+}
+
 /** Consumes normalized state and evaluates only affected underlyings after a bounded debounce. */
 export async function startOpportunityWorker(bus: EventBus, registry: InstrumentRegistry, policy: WorkerPolicy): Promise<OpportunityWorker> {
   const runtime = policy.runtime ?? "production";
@@ -45,20 +60,32 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const now = policy.now ?? Date.now;
   const debounceMs = Math.max(0, Math.min(25, policy.debounceMs ?? 25));
   const books = new Map<string, OrderBook>();
-  const bookCursors = new Map<string, { eventId: string; sourceTimestamp: number; receivedTimestamp: number }>();
+  const bookCursors = new Map<string, BookCursor>();
   const funding = new Map<string, ObservationEnvelope[]>();
   const health = new Map<string, VenueHealth>();
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
   const generations = new Map<string, number>();
+  for (const mapping of registry.listReviewedMappings()) {
+    try {
+      const revision = await revisionAuthority.read(mapping.underlyingId);
+      if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("Invalid revision");
+      generations.set(mapping.underlyingId, revision);
+    } catch {
+      throw new Error("Revision authority unavailable");
+    }
+  }
   const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const active = new Map<string, ReturnType<typeof activeLifecycle>>();
   const unsubscribe: Array<() => Promise<void>> = [];
   let publishing = Promise.resolve();
   let accepting = Promise.resolve();
-  let authorityFailure: unknown;
+  let authorityFailed = false;
+  const assertAuthority = () => {
+    if (authorityFailed) throw new Error("Revision authority unavailable");
+  };
   const acceptInput = (operation: () => Promise<void>): Promise<void> => {
     const result = accepting.then(async () => {
-      if (authorityFailure) throw authorityFailure;
+      assertAuthority();
       await operation();
     });
     accepting = result.catch(() => {});
@@ -73,8 +100,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         throw new Error(`Revision authority returned a non-increasing revision for ${underlyingId}`);
       }
     } catch (error) {
-      authorityFailure = error;
-      throw error;
+      authorityFailed = true;
+      throw new Error("Revision authority unavailable");
     }
     generations.set(underlyingId, revision);
     return revision;
@@ -118,7 +145,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   };
   const evaluateUnlocked = async (underlyingId: string) => {
     await accepting;
-    if (authorityFailure) throw authorityFailure;
+    assertAuthority();
     const generation = revisionOf(underlyingId);
     const at = now();
     const instrumentIds = [...books.keys()].filter(id => registry.getCurrent(id)?.instrument.underlyingId === underlyingId);
@@ -180,7 +207,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         const { opportunity, evidence } = evaluateOpportunityWithEvidence(input);
         if (evidence) await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
         await accepting;
-        if (authorityFailure) throw authorityFailure;
+        assertAuthority();
         if (revisionOf(underlyingId) !== generation) return;
         const versioned: Opportunity = { ...opportunity, stateRevision: generation };
         if (versioned.status === "actionable") {
@@ -198,7 +225,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         }
         await publish(versioned);
         await accepting;
-        if (authorityFailure) throw authorityFailure;
+        assertAuthority();
         if (revisionOf(underlyingId) !== generation) return;
       }
     }
@@ -218,13 +245,27 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", event => acceptInput(async () => {
     const book = books.get(event.instrumentId) ?? new OrderBook();
     const current = bookCursors.get(event.instrumentId);
-    if (current && (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp ||
-        event.sourceTimestamp === current.sourceTimestamp && event.receivedTimestamp < current.receivedTimestamp)) return;
+    const sequence = bookSequence(event.sequence);
+    const sequencePresent = event.sequence !== undefined;
+    if (current) {
+      if (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp) return;
+      // A sequence regression is stale even if transport receive time advances.
+      // Once a feed provides sequence, an unsequenced snapshot cannot silently
+      // reset it; a new feed epoch needs an explicit version/reset contract.
+      if (current.sequencePresent && !sequencePresent ||
+          current.sequence !== undefined && sequence !== undefined && sequence <= current.sequence) return;
+      if (event.sourceTimestamp === current.sourceTimestamp &&
+          (current.sequencePresent !== sequencePresent ||
+           current.sequencePresent && current.sequence === undefined && sequence !== undefined ||
+           (current.sequence === undefined || sequence === undefined) &&
+             event.receivedTimestamp < current.receivedTimestamp)) return;
+    }
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
     const revision = underlying ? await bump(underlying) : undefined;
     if (revision !== undefined) expireBook(event.instrumentId, revision);
     bookCursors.set(event.instrumentId, { eventId: event.eventId,
-      sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp });
+      sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
+      sequencePresent, sequence });
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
     if (underlying) schedule(underlying);
@@ -302,9 +343,9 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     }
   })));
   return {
-    currentRevision: revisionOf,
+    currentRevision(underlyingId) { assertAuthority(); return revisionOf(underlyingId); },
     isCurrent(opportunity) {
-      if (authorityFailure) return false;
+      if (authorityFailed) return false;
       if (!isCurrentAtRevision(opportunity, revisionOf(opportunity.underlyingId), now())) return false;
       const current = active.get(opportunity.opportunityId)?.current(now());
       return current?.status === "actionable" && current.stateRevision === opportunity.stateRevision &&
@@ -312,6 +353,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     },
     async flush() {
       await accepting;
+      assertAuthority();
       const affected = [...pending.keys()];
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();
@@ -322,6 +364,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     async drain() {
       for (;;) {
         await accepting;
+        assertAuthority();
         if (pending.size > 0) {
           await new Promise(resolve => setTimeout(resolve, Math.max(1, debounceMs)));
           continue;
