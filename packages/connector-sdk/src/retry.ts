@@ -64,9 +64,29 @@ function aborted(signal?: AbortSignal): ConnectorDiagnosticError | undefined {
   return signal?.aborted ? new ConnectorDiagnosticError("ABORTED") : undefined;
 }
 
-const defaultSleep = async (delayMs: number): Promise<void> => {
-  await new Promise<void>(resolve => setTimeout(resolve, delayMs));
-};
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/** Own the timer so cancellation can clear it, even for a multi-day cooldown. */
+async function defaultSleep(delayMs: number, signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + Math.max(0, Math.ceil(delayMs));
+  if (!Number.isSafeInteger(deadline)) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
+  do {
+    await new Promise<void>((resolve, reject) => {
+      const remaining = Math.max(0, deadline - Date.now());
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, Math.min(remaining, MAX_TIMER_DELAY_MS));
+      const onAbort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        reject(new ConnectorDiagnosticError("ABORTED"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
+  } while (Date.now() < deadline);
+}
 
 export function backoffDelayMs(attempt: number, options: RetryOptions, retryAfterMs?: number): number {
   if (retryAfterMs !== undefined) return retryAfterMs;
@@ -81,7 +101,11 @@ export function backoffDelayMs(attempt: number, options: RetryOptions, retryAfte
 export async function waitForRetry(delayMs: number, options: Pick<RetryOptions, "sleep" | "signal">): Promise<void> {
   const preflight = aborted(options.signal);
   if (preflight) throw preflight;
-  const sleep = options.sleep ?? defaultSleep;
+  if (!options.sleep) {
+    await defaultSleep(delayMs, options.signal);
+    return;
+  }
+  const sleep = options.sleep;
   if (!options.signal) {
     try { await sleep(delayMs); }
     catch (error) { throw toConnectorDiagnostic(error); }

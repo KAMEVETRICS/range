@@ -1,5 +1,36 @@
-import { expect, it } from "vitest";
-import { ConnectorDiagnosticError, RetryAfterError, retryWithBackoff } from "./retry.js";
+import { expect, it, vi } from "vitest";
+import { ConnectorDiagnosticError, RetryAfterError, retryWithBackoff, waitForRetry } from "./retry.js";
+
+it("clears the default timer when a long retry wait is aborted", async () => {
+  vi.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    const pending = waitForRetry(30 * 86_400_000, { signal: controller.signal });
+    expect(vi.getTimerCount()).toBe(1);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "ABORTED" });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not finish a long default retry wait before its deadline", async () => {
+  vi.useFakeTimers({ now: new Date("2026-09-22T10:00:00Z") });
+  try {
+    const duration = 30 * 86_400_000;
+    let settled = false;
+    const pending = waitForRetry(duration, {}).then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(duration - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(settled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("aborts during a long Retry-After wait without making another attempt", async () => {
   const controller = new AbortController();
