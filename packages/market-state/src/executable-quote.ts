@@ -1,5 +1,5 @@
 import { Decimal } from "decimal.js";
-import { ExecutableQuoteSchema, type ExecutableQuote } from "@range/domain";
+import { ExecutableQuoteSchema, PartialQuoteSchema, type ExecutableQuote, type PartialQuote } from "@range/domain";
 import { bookAgeMs, isFreshBook } from "./freshness.js";
 import { OrderBook, type BookSide } from "./order-book.js";
 
@@ -9,7 +9,7 @@ const QUANTITY_DECIMAL_PLACES = 80;
 const REFERENCE_FLAGS = new Set(["reference_only", "reference_book", "rfq_indicative_book", "reality_raw_book=access_pending"]);
 
 type QuoteFailureStatus = "invalid_request" | "invalid_book" | "reference_only" | "stale_input" | "insufficient_depth";
-export type QuoteResult = ({ readonly status: "executable"; readonly filledNotionalUsd: NonNullable<ExecutableQuote["filledNotionalUsd"]> } & ExecutableQuote) | {
+export type QuoteResult = ({ readonly status: "executable"; readonly filledNotionalUsd: NonNullable<ExecutableQuote["filledNotionalUsd"]> } & ExecutableQuote) | PartialQuote | {
   readonly status: QuoteFailureStatus;
   readonly requestedNotional: string;
   readonly capacityUsd: string;
@@ -86,7 +86,8 @@ export function quoteAtNotional(book: OrderBook, side: BookSide, notionalUsd: st
     if (quantity.lessThan(available)) break;
   }
   if (filledQuantity.isZero()) return fail("insufficient_depth", capacityUsd);
-  const executableQuote = ExecutableQuoteSchema.parse({
+  if (remaining.isNegative()) return fail("invalid_book", capacityUsd);
+  const quoteFields = {
     side,
     requestedNotional: display(requested),
     filledQuantity: display(filledQuantity),
@@ -98,6 +99,14 @@ export function quoteAtNotional(book: OrderBook, side: BookSide, notionalUsd: st
     sourceBookEventId: metadata.eventId,
     sourceEventIds: [...sourceEventIds],
     ageMs: oldestAgeMs,
-  });
+  };
+  if (remaining.greaterThan(0)) {
+    return PartialQuoteSchema.parse({
+      ...quoteFields,
+      status: "partial_fill",
+      remainingNotionalUsd: display(remaining),
+    });
+  }
+  const executableQuote = ExecutableQuoteSchema.parse(quoteFields);
   return { status: "executable", ...executableQuote, filledNotionalUsd: executableQuote.filledNotionalUsd! };
 }

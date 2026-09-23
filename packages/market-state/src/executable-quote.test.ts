@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ExecutableQuoteSchema } from "@range/domain";
+import { ExecutableQuoteSchema, PartialQuoteSchema } from "@range/domain";
 import { Decimal } from "decimal.js";
 import { OrderBook } from "./order-book.js";
 import { quoteAtNotional } from "./executable-quote.js";
@@ -36,16 +36,31 @@ describe("quoteAtNotional", () => {
     });
   });
 
-  it("keeps a fractional one-level fill VWAP at its actual price", () => {
+  it("reports a fractional one-level underfill as partial with exact evidence", () => {
     const source = book([["3", "1"]], [["4", "1"]]);
     const buy = quoteAtNotional(source, "buy", "1", T + 10);
     const sell = quoteAtNotional(source, "sell", "1", T + 10);
     expect(buy).toMatchObject({ status: "executable", averagePrice: "4", worstPrice: "4" });
-    expect(sell).toMatchObject({ status: "executable", averagePrice: "3", worstPrice: "3" });
-    if (sell.status === "executable") {
+    expect(sell).toMatchObject({ status: "partial_fill", averagePrice: "3", worstPrice: "3" });
+    expect(PartialQuoteSchema.parse(sell)).toMatchObject({ status: "partial_fill" });
+    expect(ExecutableQuoteSchema.safeParse(sell).success).toBe(false);
+    if ("filledQuantity" in sell && "filledNotionalUsd" in sell) {
       expect(new ExactDecimal(sell.filledNotionalUsd).equals(new ExactDecimal(sell.filledQuantity).times("3"))).toBe(true);
       expect(new ExactDecimal(sell.filledNotionalUsd).lessThanOrEqualTo(sell.requestedNotional)).toBe(true);
     }
+  });
+
+  it("keeps exactly divisible decimal fills executable", () => {
+    const source = book([["3", "1"], ["0.3", "1"]], [["4", "1"], ["5", "1"]]);
+    expect(quoteAtNotional(source, "sell", "3", T + 10)).toMatchObject({
+      status: "executable", requestedNotional: "3", filledQuantity: "1", filledNotionalUsd: "3",
+    });
+    expect(quoteAtNotional(source, "buy", "1", T + 10)).toMatchObject({
+      status: "executable", requestedNotional: "1", filledQuantity: "0.25", filledNotionalUsd: "1",
+    });
+    expect(quoteAtNotional(book([["0.1", "10"]], [["0.2", "10"]]), "sell", "0.3", T + 10)).toMatchObject({
+      status: "executable", requestedNotional: "0.3", filledQuantity: "3", filledNotionalUsd: "0.3",
+    });
   });
 
   it("reports insufficient depth without an executable fill", () => {
@@ -59,7 +74,7 @@ describe("quoteAtNotional", () => {
     const snapshot = observation(undefined, [["99", "1"]], [["101", "1"]]);
     source.applySnapshot(snapshot);
     expect(source.status()).toBe("snapshot_only");
-    expect(quoteAtNotional(source, "buy", "50", T + 10)).toMatchObject({
+    expect(quoteAtNotional(source, "buy", "101", T + 10)).toMatchObject({
       status: "executable", sourceBookEventId: snapshot.eventId, ageMs: 10,
     });
   });
@@ -69,7 +84,7 @@ describe("quoteAtNotional", () => {
     source.applySnapshot(observation("1", [["99", "1"]], [["101", "1"]]));
     const delta = observation("2", [], [["101", "2"]]);
     source.applyDelta(delta);
-    expect(quoteAtNotional(source, "buy", "50", T + 10)).toMatchObject({
+    expect(quoteAtNotional(source, "buy", "101", T + 10)).toMatchObject({
       status: "executable", sourceBookEventId: delta.eventId,
     });
   });
@@ -80,7 +95,7 @@ describe("quoteAtNotional", () => {
     source.applySnapshot(snapshot);
     const delta = observation("2", [], [["102", "2"]]);
     source.applyDelta(delta);
-    expect(quoteAtNotional(source, "buy", "150", T + 10)).toMatchObject({
+    expect(quoteAtNotional(source, "buy", "203", T + 10)).toMatchObject({
       status: "executable", sourceBookEventId: delta.eventId,
       sourceEventIds: [snapshot.eventId, delta.eventId],
     });
@@ -144,23 +159,28 @@ describe("quoteAtNotional", () => {
       const firstSell = quoteAtNotional(source, "sell", String(49 * seed), T + 10);
       const nextSell = quoteAtNotional(source, "sell", String(147 * seed), T + 10);
       for (const quote of [firstBuy, nextBuy, firstSell, nextSell]) {
-        expect(quote.status).toBe("executable");
-        if (quote.status === "executable") {
+        expect(["executable", "partial_fill"]).toContain(quote.status);
+        if (quote.status === "executable" || quote.status === "partial_fill") {
           const average = new Decimal(quote.averagePrice);
           const worst = new Decimal(quote.worstPrice);
           expect(quote.side === "buy" ? average.lessThanOrEqualTo(worst) : average.greaterThanOrEqualTo(worst)).toBe(true);
           expect(new Decimal(quote.filledNotionalUsd).lessThanOrEqualTo(quote.requestedNotional)).toBe(true);
           expect(new Decimal(quote.filledNotionalUsd).lessThanOrEqualTo(quote.capacityUsd)).toBe(true);
+          if (quote.status === "partial_fill") {
+            expect(new ExactDecimal(quote.filledNotionalUsd).plus(quote.remainingNotionalUsd).equals(quote.requestedNotional)).toBe(true);
+          }
         }
       }
-      if (firstBuy.status === "executable" && nextBuy.status === "executable") {
+      if ((firstBuy.status === "executable" || firstBuy.status === "partial_fill") &&
+          (nextBuy.status === "executable" || nextBuy.status === "partial_fill")) {
         expect(nextBuy.worstPrice).toBe("102");
         expect(new Decimal(nextBuy.averagePrice).greaterThanOrEqualTo(firstBuy.averagePrice)).toBe(true);
         const actualCost = new ExactDecimal(101).times(seed)
           .plus(new ExactDecimal(102).times(new ExactDecimal(nextBuy.filledQuantity).minus(seed)));
         expect(new ExactDecimal(nextBuy.filledNotionalUsd).equals(actualCost)).toBe(true);
       }
-      if (firstSell.status === "executable" && nextSell.status === "executable") {
+      if ((firstSell.status === "executable" || firstSell.status === "partial_fill") &&
+          (nextSell.status === "executable" || nextSell.status === "partial_fill")) {
         expect(nextSell.worstPrice).toBe("98");
         expect(new Decimal(nextSell.averagePrice).lessThanOrEqualTo(firstSell.averagePrice)).toBe(true);
         const actualCost = new ExactDecimal(99).times(seed)
