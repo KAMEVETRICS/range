@@ -3,8 +3,10 @@ import {
   DecimalStringSchema,
   EpochMillisecondsSchema,
   EventIdSchema,
+  InstrumentIdSchema,
   PositiveDecimalStringSchema,
   SideSchema,
+  VenueSchema,
 } from "./ids.js";
 
 export const ExecutableQuoteSchema = z.object({
@@ -28,14 +30,20 @@ export const PartialQuoteSchema = ExecutableQuoteSchema.extend({
 }).strict();
 
 export const FundingProjectionSchema = z.object({
-  rateType: z.enum(["current", "predicted", "realized"]),
-  rate: DecimalStringSchema,
+  status: z.literal("projected"),
+  venue: VenueSchema,
+  instrumentId: InstrumentIdSchema,
+  rateTypes: z.array(z.enum(["current", "predicted"])).min(1),
+  positiveRatePayer: z.enum(["long", "short"]),
   intervalMs: z.number().int().positive(),
   nextSettlementMs: EpochMillisecondsSchema,
+  holdingStartMs: EpochMillisecondsSchema,
+  holdingEndMs: EpochMillisecondsSchema,
   holdingHorizonMs: z.number().int().positive(),
-  expectedSettlements: z.number().int().nonnegative(),
+  settlementCount: z.number().int().positive(),
   positionSide: z.enum(["long", "short"]),
   expectedCashflowBps: DecimalStringSchema,
+  expectedCashflowUsd: DecimalStringSchema,
   sourceObservationIds: z.array(EventIdSchema).min(1),
 }).strict();
 

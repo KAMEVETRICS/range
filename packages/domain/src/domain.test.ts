@@ -53,14 +53,20 @@ const executableQuote = {
 };
 
 const fundingProjection = {
-  rateType: "predicted",
-  rate: "0.0001",
+  status: "projected",
+  venue: "hyperliquid_hip3",
+  instrumentId: "ins_hl_xyz_tsla",
+  rateTypes: ["predicted"],
+  positiveRatePayer: "long",
   intervalMs: 28_800_000,
   nextSettlementMs: 1_790_000_000_000,
+  holdingStartMs: 1_789_971_200_000,
+  holdingEndMs: 1_790_057_600_000,
   holdingHorizonMs: 86_400_000,
-  expectedSettlements: 3,
+  settlementCount: 3,
   positionSide: "short",
   expectedCashflowBps: "3",
+  expectedCashflowUsd: "0.3",
   sourceObservationIds: ["evt_funding_1"],
 };
 

@@ -6,6 +6,9 @@ export interface NormalizedFunding {
   readonly status: "normalized";
   readonly provenance: "canonical_observation";
   readonly projectionEligible: boolean;
+  readonly sourceEligibility: "live";
+  readonly transport: "websocket" | "rest";
+  readonly qualityFlags: readonly [];
   readonly venue: string;
   readonly instrumentId: string;
   readonly rateType: FundingRateType;
@@ -53,6 +56,7 @@ export function normalizeFunding(observation: unknown, nowMs = Date.now()): Fund
   return {
     status: "normalized", provenance: "canonical_observation",
     projectionEligible: payload.rateType !== "realized",
+    sourceEligibility: "live", transport: item.transport, qualityFlags: [],
     venue: item.venue, instrumentId: item.instrumentId,
     rateType: payload.rateType, rate: payload.rate, positiveRatePayer: payload.positiveRatePayer,
     intervalMs: payload.intervalMs, atMs: payload.nextSettlementMs,
