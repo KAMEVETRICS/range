@@ -46,6 +46,9 @@ export class InstrumentRegistry {
     const history = this.versions.get(id);
     const current = history?.at(-1);
     if (current && identity(current.instrument) !== key) throw new Error("Instrument ID changed venue symbol identity");
+    if (current && current.instrument.underlyingId !== instrument.underlyingId) {
+      throw new Error("Instrument ID changed underlying identity");
+    }
     const metadataHash = calculationMetadataHash(instrument);
     const incomingAt = Date.parse(instrument.effectiveFrom);
     if (!current) {

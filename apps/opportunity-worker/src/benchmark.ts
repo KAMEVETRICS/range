@@ -61,7 +61,7 @@ await bus.subscribe("opportunity.v1", "benchmark-count", async opportunity => {
 });
 
 const worker = await startOpportunityWorker(bus, registry, {
-  now: () => T, debounceMs: 25, requestedNotionalUsd: "1000", minimumNotionalUsd: "100",
+  runtime: "development", now: () => T, debounceMs: 25, requestedNotionalUsd: "1000", minimumNotionalUsd: "100",
   holdingHorizonMs: 2_000, feesBpsByVenue: { venue_a: "3", venue_b: "3" },
   slippageBpsByVenue: { venue_a: "2", venue_b: "2" }, financingBps: "0",
   gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0",

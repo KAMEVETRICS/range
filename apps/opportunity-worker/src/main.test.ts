@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryEventBus } from "@range/event-bus";
-import type { Opportunity } from "@range/domain";
+import { isCurrentAtRevision, type Opportunity } from "@range/domain";
 import { InstrumentRegistry } from "@range/instruments";
 import { startOpportunityWorker } from "./main.js";
+import { createInMemoryRevisionAuthority } from "./revision-authority.js";
 
 const NOW = 1_790_000_000_000;
 
@@ -42,7 +43,7 @@ function reviewedRegistry() {
   return registry;
 }
 
-const policy = { now: () => NOW, debounceMs: 0, requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
+const policy = { runtime: "development" as const, now: () => NOW, debounceMs: 0, requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
   feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
   financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" };
 
@@ -66,6 +67,101 @@ async function publishEligibleInputs(bus: InMemoryEventBus) {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunity worker", () => {
+  it("does not revive an invalid newer book with an older live snapshot", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "invalid-book-replay", async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const before = worker.currentRevision("equity:TSLA");
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_crossed_new"),
+      sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1,
+      payload: { kind: "order_book", bids: [{ price: "101", quantity: "20" }],
+        asks: [{ price: "100", quantity: "20" }], capacityUsd: "2000" } } as never);
+    await worker.flush();
+    const invalidRevision = worker.currentRevision("equity:TSLA");
+    expect(invalidRevision).toBeGreaterThan(before);
+    const marker = seen.length;
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_delayed_old"),
+      sourceTimestamp: NOW - 25, receivedTimestamp: NOW - 1,
+      payload: { kind: "order_book", bids: [{ price: "99", quantity: "20" }],
+        asks: [{ price: "100", quantity: "20" }], capacityUsd: "2000" } } as never);
+    await worker.flush();
+    expect(worker.currentRevision("equity:TSLA")).toBe(invalidRevision);
+    expect(seen.slice(marker).some(event => event.status === "actionable")).toBe(false);
+    await worker.stop();
+  });
+
+  it("does not advance currentness for stale or unchanged registry upserts", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "no-registry-reevaluation", async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const revision = worker.currentRevision("equity:TSLA");
+    const publications = seen.length;
+    await bus.publish("instrument.registry.v1", "ins_a", { kind: "upsert", instrument: instrument("ins_a", "venue_a") } as never);
+    await bus.publish("instrument.registry.v1", "ins_a", { kind: "upsert", instrument: {
+      ...instrument("ins_a", "venue_a"), effectiveFrom: "2026-09-19T00:00:00.000Z",
+    } } as never);
+    await worker.flush();
+    expect(worker.currentRevision("equity:TSLA")).toBe(revision);
+    expect(seen).toHaveLength(publications);
+    await worker.stop();
+  });
+
+  it("does not poison currentness when a duplicate reviewed mapping is rejected", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const revision = worker.currentRevision("equity:TSLA");
+    const mapping = registry.listReviewedMappings()[0]!;
+    await bus.publish("instrument.registry.v1", "equity:TSLA", { kind: "mapping", mapping } as never);
+    expect(worker.currentRevision("equity:TSLA")).toBe(revision);
+    await bus.publish("venue.health.v1", "venue_a", { venue: "venue_a", connectionState: "disconnected",
+      lastEventAgeMs: 1_000, clockSkewMs: 0, sequenceIntegrity: "consistent",
+      rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
+    expect(worker.currentRevision("equity:TSLA")).toBeGreaterThan(revision);
+    await worker.stop();
+  });
+
+  it("fails closed in production without a durable revision authority", async () => {
+    await expect(startOpportunityWorker(new InMemoryEventBus(), reviewedRegistry(), {
+      ...policy, runtime: "production",
+    })).rejects.toThrow(/durable revision authority/i);
+    await expect(startOpportunityWorker(new InMemoryEventBus(), reviewedRegistry(), {
+      ...policy, runtime: "production", revisionAuthority: createInMemoryRevisionAuthority(),
+    })).rejects.toThrow(/durable revision authority/i);
+  });
+
+  it("ignores a forbidden cross-underlying registry reassignment and keeps old output versioned", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "identity-reassignment", async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const oldActionable = seen.find(event => event.status === "actionable")!;
+    const revision = worker.currentRevision("equity:TSLA");
+    await bus.publish("instrument.registry.v1", "ins_a", { kind: "upsert", instrument: {
+      ...instrument("ins_a", "venue_a"), underlyingId: "equity:MSFT",
+      effectiveFrom: "2026-09-22T00:00:00.000Z",
+    } } as never);
+    expect(registry.getCurrent("ins_a")?.instrument.underlyingId).toBe("equity:TSLA");
+    expect(worker.currentRevision("equity:TSLA")).toBe(revision);
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_after_reassignment"),
+      sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1, eligibility: "reference_only" } as never);
+    expect(worker.isCurrent(oldActionable)).toBe(false);
+    expect(isCurrentAtRevision(oldActionable, worker.currentRevision("equity:TSLA"), NOW)).toBe(false);
+    await worker.stop();
+  });
   it("drains the final naturally scheduled sentinel before resolving", async () => {
     vi.useFakeTimers();
     const bus = new InMemoryEventBus();
@@ -343,7 +439,7 @@ describe("opportunity worker", () => {
     registry.upsert(instrument("ins_b", "venue_b"));
     const published: unknown[] = [];
     await bus.subscribe("opportunity.v1", "assert", async event => { published.push(event); });
-    const worker = await startOpportunityWorker(bus, registry, { now: () => NOW, debounceMs: 0,
+    const worker = await startOpportunityWorker(bus, registry, { runtime: "development", now: () => NOW, debounceMs: 0,
       requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
       feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
       financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" });
@@ -372,7 +468,7 @@ describe("opportunity worker", () => {
     });
     const published: Array<{ opportunityId: string; status: string }> = [];
     await bus.subscribe("opportunity.v1", "assert-active", async event => { published.push(event); });
-    const worker = await startOpportunityWorker(bus, registry, { now: () => NOW, debounceMs: 0,
+    const worker = await startOpportunityWorker(bus, registry, { runtime: "development", now: () => NOW, debounceMs: 0,
       requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
       feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
       financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" });

@@ -3,8 +3,11 @@ import { isCurrentAtRevision, type ObservationEnvelope, type Opportunity, type V
 import { InstrumentRegistry } from "@range/instruments";
 import { OrderBook, normalizeFunding, projectFunding, quoteAtNotional, type NormalizedFunding } from "@range/market-state";
 import { activeLifecycle, evaluateOpportunityWithEvidence, type EvaluationInput, type EvaluationLeg, type Strategy } from "@range/opportunity";
+import { createInMemoryRevisionAuthority, type RevisionAuthority } from "./revision-authority.js";
 
 export interface WorkerPolicy {
+  runtime?: "production" | "development";
+  revisionAuthority?: RevisionAuthority;
   now?: () => number;
   debounceMs?: number;
   requestedNotionalUsd: string;
@@ -33,9 +36,16 @@ export interface OpportunityWorker {
 
 /** Consumes normalized state and evaluates only affected underlyings after a bounded debounce. */
 export async function startOpportunityWorker(bus: EventBus, registry: InstrumentRegistry, policy: WorkerPolicy): Promise<OpportunityWorker> {
+  const runtime = policy.runtime ?? "production";
+  const revisionAuthority = policy.revisionAuthority ??
+    (runtime === "development" ? createInMemoryRevisionAuthority() : undefined);
+  if (!revisionAuthority || runtime === "production" && revisionAuthority.kind !== "durable") {
+    throw new Error("Production opportunity worker requires a durable revision authority");
+  }
   const now = policy.now ?? Date.now;
   const debounceMs = Math.max(0, Math.min(25, policy.debounceMs ?? 25));
   const books = new Map<string, OrderBook>();
+  const bookCursors = new Map<string, { eventId: string; sourceTimestamp: number; receivedTimestamp: number }>();
   const funding = new Map<string, ObservationEnvelope[]>();
   const health = new Map<string, VenueHealth>();
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -44,9 +54,28 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const active = new Map<string, ReturnType<typeof activeLifecycle>>();
   const unsubscribe: Array<() => Promise<void>> = [];
   let publishing = Promise.resolve();
+  let accepting = Promise.resolve();
+  let authorityFailure: unknown;
+  const acceptInput = (operation: () => Promise<void>): Promise<void> => {
+    const result = accepting.then(async () => {
+      if (authorityFailure) throw authorityFailure;
+      await operation();
+    });
+    accepting = result.catch(() => {});
+    return result;
+  };
   const revisionOf = (underlyingId: string) => generations.get(underlyingId) ?? 0;
-  const bump = (underlyingId: string) => {
-    const revision = revisionOf(underlyingId) + 1;
+  const bump = async (underlyingId: string) => {
+    let revision: number;
+    try {
+      revision = await revisionAuthority.advance(underlyingId);
+      if (!Number.isSafeInteger(revision) || revision <= revisionOf(underlyingId)) {
+        throw new Error(`Revision authority returned a non-increasing revision for ${underlyingId}`);
+      }
+    } catch (error) {
+      authorityFailure = error;
+      throw error;
+    }
     generations.set(underlyingId, revision);
     return revision;
   };
@@ -87,18 +116,9 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     }
   };
-  const removeWithdrawal = registry.onCapabilityWithdrawal(event => {
-    const underlyingId = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    books.delete(event.instrumentId);
-    funding.delete(event.instrumentId);
-    if (underlyingId) {
-      const revision = bump(underlyingId);
-      expireInstrument(event.instrumentId, revision);
-      schedule(underlyingId);
-    }
-  });
-
   const evaluateUnlocked = async (underlyingId: string) => {
+    await accepting;
+    if (authorityFailure) throw authorityFailure;
     const generation = revisionOf(underlyingId);
     const at = now();
     const instrumentIds = [...books.keys()].filter(id => registry.getCurrent(id)?.instrument.underlyingId === underlyingId);
@@ -159,6 +179,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         };
         const { opportunity, evidence } = evaluateOpportunityWithEvidence(input);
         if (evidence) await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
+        await accepting;
+        if (authorityFailure) throw authorityFailure;
         if (revisionOf(underlyingId) !== generation) return;
         const versioned: Opportunity = { ...opportunity, stateRevision: generation };
         if (versioned.status === "actionable") {
@@ -175,13 +197,16 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           expiryTimers.set(versioned.opportunityId, timer);
         }
         await publish(versioned);
+        await accepting;
+        if (authorityFailure) throw authorityFailure;
         if (revisionOf(underlyingId) !== generation) return;
       }
     }
   };
-  // Inputs linearize in their synchronous handlers. EventBus.publish may await
-  // subscriber callbacks (in-memory) or only broker ack (Redpanda), so no
-  // acceptance or currentness decision may depend on awaiting publication.
+  // Input acceptance completes only after the revision authority commits and
+  // the handler applies the input. EventBus.publish may await callbacks
+  // (in-memory) or only broker ack (Redpanda); output publication never owns
+  // the input acceptance queue.
   const evaluate = evaluateUnlocked;
   const schedule = (underlyingId: string) => {
     if (pending.has(underlyingId)) return;
@@ -190,19 +215,21 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       publishing = publishing.then(() => evaluate(underlyingId));
     }, debounceMs));
   };
-  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", async event => {
+  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", event => acceptInput(async () => {
     const book = books.get(event.instrumentId) ?? new OrderBook();
-    const current = book.metadata();
+    const current = bookCursors.get(event.instrumentId);
     if (current && (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp ||
         event.sourceTimestamp === current.sourceTimestamp && event.receivedTimestamp < current.receivedTimestamp)) return;
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    const revision = underlying ? bump(underlying) : undefined;
+    const revision = underlying ? await bump(underlying) : undefined;
     if (revision !== undefined) expireBook(event.instrumentId, revision);
+    bookCursors.set(event.instrumentId, { eventId: event.eventId,
+      sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp });
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
     if (underlying) schedule(underlying);
-  }));
-  unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", async event => {
+  })));
+  unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", event => acceptInput(async () => {
     const observations = funding.get(event.instrumentId) ?? [];
     let accepted = false;
     if (event.payload.rateType !== "realized") {
@@ -219,13 +246,13 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     }
     if (!accepted) return;
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
-    const revision = underlying ? bump(underlying) : undefined;
+    const revision = underlying ? await bump(underlying) : undefined;
     if (revision !== undefined) expireBook(event.instrumentId, revision);
     if (observations.length > 10_000) observations.shift();
     funding.set(event.instrumentId, observations);
     if (underlying) schedule(underlying);
-  }));
-  unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", async event => {
+  })));
+  unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", event => acceptInput(async () => {
     health.set(event.venue, event);
     const affected = new Set<string>();
     for (const id of books.keys()) {
@@ -238,7 +265,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         affected.add(current.underlyingId);
       }
     }
-    for (const underlying of affected) { bump(underlying); schedule(underlying); }
+    for (const underlying of affected) { await bump(underlying); schedule(underlying); }
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
       if (before.status !== "actionable" || !before.legs.some(leg => registry.getCurrent(leg.instrumentId)?.instrument.venue === event.venue)) continue;
@@ -248,29 +275,43 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         queuePublish({ ...after, stateRevision: revisionOf(before.underlyingId) });
       }
     }
-  }));
-  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", async event => {
+  })));
+  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", event => acceptInput(async () => {
     if (event.kind === "upsert") {
-      const before = revisionOf(event.instrument.underlyingId);
-      registry.upsert(event.instrument);
-      if (revisionOf(event.instrument.underlyingId) === before) bump(event.instrument.underlyingId);
+      // Registry validation failures are deterministic for this event; retrying
+      // the same record would block every later record in its Redpanda partition.
+      let result: ReturnType<InstrumentRegistry["upsert"]>;
+      try { result = registry.upsert(event.instrument); }
+      catch { return; }
+      if (result.status === "stale" || result.status === "unchanged") return;
+      const revision = await bump(event.instrument.underlyingId);
+      if (result.status === "versioned") {
+        books.delete(event.instrument.instrumentId);
+        funding.delete(event.instrument.instrumentId);
+        expireInstrument(event.instrument.instrumentId, revision);
+      }
       schedule(event.instrument.underlyingId);
     } else {
-      const revision = bump(event.mapping.underlyingId);
+      // A rejected or replayed review is a no-op, not a poisoned consumer
+      // offset that Redpanda retries forever.
+      try { registry.addReviewedMapping(event.mapping); }
+      catch { return; }
+      const revision = await bump(event.mapping.underlyingId);
       expireMapping(event.mapping.underlyingId, revision);
-      registry.addReviewedMapping(event.mapping);
       schedule(event.mapping.underlyingId);
     }
-  }));
+  })));
   return {
     currentRevision: revisionOf,
     isCurrent(opportunity) {
+      if (authorityFailure) return false;
       if (!isCurrentAtRevision(opportunity, revisionOf(opportunity.underlyingId), now())) return false;
       const current = active.get(opportunity.opportunityId)?.current(now());
       return current?.status === "actionable" && current.stateRevision === opportunity.stateRevision &&
         current.evidenceHash === opportunity.evidenceHash;
     },
     async flush() {
+      await accepting;
       const affected = [...pending.keys()];
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();
@@ -280,6 +321,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     },
     async drain() {
       for (;;) {
+        await accepting;
         if (pending.size > 0) {
           await new Promise(resolve => setTimeout(resolve, Math.max(1, debounceMs)));
           continue;
@@ -292,7 +334,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     async stop() {
       for (const timer of pending.values()) clearTimeout(timer);
       for (const timer of expiryTimers.values()) clearTimeout(timer);
-      pending.clear(); expiryTimers.clear(); removeWithdrawal();
+      pending.clear(); expiryTimers.clear();
       for (const stop of unsubscribe) await stop();
       await publishing;
     },

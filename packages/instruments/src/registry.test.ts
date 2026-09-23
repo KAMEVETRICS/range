@@ -94,6 +94,14 @@ describe("InstrumentRegistry", () => {
     expect(() => registry.upsert({ ...first, contractMultiplier: "2", effectiveFrom: changed.effectiveFrom })).toThrow(/conflicting observation/i);
   });
 
+  it("rejects moving an existing instrument ID to another underlying", () => {
+    const registry = new InstrumentRegistry();
+    registry.upsert(first);
+    expect(() => registry.upsert({ ...first, underlyingId: "equity:MSFT",
+      effectiveFrom: "2026-09-22T00:00:00.000Z" })).toThrow(/underlying identity/i);
+    expect(registry.getCurrent(first.instrumentId)?.instrument.underlyingId).toBe(first.underlyingId);
+  });
+
   it("does not let an older changed observation supersede a later unchanged observation", () => {
     const registry = new InstrumentRegistry();
     registry.upsert(first);
