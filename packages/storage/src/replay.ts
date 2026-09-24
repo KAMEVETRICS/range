@@ -68,19 +68,25 @@ export class ReplayRunner {
       schedule, calculationVersion,
     });
     let checkpointStart = 0;
+    const advanceTimers = async (bound: number) => {
+      for (;;) {
+        const due = [...timers].filter(([, timer]) => timer.due < bound)
+          .sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0];
+        if (!due) return;
+        now = due[1].due;
+        timers.delete(due[0]);
+        due[1].callback();
+        // The timer enqueued its own evaluation. Await that work without
+        // forcing another underlying's later debounce to run early.
+        await worker.settle();
+      }
+    };
     try {
       for (const event of events) {
         if (filter.toMs !== undefined && event.atMs >= filter.toMs) break;
         // Run timers strictly before input timestamps. At equal timestamps,
         // recorded inputs win, then an explicit checkpoint flushes evaluation.
-        for (;;) {
-          const due = [...timers].filter(([, timer]) => timer.due < event.atMs).sort((a, b) => a[1].due - b[1].due || a[0] - b[0])[0];
-          if (!due) break;
-          now = due[1].due;
-          timers.delete(due[0]);
-          due[1].callback();
-          await worker.flush();
-        }
+        await advanceTimers(event.atMs);
         now = event.atMs;
         if (event.kind === "input") {
           await bus.publish(event.topic, event.key, event.payload);
@@ -96,7 +102,8 @@ export class ReplayRunner {
           checkpointStart = allEvidence.length;
         }
       }
-      await worker.flush();
+      if (filter.toMs !== undefined) await advanceTimers(filter.toMs);
+      await worker.settle();
       return result;
     } finally { await worker.stop(); }
   }

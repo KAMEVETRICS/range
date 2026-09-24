@@ -66,8 +66,14 @@ export class HistoryStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(`INSERT INTO event_log(event_id, topic, underlying_id, accepted_at_ms, archive_id, calculation_version, content_hash, record)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, [event.eventId, event.topic, event.underlyingId ?? null,
+      // The singleton UPDATE holds a row lock through COMMIT/ROLLBACK. A
+      // second appender cannot allocate a later ordinal and commit first.
+      // This uses the pool's ordinary READ COMMITTED isolation level.
+      const cursor = await client.query("UPDATE event_log_cursor SET last_ordinal = last_ordinal + 1 WHERE singleton = true RETURNING last_ordinal");
+      const ordinal = Number(cursor.rows[0]?.last_ordinal);
+      if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw new Error("Invalid event-log cursor");
+      await client.query(`INSERT INTO event_log(ordinal, event_id, topic, underlying_id, accepted_at_ms, archive_id, calculation_version, content_hash, record)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, [ordinal, event.eventId, event.topic, event.underlyingId ?? null,
         event.acceptedAtMs, event.archiveId, event.calculationVersion ?? null, contentHash, JSON.stringify(event)]);
       const existing = await client.query("SELECT content_hash FROM event_log WHERE event_id = $1", [event.eventId]);
       if (existing.rows[0]?.content_hash !== contentHash) throw new Error("Event is immutable");

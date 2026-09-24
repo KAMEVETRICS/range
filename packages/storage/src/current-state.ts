@@ -87,9 +87,23 @@ export class CurrentStateStore {
   }
 
   async queryOpportunities(underlyingId: string, limit = 100): Promise<Opportunity[]> {
-    const entries = await this.query(underlyingId, limit);
-    const candidates = entries.filter(entry => entry.key.startsWith("opportunity:"));
-    const result = await Promise.all(candidates.map(entry => this.getOpportunity(entry.key.slice("opportunity:".length))));
-    return result.filter((entry): entry is Opportunity => entry !== undefined);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid query limit");
+    const result: Opportunity[] = [];
+    const batchSize = Math.max(32, limit);
+    let offset = 0;
+    while (result.length < limit) {
+      const keys = await this.redis.zrangebyscore(this.key("index", underlyingId), `(${this.now()}`, "+inf",
+        "LIMIT", offset, batchSize);
+      if (keys.length === 0) break;
+      offset += keys.length;
+      for (const key of keys) {
+        if (!key.startsWith("opportunity:")) continue;
+        const opportunity = await this.getOpportunity(key.slice("opportunity:".length));
+        if (opportunity?.underlyingId === underlyingId) result.push(opportunity);
+        if (result.length === limit) break;
+      }
+      if (keys.length < batchSize) break;
+    }
+    return result;
   }
 }

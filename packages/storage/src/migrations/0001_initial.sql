@@ -12,8 +12,16 @@ CREATE TABLE IF NOT EXISTS accepted_revisions (
   underlying_id text PRIMARY KEY,
   revision bigint NOT NULL CHECK (revision >= 0 AND revision <= 9007199254740991)
 );
+-- UPDATE holds this row lock until the event-log transaction commits. Under
+-- READ COMMITTED, a later append cannot receive or commit a higher ordinal
+-- before an earlier append, unlike PostgreSQL sequences/BIGSERIAL.
+CREATE TABLE IF NOT EXISTS event_log_cursor (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  last_ordinal bigint NOT NULL CHECK (last_ordinal >= 0)
+);
+INSERT INTO event_log_cursor(singleton, last_ordinal) VALUES (true, 0) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS event_log (
-  ordinal bigserial UNIQUE NOT NULL,
+  ordinal bigint UNIQUE NOT NULL,
   event_id text PRIMARY KEY,
   topic text NOT NULL,
   underlying_id text,

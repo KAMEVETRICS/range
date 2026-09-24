@@ -30,6 +30,7 @@ export interface WorkerPolicy {
 
 export interface OpportunityWorker {
   flush(): Promise<void>;
+  settle(): Promise<void>;
   drain(): Promise<void>;
   stop(): Promise<void>;
   currentRevision(underlyingId: string): number;
@@ -369,6 +370,15 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       await publishing;
       for (const underlying of affected) await evaluate(underlying);
       await publishing;
+    },
+    async settle() {
+      await accepting;
+      assertAuthority();
+      for (;;) {
+        const snapshot = publishing;
+        await snapshot;
+        if (snapshot === publishing) return;
+      }
     },
     async drain() {
       for (;;) {

@@ -74,6 +74,27 @@ describe("Redis current state", () => {
     await expect(store.putOpportunity(opportunity(3, now + 1000))).rejects.toThrow("offline");
     redis.disconnect();
   });
+
+  it("pages past stale earlier-expiring opportunities before applying the result limit", async () => {
+    const redis = new Redis();
+    const now = Date.now();
+    const store = new CurrentStateStore(redis, { read: async () => 2 }, () => now);
+    const actionable = (id: string, revision: number, expiresAt: number) => OpportunitySchema.parse({
+      ...opportunity(revision, expiresAt), opportunityId: id, status: "actionable",
+      legs: [{ legId: "leg_a", instrumentId: "ins_a", side: "buy", executableQuote: {
+        side: "buy", requestedNotional: "100", averagePrice: "100", worstPrice: "100",
+        filledQuantity: "1", capacityUsd: "100", depthUtilization: "1", sourceBookEventId: "evt_a", ageMs: 0,
+      } }],
+      rejectionReasons: [], evidenceHash: `sha256:${"a".repeat(64)}`, capacityUsd: "100",
+      freshness: { oldestInputMs: 0, synchronized: true, eligibility: "live", qualityFlags: [] },
+    });
+    const old = actionable("opp_old", 1, now + 1_000);
+    const current = actionable("opp_current", 2, now + 2_000);
+    await store.put("opportunity:opp_old", { version: 1, expiresAt: now + 1_000, underlyingId: "equity:TSLA", value: old });
+    await store.put("opportunity:opp_current", { version: 2, expiresAt: now + 2_000, underlyingId: "equity:TSLA", value: current });
+    expect(await store.queryOpportunities("equity:TSLA", 1)).toEqual([current]);
+    redis.disconnect();
+  });
 });
 
 describe("Postgres history and revision authority", () => {

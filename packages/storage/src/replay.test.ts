@@ -62,4 +62,40 @@ describe("deterministic replay", () => {
     events.at(-1)!.atMs = 1;
     await expect(new ReplayRunner(testPolicy).run(events, "calc.v1")).rejects.toThrow(/time/i);
   });
+
+  it("keeps each underlying's debounce at its own due time", async () => {
+    const at = 1_790_000_000_000;
+    const original = replayFixture().filter(event => event.kind === "input");
+    const other = original.map(event => {
+      const clone = JSON.parse(JSON.stringify(event).replaceAll("equity:DEMO", "equity:OTHER")
+        .replaceAll("ins_a", "ins_other_a").replaceAll("ins_b", "ins_other_b")) as ReplayEvent;
+      clone.atMs = at + 10;
+      if (clone.kind === "input" && clone.topic === "instrument.registry.v1" && clone.payload.kind === "upsert") {
+        clone.payload.instrument.venueSymbol += "_other";
+      }
+      if (clone.kind === "input" && clone.topic !== "instrument.registry.v1" && clone.topic !== "venue.health.v1") {
+        const payload = clone.payload as unknown as { sourceTimestamp: number; receivedTimestamp: number };
+        payload.sourceTimestamp += 10;
+        payload.receivedTimestamp += 10;
+      }
+      return clone;
+    });
+    const checkpoint: ReplayEvent = { kind: "checkpoint", atMs: at + 100 };
+    const alone = await new ReplayRunner(testPolicy).run([...other, checkpoint], "calc.v1");
+    const together = await new ReplayRunner(testPolicy).run([...original, ...other, checkpoint], "calc.v1");
+    const expiry = (opportunities: typeof together.opportunities) => Date.parse(opportunities.find(
+      item => item.underlyingId === "equity:OTHER" && item.strategy === "perp_spread")!.expiresAt);
+    expect(expiry(alone.opportunities)).toBe(at + 10 + 25 + 2_000);
+    expect(expiry(together.opportunities)).toBe(at + 10 + 25 + 2_000);
+  });
+
+  it("advances due timers to the --to bound without flushing future work", async () => {
+    const at = 1_790_000_000_000;
+    const events = replayFixture();
+    events.at(-1)!.atMs = at + 100;
+    const full = await new ReplayRunner(testPolicy).run(events, "calc.v1");
+    const bounded = await new ReplayRunner(testPolicy).run(events, "calc.v1", { toMs: at + 50 });
+    expect(bounded.opportunities).toEqual(full.opportunities);
+    expect(Date.parse(bounded.opportunities.find(item => item.strategy === "perp_spread")!.expiresAt)).toBe(at + 25 + 2_000);
+  });
 });
