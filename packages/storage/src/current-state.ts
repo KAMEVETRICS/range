@@ -90,9 +90,12 @@ export class CurrentStateStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid query limit");
     const result: Opportunity[] = [];
     const batchSize = Math.max(32, limit);
+    // Offset pagination must use one score range. A moving lower bound would
+    // shrink earlier pages and skip surviving entries at later offsets.
+    const lowerBound = `(${this.now()}`;
     let offset = 0;
     while (result.length < limit) {
-      const keys = await this.redis.zrangebyscore(this.key("index", underlyingId), `(${this.now()}`, "+inf",
+      const keys = await this.redis.zrangebyscore(this.key("index", underlyingId), lowerBound, "+inf",
         "LIMIT", offset, batchSize);
       if (keys.length === 0) break;
       offset += keys.length;

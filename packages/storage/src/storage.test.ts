@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import Redis from "ioredis-mock";
 import { DataType, newDb } from "pg-mem";
-import { CurrentStateStore } from "./current-state.js";
+import { CurrentStateStore, type RedisCommands } from "./current-state.js";
 import { HistoryStore, PostgresRevisionAuthority } from "./history.js";
 import { OpportunitySchema, type Opportunity } from "@range/domain";
 import { InMemoryEventBus, parseEvent } from "@range/event-bus";
@@ -31,6 +31,17 @@ function opportunity(revision: number, expiresAt: number): Opportunity {
     tradingFeesBps: "0", slippageBps: "0", financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0",
     uncertaintyBufferBps: "0", netEdgeBps: "0", capacityUsd: "0", expiresAt: new Date(expiresAt).toISOString(),
     freshness: { oldestInputMs: 0, synchronized: true, eligibility: "reference_only", qualityFlags: [] } });
+}
+function actionableOpportunity(id: string, revision: number, expiresAt: number): Opportunity {
+  return OpportunitySchema.parse({
+    ...opportunity(revision, expiresAt), opportunityId: id, status: "actionable",
+    legs: [{ legId: "leg_a", instrumentId: "ins_a", side: "buy", executableQuote: {
+      side: "buy", requestedNotional: "100", averagePrice: "100", worstPrice: "100",
+      filledQuantity: "1", capacityUsd: "100", depthUtilization: "1", sourceBookEventId: "evt_a", ageMs: 0,
+    } }],
+    rejectionReasons: [], evidenceHash: `sha256:${"a".repeat(64)}`, capacityUsd: "100",
+    freshness: { oldestInputMs: 0, synchronized: true, eligibility: "live", qualityFlags: [] },
+  });
 }
 
 describe("Redis current state", () => {
@@ -79,19 +90,36 @@ describe("Redis current state", () => {
     const redis = new Redis();
     const now = Date.now();
     const store = new CurrentStateStore(redis, { read: async () => 2 }, () => now);
-    const actionable = (id: string, revision: number, expiresAt: number) => OpportunitySchema.parse({
-      ...opportunity(revision, expiresAt), opportunityId: id, status: "actionable",
-      legs: [{ legId: "leg_a", instrumentId: "ins_a", side: "buy", executableQuote: {
-        side: "buy", requestedNotional: "100", averagePrice: "100", worstPrice: "100",
-        filledQuantity: "1", capacityUsd: "100", depthUtilization: "1", sourceBookEventId: "evt_a", ageMs: 0,
-      } }],
-      rejectionReasons: [], evidenceHash: `sha256:${"a".repeat(64)}`, capacityUsd: "100",
-      freshness: { oldestInputMs: 0, synchronized: true, eligibility: "live", qualityFlags: [] },
-    });
-    const old = actionable("opp_old", 1, now + 1_000);
-    const current = actionable("opp_current", 2, now + 2_000);
+    const old = actionableOpportunity("opp_old", 1, now + 1_000);
+    const current = actionableOpportunity("opp_current", 2, now + 2_000);
     await store.put("opportunity:opp_old", { version: 1, expiresAt: now + 1_000, underlyingId: "equity:TSLA", value: old });
     await store.put("opportunity:opp_current", { version: 2, expiresAt: now + 2_000, underlyingId: "equity:TSLA", value: current });
+    expect(await store.queryOpportunities("equity:TSLA", 1)).toEqual([current]);
+    redis.disconnect();
+  });
+
+  it("keeps the index bound stable when stale entries expire between Redis pages", async () => {
+    const redis = new Redis();
+    let now = Date.now();
+    const firstPageAt = now;
+    let pageReads = 0;
+    const clockedRedis: RedisCommands = {
+      eval: redis.eval.bind(redis), get: redis.get.bind(redis),
+      zrangebyscore: async (key, min, max, ...args) => {
+        const keys = await redis.zrangebyscore(key, min, max, ...args);
+        if (++pageReads === 1) now += 20_000;
+        return keys;
+      },
+    };
+    const store = new CurrentStateStore(clockedRedis, { read: async () => 2 }, () => now);
+    for (let index = 0; index < 33; index++) {
+      const id = `opp_stale_${index}`;
+      await store.put(`opportunity:${id}`, { version: 1, expiresAt: firstPageAt + 10_000,
+        underlyingId: "equity:TSLA", value: actionableOpportunity(id, 1, firstPageAt + 10_000) });
+    }
+    const current = actionableOpportunity("opp_current_after_pages", 2, firstPageAt + 60_000);
+    await store.put("opportunity:opp_current_after_pages", { version: 2, expiresAt: firstPageAt + 60_000,
+      underlyingId: "equity:TSLA", value: current });
     expect(await store.queryOpportunities("equity:TSLA", 1)).toEqual([current]);
     redis.disconnect();
   });
