@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import Redis from "ioredis-mock";
 import { CurrentStateStore } from "@range/storage";
-import { OpportunitySchema, EvidenceBundleSchema, VenueHealthSchema, type Opportunity } from "@range/domain";
+import { OpportunitySchema, EvidenceBundleSchema, VenueHealthSchema, ObservationEnvelopeSchema, type Opportunity } from "@range/domain";
 import { RangeApplication, type ApplicationQueries, type RequestContext } from "@range/application";
 import { buildServer } from "./server.js";
 import { hashClientToken } from "./auth.js";
@@ -52,6 +52,7 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
     async getEvidence(context) { check(context); return EvidenceBundleSchema.parse({ sourceEventIds: ["evt_book"], calculationVersion: "v1", canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: ["legs are non-atomic"], evidenceHash: `sha256:${"a".repeat(64)}` }); },
     async getSourceTimestamps(context) { check(context); return [now - 10]; },
     async getOpportunityHistory(context) { check(context); return []; },
+    async getAcceptedRevision(context) { check(context); return revision; },
     async readEvents(context) { check(context); return []; },
     async latestEventOrdinal(context) { check(context); return 0; },
   };
@@ -104,6 +105,47 @@ describe("REST application boundary", () => {
     const { app } = await fixture();
     const response = await app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA&min_edge_bps=19&limit=1", headers: auth });
     expect(response.json().result.items).toEqual([]);
+  });
+
+  it("marks an empty scan partial when its venue or market inputs are missing", async () => {
+    const f = await fixture();
+    f.queries.scanOpportunities = async () => [];
+    const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
+    expect(body.status).toBe("partial");
+    expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue degraded", "extended: market data missing"]));
+    expect(body.result.items).toEqual([]);
+  });
+
+  it("names stale venue and excluded observation inputs in scan diagnostics", async () => {
+    const f = await fixture();
+    const venue = (await f.queries.listVenues({ traceId: "rng_trace_test", clientId: "reader" }))[0]!;
+    f.queries.listVenues = async () => [{ ...venue, health: VenueHealthSchema.parse({ ...venue.health!, connectionState: "connected" }), asOfMs: now - 2000 }];
+    f.queries.getMarketSnapshot = async () => [ObservationEnvelopeSchema.parse({ eventId: "evt_stale", schemaVersion: 1,
+      venue: "extended", instrumentId: "ins_bitget_tsla", sourceTimestamp: now - 2000, receivedTimestamp: now - 1900,
+      transport: "websocket", freshnessBudgetMs: 1000, qualityFlags: [], rawPayloadRefOrHash: "private-locator",
+      eligibility: "live", payload: { kind: "order_book", bids: [], asks: [], capacityUsd: "0" } })];
+    f.queries.scanOpportunities = async () => [];
+    const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
+    expect(body.status).toBe("partial");
+    expect(body.freshness.oldest_input_ms).toBe(2000);
+    expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue stale", "extended: stale or reference input excluded", "extended: market data missing"]));
+    expect(JSON.stringify(body)).not.toContain("private-locator");
+  });
+
+  it("drops an earlier scan item when the accepted revision advances during a later item read", async () => {
+    const f = await fixture();
+    const first = opportunity();
+    const second = OpportunitySchema.parse({ ...first, opportunityId: "opp_2" });
+    f.queries.scanOpportunities = async () => [first, second];
+    let checks = 0;
+    f.queries.inspectOpportunity = async (_context, id) => {
+      if (++checks === 2) { f.setRevision(8); return undefined; }
+      return id === first.opportunityId ? first : undefined;
+    };
+    const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
+    expect(body.result.items).toEqual([]);
+    expect(body.status).toBe("partial");
+    expect(body.warnings).toContain("opportunity changed during read; excluded");
   });
 
   it("does not return actionable data if the authority advances while evidence is being loaded", async () => {
@@ -174,6 +216,19 @@ function event(ordinal: number): EventPageItem {
     payload: opportunity(), archiveId: "archive_1", calculationVersion: "v1", acceptedAtMs: now } };
 }
 describe("SSE currentness and bounded delivery", () => {
+  it("drains a replay larger than its queue when the transport is healthy", async () => {
+    const f = await fixture();
+    const events = Array.from({ length: 33 }, (_, index) => event(index + 1));
+    f.queries.readEvents = async (_context, after, limit) => events.filter(item => item.ordinal > after).slice(0, limit);
+    const sink = new Sink();
+    const session = new StreamSession(f.application, { traceId: "rng_trace_stream", clientId: "reader" }, sink, { afterOrdinal: 0, maxQueue: 32 });
+    close.push(() => session.close());
+    await session.poll();
+    expect(sink.ended).toBe(false);
+    expect(sink.chunks.filter(chunk => chunk.startsWith("id: evt_"))).toHaveLength(33);
+    expect(sink.chunks.join("")).toContain("id: evt_33\n");
+  });
+
   it("serves authenticated SSE over HTTP, validates Last-Event-ID, and requires both read scopes", async () => {
     const f = await fixture();
     expect((await f.app.inject({ method: "GET", url: "/v1/stream" })).statusCode).toBe(401);
@@ -239,6 +294,19 @@ describe("SSE currentness and bounded delivery", () => {
     f.queries.readEvents = async () => [event(2)]; f.setOutage();
     await session.poll();
     expect(sink.ended).toBe(true);
+  });
+
+  it("anchors replayed health evidence and state to the historical event", async () => {
+    const f = await fixture();
+    const original = await f.queries.listVenues({ traceId: "rng_trace_test", clientId: "reader" });
+    const historical = original[0]!.health!;
+    f.queries.listVenues = async () => [{ ...original[0]!, health: VenueHealthSchema.parse({ ...historical, connectionState: "connected" }), asOfMs: now - 50 }];
+    const item: EventPageItem = { ...event(1), event: { ...event(1).event, topic: "venue.health.v1", payload: historical } };
+    const delivery = await f.application.streamEvent(item, { traceId: "rng_trace_stream", clientId: "reader" });
+    const body = responseSchemas.health.parse(delivery?.body);
+    expect(body.result.health?.connectionState).toBe("degraded");
+    expect(body.evidence).toEqual([{ event_id: item.event.eventId }]);
+    expect(body.as_of).toBe(new Date(item.event.acceptedAtMs).toISOString());
   });
 });
 

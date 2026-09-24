@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Decimal } from "decimal.js";
-import { InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, type Opportunity } from "@range/domain";
+import { InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, type Opportunity } from "@range/domain";
 import { InstrumentQuerySchema, MarketQuerySchema, OpportunityParamsSchema, PageQuerySchema, ScanQuerySchema, VenueViewSchema,
   type ApplicationQueries, type EventPageItem, type RequestContext } from "./queries.js";
 
@@ -52,25 +52,42 @@ export class RangeApplication {
       Math.min(this.now(), ...instruments.map(item => Date.parse(item.effectiveFrom)))));
   }
   private venueWarnings(venues: Awaited<ReturnType<ApplicationQueries["listVenues"]>>) {
-    return venues.flatMap(venue => !venue.health ? [`${venue.venue}: venue missing`] :
-      venue.health.connectionState !== "connected" || venue.health.sequenceIntegrity !== "consistent" || venue.health.rateLimit.state !== "healthy"
-        ? [`${venue.venue}: venue degraded`] : []);
+    return venues.flatMap(venue => {
+      if (!venue.health) return [`${venue.venue}: venue missing`];
+      const warnings: string[] = [];
+      if (venue.health.connectionState !== "connected" || venue.health.sequenceIntegrity !== "consistent" ||
+        venue.health.rateLimit.state !== "healthy") warnings.push(`${venue.venue}: venue degraded`);
+      if (venue.asOfMs === null || venue.asOfMs > this.now() || this.now() - venue.asOfMs > venue.freshnessBudgetMs ||
+        venue.health.lastEventAgeMs > venue.freshnessBudgetMs) warnings.push(`${venue.venue}: venue stale`);
+      return warnings;
+    });
+  }
+  private async marketCoverage(context: RequestContext, underlying: string, selectedVenue?: z.infer<typeof MarketQuerySchema>["venue"]) {
+    const [observations, allVenues] = await Promise.all([
+      this.queries.getMarketSnapshot(context, { underlying, venue: selectedVenue }), this.queries.listVenues(context),
+    ]);
+    const venues = allVenues.filter(venue => !selectedVenue || venue.venue === selectedVenue);
+    const warnings = this.venueWarnings(venues);
+    if (selectedVenue && !venues.length) warnings.push(`${selectedVenue}: venue missing`);
+    if (!selectedVenue && !venues.length) warnings.push("venue coverage unavailable");
+    const live = observations.filter(item => {
+      const age = this.now() - item.sourceTimestamp;
+      if (age < 0 || age > item.freshnessBudgetMs || item.eligibility !== "live") {
+        warnings.push(`${item.venue}: stale or reference input excluded`); return false;
+      }
+      return true;
+    });
+    for (const venue of venues) if (!live.some(item => item.venue === venue.venue)) warnings.push(`${venue.venue}: market data missing`);
+    if (observations.length === 1000) warnings.push("market result truncated at 1000 inputs");
+    const sourceMs = Math.min(this.now(), ...observations.map(item => item.sourceTimestamp).filter(time => time <= this.now()),
+      ...venues.flatMap(venue => venue.asOfMs !== null && venue.asOfMs <= this.now() ? [venue.asOfMs] : []));
+    return { live, warnings, sourceMs };
   }
   async getMarketSnapshot(input: unknown, context: RequestContext) {
     const query = MarketQuerySchema.parse(input);
-    const [observations, venues] = await Promise.all([this.queries.getMarketSnapshot(context, query), this.queries.listVenues(context)]);
-    const warnings = this.venueWarnings(venues.filter(venue => !query.venue || venue.venue === query.venue));
-    const live = observations.filter(item => {
-      const age = this.now() - item.sourceTimestamp;
-      if (age < 0 || age > item.freshnessBudgetMs || item.eligibility !== "live") { warnings.push(`${item.venue}: stale or reference input excluded`); return false; }
-      return true;
-    });
-    for (const venue of venues.filter(item => !query.venue || item.venue === query.venue)) {
-      if (!live.some(item => item.venue === venue.venue)) warnings.push(`${venue.venue}: market data missing`);
-    }
-    if (observations.length === 1000) warnings.push("market result truncated at 1000 inputs");
+    const { live, warnings, sourceMs } = await this.marketCoverage(context, query.underlying, query.venue);
     return responseSchemas.markets.parse(this.envelope(context, { underlying: query.underlying, observations: live.map(({ rawPayloadRefOrHash: _raw, ...item }) => item) },
-      Math.min(this.now(), ...live.map(item => item.sourceTimestamp)), live.map(item => item.eventId), warnings, warnings.length ? "partial" : "ok"));
+      sourceMs, live.map(item => item.eventId), warnings, warnings.length ? "partial" : "ok"));
   }
   private async details(context: RequestContext, opportunity: Opportunity) {
     if (!opportunity.evidenceHash) throw new ApplicationError(503, "EVIDENCE_UNAVAILABLE");
@@ -90,27 +107,41 @@ export class RangeApplication {
   }
   async scanOpportunities(input: unknown, context: RequestContext) {
     const query = ScanQuerySchema.parse(input);
-    const candidates = await this.queries.scanOpportunities(context, query);
+    const [candidates, coverage] = await Promise.all([this.queries.scanOpportunities(context, query),
+      this.marketCoverage(context, query.underlying, query.venue)]);
     const instruments = query.venue ? await this.queries.findInstruments(context, { underlying: query.underlying, venue: query.venue, limit: 100, offset: 0 }) : [];
-    const warnings: string[] = candidates.length >= 1000 ? ["scan truncated at 1000 current candidates"] : [];
+    const warnings: string[] = [...coverage.warnings, ...(candidates.length >= 1000 ? ["scan truncated at 1000 current candidates"] : [])];
     const selected = candidates.filter(item => item.underlyingId === query.underlying && (!query.strategy || item.strategy === query.strategy) &&
       (!query.min_edge_bps || new Decimal(item.netEdgeBps).gte(query.min_edge_bps)) && (!query.min_capacity_usd || new Decimal(item.capacityUsd).gte(query.min_capacity_usd)) &&
       (!query.venue || item.legs.some(leg => instruments.some(instrument => instrument.instrumentId === leg.instrumentId))));
     const valid = [];
     for (const item of selected) {
       const detail = await this.details(context, item);
-      if (query.max_age_ms !== undefined && this.now() - detail.sourceMs > query.max_age_ms) continue;
+      if (query.max_age_ms !== undefined && this.now() - detail.sourceMs > query.max_age_ms) {
+        warnings.push(`${item.opportunityId}: stale opportunity excluded`); continue;
+      }
       valid.push(detail);
     }
     const page = valid.slice(query.offset, query.offset + query.limit);
-    const items: Opportunity[] = [];
-    const evidence: string[] = [], times: number[] = [];
+    const checked: typeof page = [];
     for (const detail of page) {
       if (!await this.current(context, detail.opportunity)) { warnings.push("opportunity changed during read; excluded"); continue; }
-      items.push(detail.opportunity); times.push(detail.sourceMs); evidence.push(...detail.evidence.sourceEventIds); warnings.push(...detail.evidence.warnings);
+      checked.push(detail);
     }
+    let verified = checked;
+    if (checked.length) {
+      const revision = await this.queries.getAcceptedRevision(context, query.underlying);
+      if (revision === undefined) throw new ApplicationError(503, "REVISION_UNAVAILABLE");
+      verified = checked.filter(detail => detail.opportunity.stateRevision === revision);
+      if (verified.length !== checked.length) warnings.push("opportunity changed during read; excluded");
+    }
+    const items = verified.map(detail => detail.opportunity);
+    const evidence = verified.flatMap(detail => detail.evidence.sourceEventIds);
+    const times = verified.map(detail => detail.sourceMs);
+    warnings.push(...verified.flatMap(detail => detail.evidence.warnings));
     return responseSchemas.opportunities.parse(this.envelope(context, { items, next_offset: query.offset + query.limit < valid.length && query.offset + query.limit <= 900 ? query.offset + query.limit : null },
-      Math.min(this.now(), ...times), evidence, warnings, warnings.some(warning => /excluded|truncated/.test(warning)) ? "partial" : "ok"));
+      Math.min(coverage.sourceMs, ...times), evidence, warnings,
+      coverage.warnings.length || warnings.some(warning => /excluded|truncated/.test(warning)) ? "partial" : "ok"));
   }
   async inspectOpportunity(input: unknown, context: RequestContext) {
     const { id } = OpportunityParamsSchema.parse(input);
@@ -140,11 +171,13 @@ export class RangeApplication {
       }
     }
     if (item.event.topic === "venue.health.v1") {
-      const payload = item.event.payload as { venue: string };
-      const venue = (await this.queries.listVenues(context)).find(venue => venue.venue === payload.venue);
+      const health = VenueHealthSchema.parse(item.event.payload);
+      const venue = (await this.queries.listVenues(context)).find(venue => venue.venue === health.venue);
       if (!venue) return undefined;
-      const warnings = this.venueWarnings([venue]);
-      return { event: "health", body: responseSchemas.health.parse(this.envelope(context, venue, venue.asOfMs ?? this.now(), [item.event.eventId], warnings, warnings.length ? "partial" : "ok")) };
+      const historical = { ...venue, health, asOfMs: item.event.acceptedAtMs };
+      const warnings = this.venueWarnings([historical]);
+      return { event: "health", body: responseSchemas.health.parse(this.envelope(context, historical, item.event.acceptedAtMs,
+        [item.event.eventId], warnings, warnings.length ? "partial" : "ok")) };
     }
     return undefined;
   }

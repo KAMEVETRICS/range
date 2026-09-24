@@ -36,6 +36,7 @@ export interface ApplicationQueries {
   getEvidence(context: RequestContext, hash: string): Promise<EvidenceBundle | undefined>;
   getSourceTimestamps(context: RequestContext, eventIds: string[]): Promise<number[]>;
   getOpportunityHistory(context: RequestContext, id: string): Promise<Opportunity[]>;
+  getAcceptedRevision(context: RequestContext, underlying: string): Promise<number | undefined>;
   readEvents(context: RequestContext, afterOrdinal: number, limit: number): Promise<EventPageItem[]>;
   latestEventOrdinal(context: RequestContext): Promise<number>;
 }
@@ -99,6 +100,14 @@ export class StorageQueries implements ApplicationQueries {
     this.audit(context, "storage.opportunity-history");
     const result = await this.sql.query("SELECT payload FROM opportunities WHERE opportunity_id=$1 ORDER BY state_revision DESC, accepted_at_ms DESC LIMIT 100", [id]);
     return result.rows.map(row => OpportunitySchema.parse(row.payload));
+  }
+  async getAcceptedRevision(context: RequestContext, underlying: string) {
+    this.audit(context, "storage.accepted-revision");
+    const result = await this.sql.query("SELECT revision FROM accepted_revisions WHERE underlying_id=$1", [underlying]);
+    if (result.rows.length === 0) return undefined;
+    const revision = Number(result.rows[0].revision);
+    if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("Invalid accepted revision");
+    return revision;
   }
   async readEvents(context: RequestContext, afterOrdinal: number, limit: number) {
     this.audit(context, "storage.events");

@@ -54,22 +54,29 @@ export class StreamSession {
   }
   async poll() {
     if (this.expired()) return this.close();
-    if (this.closed || this.reading) return;
+    if (this.closed || this.reading || this.draining) return;
     this.reading = true;
     try {
-      // One sentinel detects overflow without fetching an unbounded replay.
-      const events = await this.application.queries.readEvents(this.context, this.cursor, this.options.maxQueue - this.queue.length + 1);
-      if (this.closed) return;
-      for (const item of events) {
-        if (!Number.isSafeInteger(item.ordinal) || item.ordinal <= this.cursor) throw new Error("Invalid durable cursor order");
-        this.cursor = item.ordinal;
-        if (item.event.topic !== "opportunity.v1" && item.event.topic !== "venue.health.v1") continue;
-        // Health is global and must reach subscriptions filtered by underlying.
-        if (this.options.underlying && item.event.topic === "opportunity.v1" && item.event.underlyingId !== this.options.underlying) continue;
-        if (this.queue.length >= this.options.maxQueue) return this.close();
-        this.queue.push(item);
+      // Drain replay in bounded pages. A full page is backlog, not transport
+      // backpressure; only a blocked sink may exhaust the pending queue.
+      for (let page = 0; page < 4 && !this.closed; page++) {
+        const room = this.options.maxQueue - this.queue.length;
+        const limit = room + (this.blocked ? 1 : 0);
+        if (limit < 1) return;
+        const events = await this.application.queries.readEvents(this.context, this.cursor, limit);
+        if (this.closed) return;
+        for (const item of events) {
+          if (!Number.isSafeInteger(item.ordinal) || item.ordinal <= this.cursor) throw new Error("Invalid durable cursor order");
+          this.cursor = item.ordinal;
+          if (item.event.topic !== "opportunity.v1" && item.event.topic !== "venue.health.v1") continue;
+          // Health is global and must reach subscriptions filtered by underlying.
+          if (this.options.underlying && item.event.topic === "opportunity.v1" && item.event.underlyingId !== this.options.underlying) continue;
+          if (this.queue.length >= this.options.maxQueue) return this.close();
+          this.queue.push(item);
+        }
+        if (!this.blocked) await this.drain();
+        if (this.blocked || events.length < limit) return;
       }
-      if (!this.blocked) await this.drain();
     } catch { this.close(); }
     finally { this.reading = false; }
   }

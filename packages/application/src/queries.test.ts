@@ -46,4 +46,15 @@ describe("storage query adapter", () => {
     expect(statement.indexOf("DISTINCT ON")).toBeLessThan(statement.indexOf("WHERE ($1"));
     expect(values).toEqual(["equity:TSLA", "extended", 10, 20]);
   });
+
+  it("reads the final accepted revision from the durable authority", async () => {
+    const query = vi.fn(async () => ({ rows: [{ revision: "8" }] }));
+    const adapter = new StorageQueries(
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
+      { query }, [],
+    );
+    expect(await adapter.getAcceptedRevision(context, "equity:TSLA")).toBe(8);
+    expect(query).toHaveBeenCalledWith("SELECT revision FROM accepted_revisions WHERE underlying_id=$1", ["equity:TSLA"]);
+  });
 });
