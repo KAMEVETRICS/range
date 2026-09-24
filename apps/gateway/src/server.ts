@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import { z } from "zod";
-import { ApplicationError, StreamQuerySchema, ResumeIdSchema, type RangeApplication, type RequestContext } from "@range/application";
+import { ApplicationError, StreamQuerySchema, ResumeIdSchema, type RangeApplication, type RequestContext, type IntentService } from "@range/application";
+import { intentRoutes } from "./routes/intents.js";
 import { ClientAuth, type ClientRecord } from "./auth.js";
 import { routes } from "./routes/index.js";
 import { StreamSession, type StreamOptions } from "./routes/stream.js";
@@ -11,6 +12,7 @@ export interface GatewayOptions {
   application: RangeApplication; pepper: string; clients: readonly ClientRecord[]; now?: () => number;
   log?: (entry: { trace_id: string; client_id: string; operation: string; status_code: number }) => void;
   stream?: Partial<StreamOptions>;
+  intents?: IntentService;
 }
 export function buildServer(options: GatewayOptions) {
   const auth = new ClientAuth(options.clients, options.pepper, options.now);
@@ -42,6 +44,21 @@ export function buildServer(options: GatewayOptions) {
     if (route.params) z.object({}).strict().parse(request.query);
     const response = route.response.parse(await route.execute(options.application, input, request.rangeContext));
     return reply.send(response);
+  });
+  for (const route of intentRoutes) app.post(route.path, async (request, reply) => {
+    const client = auth.authorize(request.headers.authorization, [route.scope]);
+    request.rangeContext.clientId = client.id;
+    auth.limit(client, route.operationId);
+    z.object({}).strict().parse(request.query);
+    const body = route.body.parse(request.body ?? {});
+    if (!options.intents) throw new ApplicationError(503, "INTENT_SERVICE_UNAVAILABLE");
+    const caller = { ...request.rangeContext, scopes: client.scopes };
+    const id = route.params.parse(request.params).id;
+    const result = route.idempotencyKey ? await options.intents.createUnsignedIntent({ ...body, opportunityId: id,
+      idempotencyKey: route.idempotencyKey.parse(request.headers["idempotency-key"]) }, caller) : await options.intents.validateUnsignedIntent(id, caller);
+    const envelope = await options.intents.response(result, caller, "intentId" in result ? result.intentId :
+      result.status === "changed" ? result.proposedIntent.intentId : id!);
+    return reply.send(route.response.parse(envelope));
   });
   const streams = new Set<StreamSession>();
   app.get("/v1/stream", async (request, reply) => {

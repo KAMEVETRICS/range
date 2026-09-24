@@ -4,6 +4,7 @@ import { z } from "zod";
 import SwaggerParser from "@apidevtools/swagger-parser";
 import { responseSchemas, StreamQuerySchema, ResumeIdSchema } from "@range/application";
 import { routes } from "./routes/index.js";
+import { intentRoutes } from "./routes/intents.js";
 
 function json(schema: z.ZodType, io: "input" | "output" = "output") {
   const { $schema: _dialect, ...document } = z.toJSONSchema(schema, { target: "draft-2020-12", io });
@@ -19,8 +20,8 @@ type Response = { description: string; content: Record<string, { schema: Record<
 type Operation = { operationId: string; security: Array<{ rangeToken: string[] }>; parameters: unknown[];
   responses: Record<string, Response>; [key: string]: unknown };
 export function generateOpenApi() {
-  const paths: Record<string, { get: Operation }> = {};
-  const errors = Object.fromEntries([400, 401, 403, 404, 429, 503].map(status => [String(status), {
+  const paths: Record<string, { get?: Operation; post?: Operation }> = {};
+  const errors = Object.fromEntries([400, 401, 403, 404, 409, 429, 503].map(status => [String(status), {
     description: "Rejected request; no current result is implied", content: { "application/json": { schema: json(responseSchemas.error) } },
   }]));
   for (const route of routes) {
@@ -28,6 +29,13 @@ export function generateOpenApi() {
       "x-required-scopes": [route.scope], parameters: [...parameters(route.query, "query"), ...parameters(route.params, "path")],
       responses: { "200": { description: "Source-aligned Range response", content: { "application/json": { schema: json(route.response) } } }, ...errors } } };
   }
+  for (const route of intentRoutes) paths[route.path.replace(":id", "{id}")] = { post: {
+    operationId: route.operationId, security: [{ rangeToken: [] }], "x-required-scopes": [route.scope], parameters: [...parameters(route.params, "path"),
+      ...(route.idempotencyKey ? [{ name: "Idempotency-Key", in: "header", required: true, schema: json(route.idempotencyKey, "input") }] : [])],
+    requestBody: { required: true, content: { "application/json": { schema: json(route.body, "input") } } },
+    description: "Constrained unsigned analysis only. Legs are derived by Range; no signing or order submission. Every handoff requires fresh validation; changed returns a separate proposal.",
+    responses: { "200": { description: "Immutable unsigned intent or explicit validation outcome", content: { "application/json": { schema: json(route.response) } } }, ...errors },
+  } };
   paths["/v1/stream"] = { get: { operationId: "streamChanges", security: [{ rangeToken: [] }], "x-required-scopes": ["market:read", "opportunity:read"],
     description: "SSE opportunity and health changes. IDs are evt_<durable ordinal>; Last-Event-ID resumes strictly after that cursor. No cursor starts at the current tail. Heartbeat comments every 15 seconds. Replay rechecks authoritative currentness and emits explicit invalidations for historical opportunities. Slow clients disconnect at a bounded queue; reconnect with the last received event ID.",
     parameters: [...parameters(StreamQuerySchema, "query"), { name: "Last-Event-ID", in: "header", required: false, schema: json(ResumeIdSchema) }],
@@ -36,7 +44,7 @@ export function generateOpenApi() {
     "x-event-envelopes": { opportunity: json(responseSchemas.opportunity), invalidation: json(responseSchemas.invalidation), health: json(responseSchemas.health) },
   } };
   return { openapi: "3.1.0", info: { title: "Range read API", version: "1.0.0" }, paths,
-    components: { securitySchemes: { rangeToken: { type: "http", scheme: "bearer", description: "Scoped Range client token. Stored as a peppered HMAC hash. intent:create is reserved for the later unsigned-intent API." } } } };
+    components: { securitySchemes: { rangeToken: { type: "http", scheme: "bearer", description: "Scoped Range client token. Stored as a peppered HMAC hash. intent:create permits constrained unsigned analysis and validation only." } } } };
 }
 export async function validateOpenApi(document: ReturnType<typeof generateOpenApi>) {
   await SwaggerParser.validate(structuredClone(document) as SwaggerParser["api"]);

@@ -7,7 +7,9 @@
   "dependencies": {
     "@range/domain": "workspace:*",
     "@range/storage": "workspace:*",
+    "@range/market-state": "workspace:*",
     "decimal.js": "^10.6.0",
     "zod": "^4.0.0"
-  }
+  },
+  "devDependencies": { "pg-mem": "^3.0.0" }
 }

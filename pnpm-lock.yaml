@@ -145,6 +145,9 @@ importers:
       '@range/domain':
         specifier: workspace:*
         version: link:../domain
+      '@range/market-state':
+        specifier: workspace:*
+        version: link:../market-state
       '@range/storage':
         specifier: workspace:*
         version: link:../storage
@@ -154,6 +157,10 @@ importers:
       zod:
         specifier: ^4.0.0
         version: 4.6.5
+    devDependencies:
+      pg-mem:
+        specifier: ^3.0.0
+        version: 3.0.14
 
   packages/config:
     dependencies:

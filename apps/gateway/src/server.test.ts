@@ -325,14 +325,14 @@ describe("OpenAPI contracts", () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(EnvelopeSchema.safeParse(body).success).toBe(true);
-      const schema = document.paths[path]!.get.responses["200"].content["application/json"]!.schema;
+      const schema = document.paths[path]!.get!.responses["200"].content["application/json"]!.schema;
       const validate = ajv.compile(schema);
       expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
       expect(validate({ ...body, freshness: undefined })).toBe(false);
     }
     const stream = await f.application.streamEvent(event(1), { traceId: "rng_trace_contract", clientId: "reader" });
     expect(responseSchemas.opportunity.safeParse(stream!.body).success).toBe(true);
-    const streamSchemas = document.paths["/v1/stream"]!.get["x-event-envelopes"] as Record<string, Record<string, unknown>>;
+    const streamSchemas = document.paths["/v1/stream"]!.get!["x-event-envelopes"] as Record<string, Record<string, unknown>>;
     const invalidationContext = { traceId: "rng_trace_contract", clientId: "reader" };
     f.setRevision(8);
     const invalidation = await f.application.streamEvent(event(2), invalidationContext);
@@ -346,6 +346,6 @@ describe("OpenAPI contracts", () => {
     }
     const json = JSON.stringify(document);
     expect(json).not.toMatch(/privateKey|apiSecret|rawPayloadRefOrHash|signedTransaction/);
-    expect(Object.keys(document.paths)).toHaveLength(6);
+    expect(Object.keys(document.paths)).toHaveLength(8);
   });
 });
