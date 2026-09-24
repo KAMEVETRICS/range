@@ -20,9 +20,22 @@ export const IntentValidationSchema = z.discriminatedUnion("status", [
 ]);
 export const intentResponseSchemas = { create: EnvelopeSchema.extend({ result: IntentSchema }), validate: EnvelopeSchema.extend({ result: IntentValidationSchema }) };
 export type IntentCaller = RequestContext & { scopes: readonly string[] };
-type Record = { intent: Intent; fingerprint: string; clientId: string; sourceMs: number; sourceIds: string[];
+type Record = { intent: Intent; fingerprint: string; clientId: string; sourceMs: number; sourceIds: string[]; opportunityDigest: string;
   audit: { clientId: string; traceId: string; action: "intent:create" | "intent:proposal"; recordedAtMs: number } };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+function fillAtQuantity(book: OrderBook, side: "buy" | "sell", quantity: InstanceType<typeof Exact>) {
+  let remaining = quantity;
+  let filledNotional = new Exact(0);
+  for (const level of book.levels(side)) {
+    if (remaining.isZero()) break;
+    const taken = Exact.min(remaining, level.quantity);
+    filledNotional = filledNotional.plus(taken.times(level.price));
+    remaining = remaining.minus(taken);
+  }
+  if (!remaining.isZero()) fail("INSUFFICIENT_DEPTH");
+  return { notional: filledNotional, averagePrice: filledNotional.div(quantity).toFixed() };
+}
 
 /** One INSERT persists the immutable intent and caller audit together. Scoped,
  * hashed keys fit the existing global PK without exposing client credentials. */
@@ -114,15 +127,19 @@ export class IntentService {
       // Even a fill at the least favorable allowed price stays inside the cap.
       const boundedQuantity = Exact.min(quote.filledQuantity, new Exact(notional).div(maximumPrice));
       const quantity = boundedQuantity.div(instrument.contractMultiplier).div(instrument.lotSize).floor().times(instrument.lotSize);
-      if (quantity.lte(0) || quantity.times(instrument.contractMultiplier).times(quote.averagePrice).lt(instrument.minimumNotional)) fail("INSUFFICIENT_DEPTH");
-      prices.push({ side: leg.side, price: quote.averagePrice });
+      if (quantity.lte(0)) fail("INSUFFICIENT_DEPTH");
+      const baseQuantity = quantity.times(instrument.contractMultiplier);
+      const filled = fillAtQuantity(book, leg.side, baseQuantity);
+      if (baseQuantity.times(Exact.min(best, quote.worstPrice)).lt(instrument.minimumNotional) ||
+          filled.notional.lt(instrument.minimumNotional)) fail("INSUFFICIENT_DEPTH");
+      prices.push({ side: leg.side, price: filled.averagePrice });
       if (instrument.productType === "perpetual") {
         if (!venue.capabilities.some(capability => ["funding", "funding_current", "funding_predicted"].includes(capability))) fail("CAPABILITY_WITHDRAWN");
         const funding = used.filter(item => item.payload.kind === "funding").map(item => normalizeFunding(item, now));
         const projected = projectFunding({ side: leg.side === "buy" ? "long" : "short", notionalUsd: notional },
           { startMs: now, endMs: now + limits.horizon }, funding, now);
-        if (projected.status !== "projected") fail("FUNDING_SEMANTICS_UNKNOWN");
-        fundingBps = fundingBps.plus(projected.expectedCashflowBps);
+        if (projected.status !== "projected" && projected.status !== "no_settlement_due") fail("FUNDING_SEMANTICS_UNKNOWN");
+        if (projected.status === "projected") fundingBps = fundingBps.plus(projected.expectedCashflowBps);
         deadline = Math.min(deadline, projected.nextSettlementMs);
       }
       return { legId: leg.legId, instrumentId: leg.instrumentId, side: leg.side, quantity: quantity.toFixed(),
@@ -154,6 +171,7 @@ export class IntentService {
     if (prior) { if (prior.fingerprint !== fingerprint) fail("IDEMPOTENCY_CONFLICT"); return IntentSchema.parse(prior.intent); }
     const derived = await this.derive(request, caller, key);
     const record = await this.store.insert(key, { intent: derived.intent, fingerprint, clientId: caller.clientId, sourceMs: derived.sourceMs, sourceIds: derived.sourceIds,
+      opportunityDigest: digest(derived.opportunity),
       audit: { clientId: caller.clientId, traceId: caller.traceId, action: "intent:create", recordedAtMs: this.now() } });
     if (record.fingerprint !== fingerprint) fail("IDEMPOTENCY_CONFLICT");
     await this.authority(derived.opportunity, caller);
@@ -178,7 +196,8 @@ export class IntentService {
       if (fresh.intent.preflightEvidenceHash === original.intent.preflightEvidenceHash) return { status: "valid", intent: IntentSchema.parse(original.intent) };
       const key = digest([caller.clientId, id, fresh.intent.preflightEvidenceHash]);
       const proposal = await this.store.insert(key, { ...original, intent: IntentSchema.parse({ ...fresh.intent, intentId: `intent_${key}` }),
-        sourceMs: fresh.sourceMs, sourceIds: fresh.sourceIds, audit: { clientId: caller.clientId, traceId: caller.traceId, action: "intent:proposal", recordedAtMs: this.now() } });
+        sourceMs: fresh.sourceMs, sourceIds: fresh.sourceIds, opportunityDigest: digest(fresh.opportunity),
+        audit: { clientId: caller.clientId, traceId: caller.traceId, action: "intent:proposal", recordedAtMs: this.now() } });
       await this.authority(fresh.opportunity, caller);
       if (this.now() >= Date.parse(proposal.intent.expiresAt)) return { status: "expired", reason: "STALE_INPUT" };
       return { status: "changed", reason: "ECONOMICS_OR_EVIDENCE_CHANGED", proposedIntent: IntentSchema.parse(proposal.intent) };
@@ -189,7 +208,23 @@ export class IntentService {
   }
   async response(result: Intent | z.infer<typeof IntentValidationSchema>, caller: IntentCaller, id: string) {
     const record = await this.owned(id, caller);
-    const status = "status" in result && result.status !== "valid" ? "partial" : "ok";
-    return this.application.envelope(caller, result, record.sourceMs, record.sourceIds, ["non_atomic_fills", "mandatory_preflight_before_handoff"], status);
+    let final = result;
+    if (!("status" in result) || result.status === "valid" || result.status === "changed") {
+      const active = "status" in result ? result.status === "valid" ? result.intent : result.proposedIntent : result;
+      const current = await this.application.queries.inspectOpportunity(caller, active.opportunityId);
+      const revision = current && await this.application.queries.getAcceptedRevision(caller, current.underlyingId);
+      const currentAuthority = current?.status === "actionable" && revision === current.stateRevision &&
+        digest(current) === record.opportunityDigest && current.evidenceHash === active.evidenceHash &&
+        this.now() < Date.parse(current.expiresAt);
+      if (this.now() >= Date.parse(active.expiresAt)) {
+        if (!("status" in result)) fail("STALE_INPUT");
+        final = { status: "expired", reason: "TTL_EXPIRED" };
+      } else if (!currentAuthority) {
+        if (!("status" in result)) fail("OPPORTUNITY_NOT_CURRENT");
+        final = { status: "rejected", reason: "OPPORTUNITY_NOT_CURRENT" };
+      }
+    }
+    const status = "status" in final && final.status !== "valid" ? "partial" : "ok";
+    return this.application.envelope(caller, final, record.sourceMs, record.sourceIds, ["non_atomic_fills", "mandatory_preflight_before_handoff"], status);
   }
 }

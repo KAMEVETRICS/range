@@ -176,4 +176,39 @@ describe("constrained unsigned intents", () => {
     expect(intent.derivedLegs[0].quantity).toBe("11.88118811");
     expect(intent.derivedLegs[0].priceBounds).toEqual({ minimum: "100", maximum: "101" });
   });
+  it("rejects a rounded leg whose actual permitted fill falls below instrument minimum", async () => {
+    const f = await intentFixture();
+    const payload = f.observations[0].payload;
+    if (payload.kind !== "order_book") throw new Error("book expected");
+    payload.asks = [{ price: "100" as never, quantity: "5" as never }, { price: "200" as never, quantity: "100" as never }];
+    f.instruments[0].lotSize = "1" as never;
+    f.instruments[0].minimumNotional = "800" as never;
+    const sell = f.observations[2].payload;
+    if (sell.kind !== "order_book") throw new Error("sell book expected");
+    sell.bids[0].price = "300" as never;
+    sell.asks[0].price = "301" as never;
+    await expect(new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller))
+      .rejects.toMatchObject({ code: "INSUFFICIENT_DEPTH" });
+  });
+  it("computes economics from the final rounded quantity's fill", async () => {
+    const f = await intentFixture();
+    const payload = f.observations[0].payload;
+    if (payload.kind !== "order_book") throw new Error("book expected");
+    payload.asks = [{ price: "100" as never, quantity: "5" as never }, { price: "200" as never, quantity: "100" as never }];
+    f.instruments[0].lotSize = "1" as never;
+    const sell = f.observations[2].payload;
+    if (sell.kind !== "order_book") throw new Error("sell book expected");
+    sell.bids[0].price = "150" as never;
+    sell.asks[0].price = "151" as never;
+    const intent = await new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller);
+    expect(intent.derivedLegs[0].quantity).toBe("6");
+    expect(intent.economics.grossSpreadBps).toBe("2857.142857142857");
+  });
+  it("accepts verified funding when no settlement is due in the holding window", async () => {
+    const f = await intentFixture();
+    f.evidence.assumptions.holdingHorizonMs = { kind: "integer", value: 1000 };
+    const intent = await new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller);
+    expect(intent.economics.expectedFundingBps).toBe("0");
+    expect(Date.parse(intent.expiresAt) - instant).toBe(2000);
+  });
 });

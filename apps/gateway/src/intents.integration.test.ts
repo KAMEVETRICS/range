@@ -13,9 +13,10 @@ afterEach(async () => { for (const close of cleanup.splice(0)) await close(); })
 
 async function fixture(scopes = ["intent:create"]) {
   const f = await intentFixture();
+  const store = new SqlIntentStore(f.sql);
   const app = buildServer({
     application: f.application,
-    intents: new IntentService(f.application, new SqlIntentStore(f.sql), f.now),
+    intents: new IntentService(f.application, store, f.now),
     pepper,
     clients: [
       { id: "alice", tokenHash: hashClientToken(token, pepper), scopes },
@@ -24,7 +25,7 @@ async function fixture(scopes = ["intent:create"]) {
     now: f.now,
   });
   cleanup.push(() => app.close());
-  return { ...f, app };
+  return { ...f, app, store };
 }
 
 function create(app: Awaited<ReturnType<typeof fixture>>["app"], options: {
@@ -72,6 +73,36 @@ it("creates, replays, and validates from POST /v1/opportunities/{id}/intent with
   expect((await validate(f.app, body.result.intentId)).json().result.status).toBe("valid");
   f.setNow(instant + 2000);
   expect((await validate(f.app, body.result.intentId)).json().result.status).toBe("expired");
+});
+
+it("does not return valid after the intent expires during the response store read", async () => {
+  const f = await fixture();
+  const intentId = (await create(f.app)).json().result.intentId;
+  const get = f.store.get.bind(f.store);
+  let reads = 0;
+  f.store.get = async key => {
+    const record = await get(key);
+    if (++reads === 2) f.setNow(instant + 2001);
+    return record;
+  };
+  const response = await validate(f.app, intentId);
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ status: "partial", result: { status: "expired", reason: "TTL_EXPIRED" } });
+});
+
+it("does not return valid after authority changes during the response store read", async () => {
+  const f = await fixture();
+  const intentId = (await create(f.app)).json().result.intentId;
+  const get = f.store.get.bind(f.store);
+  let reads = 0;
+  f.store.get = async key => {
+    const record = await get(key);
+    if (++reads === 2) f.setRevision(8);
+    return record;
+  };
+  const response = await validate(f.app, intentId);
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ status: "partial", result: { status: "rejected", reason: "OPPORTUNITY_NOT_CURRENT" } });
 });
 
 it("rejects insufficient scope, caller legs, body keys, conflicts, and stale source creation", async () => {
