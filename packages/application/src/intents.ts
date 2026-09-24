@@ -209,7 +209,12 @@ export class IntentService {
   async response(result: Intent | z.infer<typeof IntentValidationSchema>, caller: IntentCaller, id: string) {
     const record = await this.owned(id, caller);
     let final = result;
-    if (!("status" in result) || result.status === "valid" || result.status === "changed") {
+    const warnings = ["non_atomic_fills", "mandatory_preflight_before_handoff"];
+    // Idempotent create replays the original object even after its TTL. Surface
+    // that object as non-actionable without changing the validation contract.
+    if (!("status" in result) && this.now() >= Date.parse(result.expiresAt)) {
+      warnings.push("intent_expired_no_handoff");
+    } else if (!("status" in result) || result.status === "valid" || result.status === "changed") {
       const active = "status" in result ? result.status === "valid" ? result.intent : result.proposedIntent : result;
       const current = await this.application.queries.inspectOpportunity(caller, active.opportunityId);
       const revision = current && await this.application.queries.getAcceptedRevision(caller, current.underlyingId);
@@ -217,14 +222,14 @@ export class IntentService {
         digest(current) === record.opportunityDigest && current.evidenceHash === active.evidenceHash &&
         this.now() < Date.parse(current.expiresAt);
       if (this.now() >= Date.parse(active.expiresAt)) {
-        if (!("status" in result)) fail("STALE_INPUT");
-        final = { status: "expired", reason: "TTL_EXPIRED" };
+        if (!("status" in result)) warnings.push("intent_expired_no_handoff");
+        else final = { status: "expired", reason: "TTL_EXPIRED" };
       } else if (!currentAuthority) {
-        if (!("status" in result)) fail("OPPORTUNITY_NOT_CURRENT");
-        final = { status: "rejected", reason: "OPPORTUNITY_NOT_CURRENT" };
+        if (!("status" in result)) warnings.push("intent_not_current_no_handoff");
+        else final = { status: "rejected", reason: "OPPORTUNITY_NOT_CURRENT" };
       }
     }
-    const status = "status" in final && final.status !== "valid" ? "partial" : "ok";
-    return this.application.envelope(caller, final, record.sourceMs, record.sourceIds, ["non_atomic_fills", "mandatory_preflight_before_handoff"], status);
+    const status = "status" in final ? final.status === "valid" ? "ok" : "partial" : warnings.length > 2 ? "partial" : "ok";
+    return this.application.envelope(caller, final, record.sourceMs, record.sourceIds, warnings, status);
   }
 }

@@ -75,6 +75,28 @@ it("creates, replays, and validates from POST /v1/opportunities/{id}/intent with
   expect((await validate(f.app, body.result.intentId)).json().result.status).toBe("expired");
 });
 
+it("replays the same expired intent with an explicit non-actionable envelope", async () => {
+  const f = await fixture();
+  const original = (await create(f.app)).json().result;
+  f.setNow(instant + 2001);
+  const replay = await create(f.app);
+  expect(replay.statusCode).toBe(200);
+  expect(replay.json()).toMatchObject({ status: "partial", warnings: expect.arrayContaining(["intent_expired_no_handoff"]) });
+  expect(replay.json().result).toEqual(original);
+  expect((await validate(f.app, original.intentId)).json().result).toMatchObject({ status: "expired", reason: "TTL_EXPIRED" });
+});
+
+it("replays the same intent after authority withdrawal without presenting a fresh handoff", async () => {
+  const f = await fixture();
+  const original = (await create(f.app)).json().result;
+  f.setRevision(8);
+  const replay = await create(f.app);
+  expect(replay.statusCode).toBe(200);
+  expect(replay.json()).toMatchObject({ status: "partial", warnings: expect.arrayContaining(["intent_not_current_no_handoff"]) });
+  expect(replay.json().result).toEqual(original);
+  expect((await validate(f.app, original.intentId)).json().result).toMatchObject({ status: "rejected", reason: "OPPORTUNITY_NOT_CURRENT" });
+});
+
 it("does not return valid after the intent expires during the response store read", async () => {
   const f = await fixture();
   const intentId = (await create(f.app)).json().result.intentId;
