@@ -1,0 +1,152 @@
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+import Redis from "ioredis-mock";
+import { DataType, newDb } from "pg-mem";
+import { CurrentStateStore } from "./current-state.js";
+import { HistoryStore, PostgresRevisionAuthority } from "./history.js";
+import { OpportunitySchema, type Opportunity } from "@range/domain";
+import { InMemoryEventBus, parseEvent } from "@range/event-bus";
+import { InstrumentRegistry } from "@range/instruments";
+import { startPersistentOpportunityWorker } from "./bootstrap.js";
+
+export async function database() {
+  const memory = newDb();
+  memory.public.registerOperator({ operator: "~", left: DataType.text, right: DataType.text,
+    returns: DataType.bool, implementation: (text, pattern) => new RegExp(pattern).test(text) });
+  // pg-mem checks SQL, indexes and relational constraints. The extension call
+  // is stubbed: actual Timescale chunk/retention behavior requires Docker CI.
+  memory.registerExtension("timescaledb", schema => {
+    schema.registerFunction({ name: "create_hypertable", args: [DataType.text, DataType.text], returns: DataType.bool, implementation: () => true });
+  });
+  const { Pool } = memory.adapters.createPg();
+  const pool = new Pool();
+  await pool.query(await readFile(new URL("./migrations/0001_initial.sql", import.meta.url), "utf8"));
+  return pool;
+}
+
+const value = (version: number, expiresAt: number) => ({ version, expiresAt, value: { price: `${version}` } });
+function opportunity(revision: number, expiresAt: number): Opportunity {
+  return OpportunitySchema.parse({ opportunityId: "opp_test", stateRevision: revision, underlyingId: "equity:TSLA", strategy: "perp_spread",
+    legs: [], status: "rejected", rejectionReasons: ["INSUFFICIENT_DEPTH"], grossSpreadBps: "0", expectedFundingBps: "0",
+    tradingFeesBps: "0", slippageBps: "0", financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0",
+    uncertaintyBufferBps: "0", netEdgeBps: "0", capacityUsd: "0", expiresAt: new Date(expiresAt).toISOString(),
+    freshness: { oldestInputMs: 0, synchronized: true, eligibility: "reference_only", qualityFlags: [] } });
+}
+
+describe("Redis current state", () => {
+  it("atomically rejects lower versions and keeps the version fence after TTL expiry", async () => {
+    const redis = new Redis();
+    let now = Date.now();
+    const store = new CurrentStateStore(redis, { read: async () => 2 }, () => now);
+    const newer = value(2, now + 50_000);
+    expect(await store.put("book:a", newer)).toBe(true);
+    expect(await store.put("book:a", value(1, now + 100_000))).toBe(false);
+    expect(await store.get("book:a")).toEqual(newer);
+    now += 60_000;
+    expect(await store.get("book:a")).toBeUndefined();
+    expect(await store.put("book:a", value(2, now + 100_000))).toBe(false);
+    expect(await store.put("book:a", value(1, now + 100_000))).toBe(false);
+    expect(await store.put("book:a", value(3, now + 100_000))).toBe(true);
+    redis.disconnect();
+  });
+
+  it("uses indexed underlying queries and makes same-revision expiration terminal", async () => {
+    const redis = new Redis();
+    const now = Date.now();
+    const store = new CurrentStateStore(redis, { read: async () => 7 }, () => now);
+    await store.put("a", { ...value(7, now + 1000), underlyingId: "equity:A" });
+    await store.put("b", { ...value(7, now + 1000), underlyingId: "equity:B" });
+    expect((await store.query("equity:A")).map(item => item.key)).toEqual(["a"]);
+    await store.put("a", { ...value(7, now + 1000), underlyingId: "equity:A", terminal: true });
+    expect(await store.put("a", { ...value(7, now + 10000), underlyingId: "equity:A" })).toBe(false);
+    expect(await store.get("a")).toBeUndefined();
+    redis.disconnect();
+  });
+
+  it("does not promote rejected events and fails closed when the authority is unavailable", async () => {
+    const redis = new Redis();
+    const now = Date.now();
+    let failure = false;
+    const store = new CurrentStateStore(redis, { read: async () => { if (failure) throw new Error("offline"); return 3; } }, () => now);
+    await store.putOpportunity(opportunity(3, now + 1000));
+    expect(await store.getOpportunity("opp_test")).toBeUndefined();
+    failure = true;
+    await expect(store.putOpportunity(opportunity(3, now + 1000))).rejects.toThrow("offline");
+    redis.disconnect();
+  });
+});
+
+describe("Postgres history and revision authority", () => {
+  it("advances atomically across clients and preserves revisions across restart", async () => {
+    const pool = await database();
+    const first = new PostgresRevisionAuthority(pool);
+    const second = new PostgresRevisionAuthority(pool);
+    expect(await first.read("equity:A")).toBe(0);
+    expect(await Promise.all([first.advance("equity:A"), second.advance("equity:A")])).toEqual([1, 2]);
+    expect(await new PostgresRevisionAuthority(pool).read("equity:A")).toBe(2);
+    expect(await second.advance("equity:B")).toBe(1);
+    await pool.end();
+  });
+
+  it("requires immutable archive and calculation parents, and indexes history by underlying/time", async () => {
+    const pool = await database();
+    const history = new HistoryStore(pool);
+    const now = Date.now();
+    const event = { eventId: "evt_opp", topic: "opportunity.v1" as const, key: "equity:TSLA", underlyingId: "equity:TSLA",
+      acceptedAtMs: now, archiveId: "archive1", calculationVersion: "calc.v1", payload: opportunity(1, now + 1000) };
+    await expect(history.append(event)).rejects.toThrow();
+    await history.registerArchive({ archiveId: "archive1", uri: "s3://range/immutable.ndjson", contentHash: `sha256:${"a".repeat(64)}` });
+    await expect(history.append(event)).rejects.toThrow();
+    await history.registerCalculation("calc.v1");
+    await history.append(event);
+    await history.append(event);
+    expect(await history.queryEvents({ underlyingId: "equity:TSLA", fromMs: now, toMs: now + 1 })).toEqual([event]);
+    await expect(history.append({ ...event, key: "changed" })).rejects.toThrow(/immutable/i);
+    await pool.end();
+  });
+});
+
+describe("production worker bootstrap", () => {
+  it("hydrates the committed revision after a worker restart", async () => {
+    const pool = await database();
+    const redis = new Redis();
+    const registry = new InstrumentRegistry();
+    for (const venue of ["a", "b"]) registry.upsert({
+      instrumentId: `ins_${venue}`, underlyingId: "equity:DEMO", venue, venueSymbol: venue,
+      productType: "perpetual", quoteAsset: "USD", settlementAsset: "USD", collateralAsset: "USD",
+      contractMultiplier: "1", tickSize: "0.01", lotSize: "0.001", minimumNotional: "10",
+      capabilities: ["orderbook"], metadataVersion: 1, effectiveFrom: "2026-09-20T00:00:00.000Z",
+      fundingInterval: 28_800_000,
+      tradingSchedule: { timezone: "UTC", sessions: [{ daysOfWeek: [1, 2, 3, 4, 5], opensAt: "00:00", closesAt: "23:59" }] },
+    });
+    const members = ["a", "b"].map(venue => registry.getCurrent(`ins_${venue}`)!);
+    registry.addReviewedMapping({
+      underlyingId: "equity:DEMO", mappingVersion: 1, compatibleExposure: "one share",
+      reviewer: "reviewer", reviewedAt: "2026-09-20T00:00:00.000Z",
+      members: members.map(item => ({ instrumentId: item.instrument.instrumentId, instrumentVersion: item.version, metadataHash: item.metadataHash })),
+      proof: { contractMultiplier: "checked", settlementAsset: "checked", collateralAsset: "checked",
+        tradingSchedule: "checked", economicExposure: "checked" },
+    });
+    const bus = new InMemoryEventBus();
+    const now = 1_790_000_000_000;
+    const policy = { requestedNotionalUsd: "100", minimumNotionalUsd: "10", holdingHorizonMs: 1_000,
+      feesBpsByVenue: { a: "0", b: "0" }, slippageBpsByVenue: { a: "0", b: "0" },
+      financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0", debounceMs: 0 };
+    const first = await startPersistentOpportunityWorker(bus, registry, policy, pool, redis, () => now);
+    expect(first.worker.currentRevision("equity:DEMO")).toBe(0);
+    await bus.publish("book.state.v1", "ins_a", parseEvent("book.state.v1", {
+      eventId: "evt_book_a", schemaVersion: 1, venue: "a", instrumentId: "ins_a", transport: "replay",
+      sourceTimestamp: now - 10, receivedTimestamp: now, freshnessBudgetMs: 1_000, qualityFlags: [],
+      rawPayloadRefOrHash: "sha256:synthetic", eligibility: "live",
+      payload: { kind: "order_book", bids: [{ price: "100", quantity: "10" }],
+        asks: [{ price: "101", quantity: "10" }], capacityUsd: "1000" },
+    }));
+    expect(first.worker.currentRevision("equity:DEMO")).toBe(1);
+    await first.stop();
+    const second = await startPersistentOpportunityWorker(bus, registry, policy, pool, redis, () => now);
+    expect(second.worker.currentRevision("equity:DEMO")).toBe(1);
+    await second.stop();
+    redis.disconnect();
+    await pool.end();
+  });
+});

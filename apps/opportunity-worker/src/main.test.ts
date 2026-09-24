@@ -67,6 +67,28 @@ async function publishEligibleInputs(bus: InMemoryEventBus) {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunity worker", () => {
+  it("preserves the numeric high-water through a malformed sequence invalidation", async () => {
+    const bus = new InMemoryEventBus();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "opaque-sequence-replay", async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, reviewedRegistry(), policy);
+    await publishEligibleInputs(bus);
+    for (const [sequence, offset] of [["101", -3], ["opaque", -2]] as const) {
+      await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", `evt_${sequence}`),
+        sequence, sourceTimestamp: NOW + offset, receivedTimestamp: NOW + offset } as never);
+      await worker.flush();
+    }
+    const revision = worker.currentRevision("equity:TSLA");
+    const marker = seen.length;
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_stale_100"),
+      sequence: "100", sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1 } as never);
+    await worker.flush();
+    expect(worker.currentRevision("equity:TSLA")).toBe(revision);
+    expect(seen.slice(marker).some(event => event.status === "actionable")).toBe(false);
+    expect(seen.filter(event => event.status === "actionable").some(event => worker.isCurrent(event))).toBe(false);
+    await worker.stop();
+  });
+
   it("does not revive an invalid newer book with an older live snapshot", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();

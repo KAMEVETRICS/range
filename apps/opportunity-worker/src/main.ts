@@ -10,6 +10,8 @@ export interface WorkerPolicy {
   revisionAuthority?: RevisionAuthority;
   now?: () => number;
   debounceMs?: number;
+  /** Inject a clock-aligned scheduler for deterministic event-log replay. */
+  schedule?: (callback: () => void, delayMs: number) => () => void;
   requestedNotionalUsd: string;
   minimumNotionalUsd: string;
   holdingHorizonMs: number;
@@ -58,12 +60,16 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     throw new Error("Production opportunity worker requires a durable revision authority");
   }
   const now = policy.now ?? Date.now;
+  const scheduleTimer = policy.schedule ?? ((callback, delay) => {
+    const timer = setTimeout(callback, delay);
+    return () => clearTimeout(timer);
+  });
   const debounceMs = Math.max(0, Math.min(25, policy.debounceMs ?? 25));
   const books = new Map<string, OrderBook>();
   const bookCursors = new Map<string, BookCursor>();
   const funding = new Map<string, ObservationEnvelope[]>();
   const health = new Map<string, VenueHealth>();
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  const pending = new Map<string, () => void>();
   const generations = new Map<string, number>();
   for (const mapping of registry.listReviewedMappings()) {
     try {
@@ -74,7 +80,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       throw new Error("Revision authority unavailable");
     }
   }
-  const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const expiryTimers = new Map<string, () => void>();
   const active = new Map<string, ReturnType<typeof activeLifecycle>>();
   const unsubscribe: Array<() => Promise<void>> = [];
   let publishing = Promise.resolve();
@@ -118,7 +124,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       if (before.status !== "actionable") continue;
       const after = lifecycle.onCapabilityWithdrawal(instrumentId);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
         queuePublish({ ...after, stateRevision: revision });
       }
     }
@@ -128,7 +134,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       if (lifecycle.current(now()).status !== "actionable") continue;
       const after = lifecycle.onQuoteWithdrawal(instrumentId);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
         queuePublish({ ...after, stateRevision: revision });
       }
     }
@@ -138,7 +144,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       if (lifecycle.current(now()).status !== "actionable") continue;
       const after = lifecycle.onMappingWithdrawal(underlyingId);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
         queuePublish({ ...after, stateRevision: revision });
       }
     }
@@ -214,7 +220,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           const lifecycle = activeLifecycle(versioned);
           active.set(versioned.opportunityId, lifecycle);
           const delay = Math.max(0, Date.parse(versioned.expiresAt) - now());
-          const timer = setTimeout(() => {
+          expiryTimers.get(versioned.opportunityId)?.();
+          const timer = scheduleTimer(() => {
             if (!active.has(versioned.opportunityId)) return;
             const expired = lifecycle.current(Date.parse(versioned.expiresAt));
             active.delete(versioned.opportunityId);
@@ -237,7 +244,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const evaluate = evaluateUnlocked;
   const schedule = (underlyingId: string) => {
     if (pending.has(underlyingId)) return;
-    pending.set(underlyingId, setTimeout(() => {
+    pending.set(underlyingId, scheduleTimer(() => {
       pending.delete(underlyingId);
       publishing = publishing.then(() => evaluate(underlyingId));
     }, debounceMs));
@@ -265,7 +272,9 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     if (revision !== undefined) expireBook(event.instrumentId, revision);
     bookCursors.set(event.instrumentId, { eventId: event.eventId,
       sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
-      sequencePresent, sequence });
+      // An opaque sequence invalidates the book but cannot erase the last
+      // comparable sequence; otherwise a stale numeric snapshot could revive it.
+      sequencePresent, sequence: sequence ?? current?.sequence });
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
     if (underlying) schedule(underlying);
@@ -312,7 +321,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       if (before.status !== "actionable" || !before.legs.some(leg => registry.getCurrent(leg.instrumentId)?.instrument.venue === event.venue)) continue;
       const after = lifecycle.onVenueHealth(event);
       if (after.status === "expired") {
-        clearTimeout(expiryTimers.get(id)); expiryTimers.delete(id); active.delete(id);
+        expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
         queuePublish({ ...after, stateRevision: revisionOf(before.underlyingId) });
       }
     }
@@ -355,7 +364,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       await accepting;
       assertAuthority();
       const affected = [...pending.keys()];
-      for (const timer of pending.values()) clearTimeout(timer);
+      for (const cancel of pending.values()) cancel();
       pending.clear();
       await publishing;
       for (const underlying of affected) await evaluate(underlying);
@@ -375,8 +384,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     },
     async stop() {
-      for (const timer of pending.values()) clearTimeout(timer);
-      for (const timer of expiryTimers.values()) clearTimeout(timer);
+      for (const cancel of pending.values()) cancel();
+      for (const cancel of expiryTimers.values()) cancel();
       pending.clear(); expiryTimers.clear();
       for (const stop of unsubscribe) await stop();
       await publishing;
