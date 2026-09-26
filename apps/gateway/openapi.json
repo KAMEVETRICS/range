@@ -2985,6 +2985,1153 @@
         }
       }
     },
+    "/v1/funding/compare": {
+      "get": {
+        "operationId": "compareFunding",
+        "security": [
+          {
+            "rangeToken": []
+          }
+        ],
+        "x-required-scopes": [
+          "market:read"
+        ],
+        "parameters": [
+          {
+            "name": "underlying",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*:[A-Za-z0-9_.-]+$"
+            }
+          },
+          {
+            "name": "venue",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bitget",
+                "ondo_stocks",
+                "ondo_perps",
+                "hyperliquid_hip3",
+                "bybit",
+                "qfex",
+                "lighter",
+                "extended",
+                "aster",
+                "variational",
+                "pacifica",
+                "nado"
+              ]
+            }
+          },
+          {
+            "name": "notional_usd",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "allOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:0\\.(?:0*[1-9]\\d*)|[1-9]\\d*(?:\\.\\d+)?)$"
+                },
+                {
+                  "type": "string",
+                  "maxLength": 128
+                }
+              ]
+            }
+          },
+          {
+            "name": "holding_horizon_ms",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Source-aligned Range response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "underlying": {
+                          "type": "string"
+                        },
+                        "notional_usd": {
+                          "type": "string"
+                        },
+                        "holding_horizon_ms": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "comparisons": {
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "venue": {
+                                "type": "string"
+                              },
+                              "instrument_id": {
+                                "type": "string"
+                              },
+                              "long": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "projected"
+                                      },
+                                      "venue": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      },
+                                      "instrumentId": {
+                                        "type": "string",
+                                        "pattern": "^ins_[A-Za-z0-9_.:-]+$"
+                                      },
+                                      "rateTypes": {
+                                        "minItems": 1,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "enum": [
+                                            "current",
+                                            "predicted"
+                                          ]
+                                        }
+                                      },
+                                      "positiveRatePayer": {
+                                        "type": "string",
+                                        "enum": [
+                                          "long",
+                                          "short"
+                                        ]
+                                      },
+                                      "intervalMs": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "nextSettlementMs": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "holdingStartMs": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "holdingEndMs": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "holdingHorizonMs": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "settlementCount": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "positionSide": {
+                                        "type": "string",
+                                        "enum": [
+                                          "long",
+                                          "short"
+                                        ]
+                                      },
+                                      "expectedCashflowBps": {
+                                        "type": "string",
+                                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                                      },
+                                      "expectedCashflowUsd": {
+                                        "type": "string",
+                                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                                      },
+                                      "sourceObservationIds": {
+                                        "minItems": 1,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "venue",
+                                      "instrumentId",
+                                      "rateTypes",
+                                      "positiveRatePayer",
+                                      "intervalMs",
+                                      "nextSettlementMs",
+                                      "holdingStartMs",
+                                      "holdingEndMs",
+                                      "holdingHorizonMs",
+                                      "settlementCount",
+                                      "positionSide",
+                                      "expectedCashflowBps",
+                                      "expectedCashflowUsd",
+                                      "sourceObservationIds"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "partial"
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "const": "MISSING_SETTLEMENT_COVERAGE"
+                                      },
+                                      "missingSettlementMs": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "reason",
+                                      "missingSettlementMs"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "no_settlement_due"
+                                      },
+                                      "nextSettlementMs": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "nextSettlementMs"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "rejected"
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "maxLength": 100
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              },
+                              "short": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "projected"
+                                      },
+                                      "venue": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      },
+                                      "instrumentId": {
+                                        "type": "string",
+                                        "pattern": "^ins_[A-Za-z0-9_.:-]+$"
+                                      },
+                                      "rateTypes": {
+                                        "minItems": 1,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "enum": [
+                                            "current",
+                                            "predicted"
+                                          ]
+                                        }
+                                      },
+                                      "positiveRatePayer": {
+                                        "type": "string",
+                                        "enum": [
+                                          "long",
+                                          "short"
+                                        ]
+                                      },
+                                      "intervalMs": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "nextSettlementMs": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "holdingStartMs": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "holdingEndMs": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "holdingHorizonMs": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "settlementCount": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "positionSide": {
+                                        "type": "string",
+                                        "enum": [
+                                          "long",
+                                          "short"
+                                        ]
+                                      },
+                                      "expectedCashflowBps": {
+                                        "type": "string",
+                                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                                      },
+                                      "expectedCashflowUsd": {
+                                        "type": "string",
+                                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                                      },
+                                      "sourceObservationIds": {
+                                        "minItems": 1,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "venue",
+                                      "instrumentId",
+                                      "rateTypes",
+                                      "positiveRatePayer",
+                                      "intervalMs",
+                                      "nextSettlementMs",
+                                      "holdingStartMs",
+                                      "holdingEndMs",
+                                      "holdingHorizonMs",
+                                      "settlementCount",
+                                      "positionSide",
+                                      "expectedCashflowBps",
+                                      "expectedCashflowUsd",
+                                      "sourceObservationIds"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "partial"
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "const": "MISSING_SETTLEMENT_COVERAGE"
+                                      },
+                                      "missingSettlementMs": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "reason",
+                                      "missingSettlementMs"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "no_settlement_due"
+                                      },
+                                      "nextSettlementMs": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "nextSettlementMs"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "status": {
+                                        "type": "string",
+                                        "const": "rejected"
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "maxLength": 100
+                                      }
+                                    },
+                                    "required": [
+                                      "status",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "venue",
+                              "instrument_id",
+                              "long",
+                              "short"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "underlying",
+                        "notional_usd",
+                        "holding_horizon_ms",
+                        "comparisons"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/opportunities": {
       "get": {
         "operationId": "scanOpportunities",

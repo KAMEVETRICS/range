@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EvidenceBundleSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema,
+import { EvidenceBundleSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, PositiveDecimalStringSchema,
   type EvidenceBundle, type Instrument, type ObservationEnvelope, type Opportunity } from "@range/domain";
 import type { CurrentStateStore, HistoryStore, SqlClient, StoredEvent } from "@range/storage";
 
@@ -9,6 +9,10 @@ const boundedInt = (max: number) => z.coerce.number().int().min(0).max(max);
 export const PageQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), offset: boundedInt(900).default(0) }).strict();
 export const InstrumentQuerySchema = PageQuerySchema.extend({ underlying: UnderlyingFilterSchema.optional(), venue: VenueFilterSchema.optional() }).strict();
 export const MarketQuerySchema = z.object({ underlying: UnderlyingFilterSchema, venue: VenueFilterSchema.optional() }).strict();
+export const FundingCompareQuerySchema = MarketQuerySchema.extend({
+  notional_usd: PositiveDecimalStringSchema.and(z.string().max(128)),
+  holding_horizon_ms: z.coerce.number().int().min(1).max(86_400_000),
+}).strict();
 export const ScanQuerySchema = PageQuerySchema.extend({ underlying: UnderlyingFilterSchema,
   strategy: z.enum(["perp_spread", "spot_perp_basis", "funding_differential"]).optional(), venue: VenueFilterSchema.optional(),
   min_edge_bps: z.string().max(32).regex(/^-?(0|[1-9]\d*)(\.\d+)?$/).optional(),

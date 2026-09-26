@@ -6,6 +6,8 @@ import { intentRoutes } from "./routes/intents.js";
 import { ClientAuth, type ClientRecord } from "./auth.js";
 import { routes } from "./routes/index.js";
 import { StreamSession, type StreamOptions } from "./routes/stream.js";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import { createRangeMcpHandler } from "./mcp/server.js";
 
 declare module "fastify" { interface FastifyRequest { rangeContext: RequestContext } }
 export interface GatewayOptions {
@@ -13,8 +15,14 @@ export interface GatewayOptions {
   log?: (entry: { trace_id: string; client_id: string; operation: string; status_code: number }) => void;
   stream?: Partial<StreamOptions>;
   intents?: IntentService;
+  mcpAllowedHosts?: readonly string[];
+  mcpMaxConcurrent?: number;
 }
 export function buildServer(options: GatewayOptions) {
+  const mcpMaxConcurrent = options.mcpMaxConcurrent ?? 100;
+  if (!Number.isSafeInteger(mcpMaxConcurrent) || mcpMaxConcurrent < 1 || mcpMaxConcurrent > 1000) {
+    throw new Error("Invalid MCP concurrency limit");
+  }
   const auth = new ClientAuth(options.clients, options.pepper, options.now);
   const app = Fastify({ logger: false, genReqId: () => `rng_trace_${randomUUID()}`, requestIdHeader: false,
     bodyLimit: 16_384, routerOptions: { maxParamLength: 200 } });
@@ -60,6 +68,29 @@ export function buildServer(options: GatewayOptions) {
       result.status === "changed" ? result.proposedIntent.intentId : id!);
     return reply.send(route.response.parse(envelope));
   });
+  const mcp = createRangeMcpHandler(options, auth);
+  const nodeMcp = toNodeHandler(mcp);
+  let mcpInflight = 0;
+  app.all("/mcp", async (request, reply) => {
+    let host: string;
+    try { host = new URL(`http://${request.headers.host ?? ""}`).hostname.toLowerCase(); }
+    catch { return reply.code(403).send(options.application.error(request.rangeContext, "ORIGIN_NOT_ALLOWED")); }
+    const allowedHosts = (options.mcpAllowedHosts ?? ["localhost", "127.0.0.1", "[::1]"]).map(item => item.toLowerCase());
+    const origin = request.headers.origin;
+    let originHost: string | undefined;
+    try { originHost = origin ? new URL(origin).hostname.toLowerCase() : undefined; }
+    catch { return reply.code(403).send(options.application.error(request.rangeContext, "ORIGIN_NOT_ALLOWED")); }
+    if (!allowedHosts.includes(host) || (originHost && originHost !== host)) {
+      return reply.code(403).send(options.application.error(request.rangeContext, "ORIGIN_NOT_ALLOWED"));
+    }
+    const client = auth.authorize(request.headers.authorization, []);
+    request.rangeContext.clientId = client.id;
+    if (mcpInflight >= mcpMaxConcurrent) throw new ApplicationError(503, "MCP_CAPACITY");
+    mcpInflight += 1;
+    reply.hijack();
+    try { await nodeMcp(request.raw, reply.raw, request.body); }
+    finally { mcpInflight -= 1; }
+  });
   const streams = new Set<StreamSession>();
   app.get("/v1/stream", async (request, reply) => {
     const client = auth.authorize(request.headers.authorization, ["market:read", "opportunity:read"]);
@@ -81,6 +112,6 @@ export function buildServer(options: GatewayOptions) {
     stream.start();
   });
   // Shutdown must close hijacked sockets before Fastify waits for connections.
-  app.addHook("preClose", async () => { for (const stream of streams) stream.close(); });
+  app.addHook("preClose", async () => { for (const stream of streams) stream.close(); await mcp.close(); });
   return app;
 }

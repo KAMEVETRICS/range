@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { Decimal } from "decimal.js";
-import { InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, type Opportunity } from "@range/domain";
-import { InstrumentQuerySchema, MarketQuerySchema, OpportunityParamsSchema, PageQuerySchema, ScanQuerySchema, VenueViewSchema,
+import { FundingProjectionSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, type Opportunity } from "@range/domain";
+import { normalizeFunding, projectFunding } from "@range/market-state";
+import { FundingCompareQuerySchema, InstrumentQuerySchema, MarketQuerySchema, OpportunityParamsSchema, PageQuerySchema, ScanQuerySchema, VenueViewSchema,
   type ApplicationQueries, type EventPageItem, type RequestContext } from "./queries.js";
 
 // Deliberately omit free-form connector metadata and private raw-payload locators.
@@ -14,10 +15,16 @@ export const EnvelopeSchema = z.object({ status: z.enum(["ok", "partial", "rejec
 export type Envelope = z.infer<typeof EnvelopeSchema>;
 const page = (items: z.ZodType) => z.object({ items: z.array(items).max(100), next_offset: z.number().int().nullable() }).strict();
 const HistorySummarySchema = z.object({ state_revision: z.number().int(), status: z.string(), rejection_reasons: z.array(z.string()) }).strict();
+const FundingOutcomeSchema = z.union([FundingProjectionSchema,
+  z.object({ status: z.literal("partial"), reason: z.literal("MISSING_SETTLEMENT_COVERAGE"), missingSettlementMs: z.number().int() }).strict(),
+  z.object({ status: z.literal("no_settlement_due"), nextSettlementMs: z.number().int() }).strict(),
+  z.object({ status: z.literal("rejected"), reason: z.string().max(100) }).strict()]);
 export const responseSchemas = {
   venues: EnvelopeSchema.extend({ result: page(VenueViewSchema) }),
   instruments: EnvelopeSchema.extend({ result: page(PublicInstrumentSchema) }),
   markets: EnvelopeSchema.extend({ result: z.object({ underlying: z.string(), observations: z.array(PublicObservationSchema).max(1000) }).strict() }),
+  funding: EnvelopeSchema.extend({ result: z.object({ underlying: z.string(), notional_usd: z.string(), holding_horizon_ms: z.number().int(),
+    comparisons: z.array(z.object({ venue: z.string(), instrument_id: z.string(), long: FundingOutcomeSchema, short: FundingOutcomeSchema }).strict()).max(100) }).strict() }),
   opportunities: EnvelopeSchema.extend({ result: page(OpportunitySchema) }),
   opportunity: EnvelopeSchema.extend({ result: z.object({ opportunity: OpportunitySchema, rejection_history: z.array(HistorySummarySchema).max(100) }).strict() }),
   invalidation: EnvelopeSchema.extend({ result: z.object({ opportunity_id: z.string(), current: z.literal(false) }).strict() }),
@@ -88,6 +95,34 @@ export class RangeApplication {
     const { live, warnings, sourceMs } = await this.marketCoverage(context, query.underlying, query.venue);
     return responseSchemas.markets.parse(this.envelope(context, { underlying: query.underlying, observations: live.map(({ rawPayloadRefOrHash: _raw, ...item }) => item) },
       sourceMs, live.map(item => item.eventId), warnings, warnings.length ? "partial" : "ok"));
+  }
+  async compareFunding(input: unknown, context: RequestContext) {
+    const query = FundingCompareQuerySchema.parse(input);
+    const now = this.now();
+    const coverage = await this.marketCoverage(context, query.underlying, query.venue);
+    const warnings = [...coverage.warnings];
+    const groups = new Map<string, ReturnType<typeof normalizeFunding>[]>();
+    for (const observation of coverage.live.filter(item => item.payload.kind === "funding")) {
+      const normalized = normalizeFunding(observation, now);
+      if (normalized.status === "rejected") { warnings.push(`${observation.venue}: ${normalized.reason}`); continue; }
+      const key = `${normalized.venue}:${normalized.instrumentId}`;
+      groups.set(key, [...(groups.get(key) ?? []), normalized]);
+    }
+    if (groups.size > 100) warnings.push("funding comparison truncated at 100 instruments");
+    if (!groups.size) warnings.push("funding coverage unavailable");
+    const comparisons = [...groups.values()].slice(0, 100).map(records => {
+      const valid = records.filter(item => item.status === "normalized");
+      const first = valid[0]!;
+      const window = { startMs: now, endMs: now + query.holding_horizon_ms };
+      const long = projectFunding({ side: "long", notionalUsd: query.notional_usd }, window, valid, now);
+      const short = projectFunding({ side: "short", notionalUsd: query.notional_usd }, window, valid, now);
+      if (long.status === "rejected" || long.status === "partial") warnings.push(`${first.venue}: ${long.reason}`);
+      return { venue: first.venue, instrument_id: first.instrumentId, long, short };
+    });
+    const sources = [...groups.values()].flat().filter(item => item.status === "normalized");
+    return responseSchemas.funding.parse(this.envelope(context, { underlying: query.underlying, notional_usd: query.notional_usd,
+      holding_horizon_ms: query.holding_horizon_ms, comparisons }, Math.min(coverage.sourceMs, ...sources.map(item => item.sourceTimestampMs)),
+    sources.map(item => item.sourceObservationId), warnings, warnings.length ? "partial" : "ok"));
   }
   private async details(context: RequestContext, opportunity: Opportunity) {
     if (!opportunity.evidenceHash) throw new ApplicationError(503, "EVIDENCE_UNAVAILABLE");

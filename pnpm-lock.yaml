@@ -23,15 +23,33 @@ importers:
 
   apps/gateway:
     dependencies:
+      '@modelcontextprotocol/node':
+        specifier: 2.1.0
+        version: 2.1.0(@modelcontextprotocol/server@2.1.0)(hono@4.13.8)
+      '@modelcontextprotocol/server':
+        specifier: 2.1.0
+        version: 2.1.0
       '@range/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@range/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@range/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@range/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       fastify:
         specifier: ^5.6.0
         version: 5.12.5
+      ioredis:
+        specifier: ^5.8.0
+        version: 5.11.1
+      pg:
+        specifier: ^8.16.0
+        version: 8.23.0
       zod:
         specifier: ^4.0.0
         version: 4.6.5
@@ -39,9 +57,9 @@ importers:
       '@apidevtools/swagger-parser':
         specifier: ^12.0.0
         version: 12.1.0(openapi-types@12.1.3)
-      '@range/storage':
-        specifier: workspace:*
-        version: link:../../packages/storage
+      '@types/pg':
+        specifier: ^8.15.0
+        version: 8.23.1
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
@@ -487,6 +505,12 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
+  '@hono/node-server@1.19.17':
+    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
+    engines: {node: '>=18.14.1'}
+    peerDependencies:
+      hono: ^4
+
   '@ioredis/as-callback@3.0.0':
     resolution: {integrity: sha512-Kqv1rZ3WbgOrS+hgzJ5xG5WQuhvzzSTRYvNeyPMLOAM78MHSnuKI20JeJGbpuAt//LCuP0vsexZcorqW7kWhJg==}
 
@@ -508,6 +532,24 @@ packages:
 
   '@kwsites/file-exists@1.1.1':
     resolution: {integrity: sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw==}
+
+  '@modelcontextprotocol/core@2.1.0':
+    resolution: {integrity: sha512-YdFj5gMRHr0gYNAhTbQDgjLHiEJdIAUYxomhKseUNye7ZGlISQmUoLh2sveFFCiQ7j2YMffT1kgSND0FSfIFjQ==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/node@2.1.0':
+    resolution: {integrity: sha512-6xg3iWVcOfiL8Y7rI6xUqXD0lI2AY5q3djsa/cOi1IJUSwx06t0gvhSwU/6mIIohrFlt40/ANUG56DQ0HLhILQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@modelcontextprotocol/server': ^2.1.0
+      hono: ^4.11.4
+    peerDependenciesMeta:
+      hono:
+        optional: true
+
+  '@modelcontextprotocol/server@2.1.0':
+    resolution: {integrity: sha512-FdvwZU5N03O77Suh35JqjAqq5R1ZTEPFtwu6N4BgBq28qrQtrCnpbLL5U2pwYCuE194jAw0xnlOVmIqhfoYuUQ==}
+    engines: {node: '>=20'}
 
   '@oxc-project/types@0.150.0':
     resolution: {integrity: sha512-rDS5/31E9HfPl/CIzGrn0DOlvBbXFseQ5URJ9sYMfstbKLD/c6Gm9vmRzRGDdAXyOIL4zmO37lc9RIwYqVruZw==}
@@ -1153,6 +1195,10 @@ packages:
   hasown@2.0.4:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
+
+  hono@4.13.8:
+    resolution: {integrity: sha512-/Gng7NfoykZl2pjukW5Z6+8Yxm3BPRf86GTbQnt0SbySkvax4fyL4H3HhY1cCpBGmiW9XDRFzRV+CXK2W8QudQ==}
+    engines: {node: '>=16.9.0'}
 
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
@@ -2100,6 +2146,10 @@ snapshots:
       protobufjs: 7.6.6
       yargs: 17.7.3
 
+  '@hono/node-server@1.19.17(hono@4.13.8)':
+    dependencies:
+      hono: 4.13.8
+
   '@ioredis/as-callback@3.0.0': {}
 
   '@ioredis/commands@1.10.0': {}
@@ -2124,6 +2174,22 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  '@modelcontextprotocol/core@2.1.0':
+    dependencies:
+      zod: 4.6.5
+
+  '@modelcontextprotocol/node@2.1.0(@modelcontextprotocol/server@2.1.0)(hono@4.13.8)':
+    dependencies:
+      '@hono/node-server': 1.19.17(hono@4.13.8)
+      '@modelcontextprotocol/server': 2.1.0
+    optionalDependencies:
+      hono: 4.13.8
+
+  '@modelcontextprotocol/server@2.1.0':
+    dependencies:
+      '@modelcontextprotocol/core': 2.1.0
+      zod: 4.6.5
 
   '@oxc-project/types@0.150.0': {}
 
@@ -2767,6 +2833,8 @@ snapshots:
   hasown@2.0.4:
     dependencies:
       function-bind: 1.1.2
+
+  hono@4.13.8: {}
 
   ieee754@1.2.1: {}
 

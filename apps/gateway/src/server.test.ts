@@ -28,7 +28,7 @@ export function opportunity(): Opportunity {
       capacityUsd: "100", depthUtilization: "1", sourceBookEventId: "evt_book", ageMs: 10,
     } }], status: "actionable", rejectionReasons: [], grossSpreadBps: "20", expectedFundingBps: "0", tradingFeesBps: "1",
     slippageBps: "0", financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "1",
-    netEdgeBps: "18", capacityUsd: "100", expiresAt: new Date(now + 2000).toISOString(), evidenceHash: `sha256:${"a".repeat(64)}`,
+    netEdgeBps: "18", capacityUsd: "100", expiresAt: new Date(now + 60_000).toISOString(), evidenceHash: `sha256:${"a".repeat(64)}`,
     freshness: { oldestInputMs: 10, synchronized: true, eligibility: "live", qualityFlags: [] } });
 }
 
@@ -86,7 +86,7 @@ describe("REST application boundary", () => {
   it.each(["revision", "expiry", "outage"])("fails closed after authoritative %s changes", async mode => {
     const f = await fixture();
     if (mode === "revision") f.setRevision(8);
-    if (mode === "expiry") f.setClock(now + 2001);
+    if (mode === "expiry") f.setClock(now + 60_001);
     if (mode === "outage") f.setOutage();
     const response = await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
     expect(response.statusCode).toBe(mode === "outage" ? 503 : 404);
@@ -318,7 +318,7 @@ describe("OpenAPI contracts", () => {
     (addFormats as unknown as (ajv: Ajv2020) => void)(ajv);
     const f = await fixture();
     const urls: Record<string, string> = { "/v1/venues": "/v1/venues", "/v1/instruments": "/v1/instruments",
-      "/v1/markets/snapshot": "/v1/markets/snapshot?underlying=equity:TSLA", "/v1/opportunities": "/v1/opportunities?underlying=equity:TSLA",
+      "/v1/markets/snapshot": "/v1/markets/snapshot?underlying=equity:TSLA", "/v1/funding/compare": "/v1/funding/compare?underlying=equity:TSLA&notional_usd=100&holding_horizon_ms=3600000", "/v1/opportunities": "/v1/opportunities?underlying=equity:TSLA",
       "/v1/opportunities/{id}": "/v1/opportunities/opp_1" };
     for (const [path, url] of Object.entries(urls)) {
       const response = await f.app.inject({ method: "GET", url, headers: auth });
@@ -346,6 +346,6 @@ describe("OpenAPI contracts", () => {
     }
     const json = JSON.stringify(document);
     expect(json).not.toMatch(/privateKey|apiSecret|rawPayloadRefOrHash|signedTransaction/);
-    expect(Object.keys(document.paths)).toHaveLength(8);
-  });
+    expect(Object.keys(document.paths)).toHaveLength(9);
+  }, 15_000);
 });
