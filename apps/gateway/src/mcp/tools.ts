@@ -7,8 +7,21 @@ import { ApplicationError, CreateIntentRequestSchema, FundingCompareQuerySchema,
 import type { ClientAuth, ClientRecord, Scope } from "../auth.js";
 
 export interface ToolServices { application: RangeApplication; intents?: IntentService }
-type Caller = { client: ClientRecord; auth?: ClientAuth; traceId?: string };
+type Caller = { client: ClientRecord; auth?: ClientAuth; traceId?: string; capacity?: ToolCapacity };
 const toolMeta = { "io.range/schemaVersion": 1 } as const;
+
+export class ToolCapacity {
+  private inflight = 0;
+  constructor(private readonly maximum: number) {
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 1_000) throw new Error("Invalid MCP concurrency limit");
+  }
+  enter() {
+    if (this.inflight >= this.maximum) throw new ApplicationError(503, "MCP_CAPACITY");
+    this.inflight += 1;
+    let released = false;
+    return () => { if (!released) { released = true; this.inflight -= 1; } };
+  }
+}
 
 /**
  * MCP SDK v2 turns Standard Schema validation failures into an unstructured
@@ -31,15 +44,17 @@ export function createRangeMcpServer(services: ToolServices, caller: Caller) {
   };
   const execute = async (scope: Scope, operation: string, run: (context: RequestContext) => Promise<unknown>) => {
     const context: RequestContext = { traceId: caller.traceId ?? `rng_trace_${randomUUID()}`, clientId: caller.client.id };
+    let release: (() => void) | undefined;
     try {
       authorize(scope, operation);
+      release = caller.capacity?.enter();
       const result = await run(context);
       return { content: [{ type: "text" as const, text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
     } catch (error) {
       const code = error instanceof ApplicationError ? error.code : error instanceof z.ZodError ? "INVALID_REQUEST" : "STORAGE_UNAVAILABLE";
       const result = services.application.error(context, code);
       return { content: [{ type: "text" as const, text: JSON.stringify(result) }], structuredContent: result, isError: true };
-    }
+    } finally { release?.(); }
   };
   server.registerTool("list_venues", { description: "List venue capabilities, health, and freshness budgets.", inputSchema: rejectableInput(PageQuerySchema),
     outputSchema: responseSchemas.venues, _meta: toolMeta }, async input => execute("market:read", "listVenues", context => services.application.listVenues(PageQuerySchema.parse(input), context)));

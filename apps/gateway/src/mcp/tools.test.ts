@@ -74,6 +74,24 @@ describe("MCP tool contract", () => {
     } finally { await app.close(); }
   });
 
+  it("uses one Fastify trace for the MCP envelope, response header, and access log", async () => {
+    const logs: Array<{ trace_id: string; client_id: string; operation: string; status_code: number }> = [];
+    const app = buildServer({ application: new RangeApplication(queries, () => now), pepper,
+      clients: [{ id: "reader", tokenHash: hashClientToken(token, pepper), scopes: ["market:read"] }],
+      now: () => now, log: entry => logs.push(entry) });
+    try {
+      const response = await app.inject({ method: "POST", url: "/mcp", headers: { authorization: `Bearer ${token}`,
+        "content-type": "application/json", accept: "application/json, text/event-stream" },
+      payload: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_venues", arguments: {} } } });
+      expect(response.statusCode).toBe(200);
+      const wire = response.body.startsWith("event:") ? JSON.parse(response.body.match(/^data: (.*)$/m)![1]!) : response.json();
+      const trace = response.headers["x-range-trace-id"];
+      expect(trace).toMatch(/^rng_trace_/);
+      expect(wire.result.structuredContent.trace_id).toBe(trace);
+      expect(logs).toContainEqual({ trace_id: trace, client_id: "reader", operation: "/mcp", status_code: 200 });
+    } finally { await app.close(); }
+  });
+
   it("bounds concurrent MCP work before starting another tool call", async () => {
     let release!: () => void;
     let entered!: () => void;

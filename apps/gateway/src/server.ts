@@ -87,6 +87,10 @@ export function buildServer(options: GatewayOptions) {
     request.rangeContext.clientId = client.id;
     if (mcpInflight >= mcpMaxConcurrent) throw new ApplicationError(503, "MCP_CAPACITY");
     mcpInflight += 1;
+    (request.raw as typeof request.raw & { auth?: { token: string; clientId: string; scopes: string[]; extra: Record<string, unknown> } }).auth = {
+      token: "redacted", clientId: client.id, scopes: [...client.scopes], extra: { rangeTraceId: request.id },
+    };
+    reply.raw.setHeader("x-range-trace-id", request.id);
     reply.hijack();
     try { await nodeMcp(request.raw, reply.raw, request.body); }
     finally { mcpInflight -= 1; }
