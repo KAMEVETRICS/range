@@ -259,6 +259,27 @@ it("reconstructs a real RFQ stream only across contiguous sequence numbers", asy
   });
 });
 
+it("does not declare standard Extended books contiguous without RFQ contract evidence", async () => {
+  const source = fixture("markets") as { status: "OK"; data: Record<string, unknown>[] };
+  const standard = { ...source.data[0]!, isRfq: false };
+  const context = setup(undefined, { status: "OK", data: [standard] });
+  const instrument = (await context.adapter.discover(signal()))[0]!;
+  context.frames([{
+    ts: observedAtMs,
+    type: "SNAPSHOT",
+    data: { m: instrument.venueSymbol, b: [], a: [] },
+    seq: 1,
+  }]);
+
+  const events = [];
+  for await (const event of context.adapter.stream!([instrument], signal())) events.push(event);
+
+  expect(context.subscriptions).toEqual([{ market: instrument.venueSymbol, book: "standard" }]);
+  expect(events).toHaveLength(1);
+  expect(events[0]).not.toHaveProperty("sequencePolicy");
+  expect(events[0]!.qualityFlags).not.toContain("sequence_validated");
+});
+
 it("keeps a non-continuous market reference-only after stale open-session discovery", async () => {
   const source = fixture("markets") as { status: "OK"; data: Record<string, unknown>[] };
   const tsla = source.data[0]!;
@@ -295,7 +316,7 @@ it("keeps a non-continuous market reference-only after stale open-session discov
 });
 
 for (const badSequence of [1, 3] as const) {
-  it(`rejects a sequence discontinuity at ${badSequence} so the runtime reconnects and resnapshots`, async () => {
+  it(`reports a sanitized RFQ sequence-gap diagnostic at ${badSequence}`, async () => {
     const context = setup();
     const instrument = (await context.adapter.discover(signal()))[0]!;
     context.frames([
@@ -305,7 +326,7 @@ for (const badSequence of [1, 3] as const) {
     const consume = async () => {
       for await (const _event of context.adapter.stream!([instrument], signal())) { /* consume */ }
     };
-    await expect(consume()).rejects.toMatchObject({ code: "ADAPTER_FAILURE", message: "Connector adapter operation failed" });
+    await expect(consume()).rejects.toMatchObject({ code: "SEQUENCE_GAP", message: "Validated book sequence gap" });
   });
 }
 

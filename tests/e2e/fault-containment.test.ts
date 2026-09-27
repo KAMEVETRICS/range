@@ -3,6 +3,9 @@ import { InMemoryEventBus } from "../../packages/event-bus/src/index.js";
 import { InstrumentRegistry } from "../../packages/instruments/src/index.js";
 import { startOpportunityWorker } from "../../apps/opportunity-worker/src/main.js";
 import { createTelemetry, instrumentEventBus } from "../../packages/observability/src/index.js";
+import { ConnectorRuntime, type ConnectorAdapter } from "../../packages/connector-sdk/src/index.js";
+import { InstrumentSchema } from "../../packages/domain/src/index.js";
+import { ExtendedBookStreamMapper } from "../../connectors/extended/src/mapper.js";
 
 const NOW = 1_790_000_000_000;
 
@@ -144,6 +147,72 @@ describe("assembled fault containment", () => {
     });
     await worker.flush();
     expect(seen.slice(blockedAt).some(item => item.status === "actionable")).toBe(true);
+    await worker.stop();
+  });
+
+  it("expires an existing opportunity from a genuine Extended RFQ mapper gap health event", async () => {
+    const telemetry = createTelemetry({ service: "extended-gap-test", now: () => NOW });
+    const bus = instrumentEventBus(new InMemoryEventBus(), telemetry);
+    const seen: Array<{ opportunityId: string; status: string; rejectionReasons: string[] }> = [];
+    await bus.subscribe("opportunity.v1", "extended-gap-assertion", async opportunity => { seen.push(opportunity); });
+    const rfqInstrument = InstrumentSchema.parse({ ...instrument("ins_a", "venue_a"), metadata: { isRfq: true } });
+    const mapper = new ExtendedBookStreamMapper(rfqInstrument);
+    let releaseGap!: () => void;
+    const gapGate = new Promise<void>(resolve => { releaseGap = resolve; });
+    const frame = (sequence: number, timestamp: number) => ({
+      ts: timestamp, type: sequence === 1 ? "SNAPSHOT" as const : "DELTA" as const,
+      data: { m: rfqInstrument.venueSymbol, b: [{ p: "99", q: "20", c: "20" }],
+        a: [{ p: "100", q: "20", c: "20" }] }, seq: sequence,
+    });
+    const adapter: ConnectorAdapter = {
+      venue: "venue_a",
+      async probe() { return { available: true }; },
+      async discover() { return [rfqInstrument]; },
+      async snapshot() {
+        return {
+          eventId: "evt_extended_rest", instrumentId: rfqInstrument.instrumentId,
+          sourceTimestampMs: NOW - 20, transport: "rest", freshnessBudgetMs: 2_000,
+          qualityFlags: [], rawPayloadRefOrHash: "sha256:extended-rest", eligibility: "reference_only",
+          payload: { kind: "order_book", bids: [], asks: [], capacityUsd: "0" },
+        };
+      },
+      async *stream() {
+        yield mapper.map(frame(1, NOW - 10));
+        await gapGate;
+        yield mapper.map(frame(3, NOW - 9));
+      },
+    };
+    let firstSequence!: () => void;
+    const firstSequencePublished = new Promise<void>(resolve => { firstSequence = resolve; });
+    const connectorObservations: number[] = [];
+    await bus.subscribe("market.observation.v1", "extended-gap-observations", async event => {
+      if (event.sequence === 1) firstSequence();
+      if (typeof event.sequence === "number") connectorObservations.push(event.sequence);
+    });
+    const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => NOW });
+    const runtimeSession = runtime.runUntilDisconnected();
+    await firstSequencePublished;
+
+    const worker = await startOpportunityWorker(bus, registry(), { runtime: "development", now: () => NOW, debounceMs: 0,
+      requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
+      feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
+      financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" });
+    await publishInputs(bus);
+    await worker.flush();
+    const actionable = seen.find(item => item.status === "actionable");
+    expect(actionable).toBeDefined();
+
+    releaseGap();
+    await runtimeSession;
+    await worker.flush();
+
+    expect(connectorObservations).toEqual([1]);
+    expect(runtime.health()).toMatchObject({ connectionState: "degraded", sequenceIntegrity: "gap" });
+    expect(seen).toContainEqual(expect.objectContaining({ opportunityId: actionable!.opportunityId,
+      status: "expired", rejectionReasons: expect.arrayContaining(["BOOK_SEQUENCE_GAP"]) }));
+    expect(seen).not.toContainEqual(expect.objectContaining({ opportunityId: actionable!.opportunityId,
+      status: "expired", rejectionReasons: expect.arrayContaining(["VENUE_DEGRADED"]) }));
+    expect(telemetry.metrics.value("range_book_sequence_gaps_total", { venue: "venue_a" })).toBe(1);
     await worker.stop();
   });
 });

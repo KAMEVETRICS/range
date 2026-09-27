@@ -1,8 +1,9 @@
-export type ConnectorDiagnosticCode = "ABORTED" | "RATE_LIMITED" | "ADAPTER_FAILURE";
+export type ConnectorDiagnosticCode = "ABORTED" | "RATE_LIMITED" | "SEQUENCE_GAP" | "ADAPTER_FAILURE";
 
 const diagnosticMessages: Record<ConnectorDiagnosticCode, string> = {
   ABORTED: "Connector operation aborted",
   RATE_LIMITED: "Venue rate limit encountered",
+  SEQUENCE_GAP: "Validated book sequence gap",
   ADAPTER_FAILURE: "Connector adapter operation failed",
 };
 
@@ -56,6 +57,13 @@ export function safeRetryAfterMs(error: unknown): number | undefined {
 }
 
 export function toConnectorDiagnostic(error: unknown): ConnectorDiagnosticError {
+  if (error instanceof ConnectorDiagnosticError) {
+    let code: unknown;
+    try { code = error.code; } catch { code = undefined; }
+    if (code === "ABORTED" || code === "RATE_LIMITED" || code === "SEQUENCE_GAP" || code === "ADAPTER_FAILURE") {
+      return new ConnectorDiagnosticError(code, safeRetryAfterMs(error));
+    }
+  }
   const retryAfterMs = safeRetryAfterMs(error);
   return new ConnectorDiagnosticError(retryAfterMs === undefined ? "ADAPTER_FAILURE" : "RATE_LIMITED", retryAfterMs);
 }

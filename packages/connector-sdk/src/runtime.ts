@@ -151,7 +151,7 @@ export class ConnectorRuntime {
   private resetRecoveredSession(): void {
     this.quarantined = false;
     this.lastClockSkewMs = 0;
-    this.sequenceIntegrity = "unknown";
+    if (this.sequenceIntegrity !== "gap") this.sequenceIntegrity = "unknown";
     this.sequences.clear();
   }
 
@@ -235,7 +235,10 @@ export class ConnectorRuntime {
   private trackSequence(event: RawVenueEvent): boolean {
     if (event.sequencePolicy !== "contiguous" || typeof event.sequence !== "number") return false;
     const prior = this.sequences.get(event.instrumentId);
-    if (prior !== undefined && event.sequence !== prior + 1) this.sequenceIntegrity = "gap";
+    if (prior === undefined) {
+      // Only a session's first validated snapshot clears a gap retained across reconnect.
+      if (this.sequenceIntegrity !== "gap" || this.sequences.size === 0) this.sequenceIntegrity = "consistent";
+    } else if (event.sequence !== prior + 1) this.sequenceIntegrity = "gap";
     else if (this.sequenceIntegrity === "unknown") this.sequenceIntegrity = "consistent";
     this.sequences.set(event.instrumentId, event.sequence);
     return prior === undefined;
@@ -243,6 +246,7 @@ export class ConnectorRuntime {
 
   private async degrade(error: unknown): Promise<void> {
     const diagnostic = toConnectorDiagnostic(error);
+    if (diagnostic.code === "SEQUENCE_GAP") this.sequenceIntegrity = "gap";
     this.errorCounters[diagnostic.code] = (this.errorCounters[diagnostic.code] ?? 0) + 1;
     await this.transition("degraded");
   }

@@ -166,6 +166,67 @@ it("marks the first validated numeric sequence in a recovered stream as an expli
   expect(sequenced).toMatchObject({ sequencePolicy: "contiguous", sequenceReset: true });
 });
 
+it("retains gap integrity through reconnect until a validated epoch snapshot arrives", async () => {
+  const bus = new InMemoryEventBus();
+  let session = 0;
+  let restSnapshots = 0;
+  let releaseValidated!: () => void;
+  let releaseDisconnect!: () => void;
+  const validatedGate = new Promise<void>(resolve => { releaseValidated = resolve; });
+  const disconnectGate = new Promise<void>(resolve => { releaseDisconnect = resolve; });
+  let secondSnapshot!: () => void;
+  let validatedSnapshot!: () => void;
+  const secondSnapshotPublished = new Promise<void>(resolve => { secondSnapshot = resolve; });
+  const validatedSnapshotPublished = new Promise<void>(resolve => { validatedSnapshot = resolve; });
+  await bus.subscribe("market.observation.v1", "gap-reset-observer", async event => {
+    if (event.transport === "rest" && ++restSnapshots === 2) secondSnapshot();
+    if (event.sequenceReset === true && event.sequence === 1) validatedSnapshot();
+  });
+  const adapter = fakeAdapter();
+  adapter.stream = async function* () {
+    session += 1;
+    if (session === 1) {
+      yield { ...snapshot(), transport: "websocket", sequence: 42, sequencePolicy: "contiguous" };
+      throw new ConnectorDiagnosticError("SEQUENCE_GAP");
+    }
+    await validatedGate;
+    yield { ...snapshot(), eventId: "evt_recovered", transport: "websocket", sequence: 1,
+      sequencePolicy: "contiguous" };
+    await disconnectGate;
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+
+  await runtime.runUntilDisconnected();
+  expect(runtime.health().sequenceIntegrity).toBe("gap");
+
+  const recovered = runtime.runUntilDisconnected();
+  await secondSnapshotPublished;
+  expect(runtime.health().sequenceIntegrity).toBe("gap");
+  releaseValidated();
+  await validatedSnapshotPublished;
+  expect(runtime.health().sequenceIntegrity).toBe("consistent");
+  releaseDisconnect();
+  await recovered;
+});
+
+it("keeps an in-session gap when another instrument starts its validated sequence", async () => {
+  const bus = new InMemoryEventBus();
+  const adapter = fakeAdapter();
+  const book = { kind: "order_book" as const, bids: [], asks: [], capacityUsd: "0" };
+  adapter.stream = async function* () {
+    yield { ...snapshot(), transport: "websocket", sequence: 1, sequencePolicy: "contiguous", payload: book };
+    yield { ...snapshot(), eventId: "evt_gap", transport: "websocket", sequence: 3, sequencePolicy: "contiguous",
+      payload: book };
+    yield { ...snapshot(), eventId: "evt_other", instrumentId: "ins_bitget_RMSFTUSDT", transport: "websocket",
+      sequence: 1, sequencePolicy: "contiguous", payload: book };
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+
+  await runtime.runUntilDisconnected();
+
+  expect(runtime.health().sequenceIntegrity).toBe("gap");
+});
+
 it("does not infer contiguous semantics for unvalidated numeric full snapshots", async () => {
   const bus = new InMemoryEventBus();
   const adapter = fakeAdapter();

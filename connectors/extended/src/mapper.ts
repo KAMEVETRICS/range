@@ -186,7 +186,7 @@ function rawEvent(
   bookKind: "rest" | "standard" | "rfq_real",
 ): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
-  const isSequencedRealStream = sequence !== undefined && bookKind !== "rest";
+  const isValidatedRfqStream = sequence !== undefined && bookKind === "rfq_real";
   const qualityFlags = ["explicit_equity_evidence", "capacity_usd_uncomputed"];
   if (bookKind === "rest") qualityFlags.push("client_receipt_timestamp", "reference_book");
   else qualityFlags.push("book_update_mode_ambiguous");
@@ -194,13 +194,13 @@ function rawEvent(
   if (bookKind === "rfq_real") qualityFlags.push("rfq_real_book");
   if (isOffHours(instrument)) qualityFlags.push("market_off_hours");
   if (!isContinuous(instrument)) qualityFlags.push("non_continuous_schedule", "session_state_requires_refresh");
-  if (isSequencedRealStream) qualityFlags.push("sequence_validated");
+  if (isValidatedRfqStream) qualityFlags.push("sequence_validated");
   return {
     eventId: `evt_extended_${instrument.instrumentId}_order_book_${sourceTimestampMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
     instrumentId: instrument.instrumentId,
     sourceTimestampMs,
     ...(sequence === undefined ? {} : { sequence }),
-    ...(isSequencedRealStream ? { sequencePolicy: "contiguous" as const } : {}),
+    ...(isValidatedRfqStream ? { sequencePolicy: "contiguous" as const } : {}),
     transport,
     freshnessBudgetMs: 5_000,
     qualityFlags,
@@ -256,6 +256,7 @@ export class ExtendedBookStreamMapper {
       if (this.sequence === undefined) {
         if (frame.type !== "SNAPSHOT" || frame.seq !== 1) throw new Error();
       } else if (frame.seq !== this.sequence + 1) {
+        if (isRfq(this.instrument)) throw new ConnectorDiagnosticError("SEQUENCE_GAP");
         throw new Error();
       }
       if (frame.type === "SNAPSHOT") {
