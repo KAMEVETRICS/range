@@ -1,4 +1,4 @@
-import type { DashboardApi, MarketObservation, Opportunity, OpportunityDetailEnvelope } from "../api/client.js";
+import type { DashboardApi, Opportunity, OpportunityDetailEnvelope, QuoteTimestamp } from "../api/client.js";
 import { EvidencePanel } from "./EvidencePanel.js";
 import { formatAge, formatTimestamp } from "./OpportunityTable.js";
 
@@ -6,9 +6,9 @@ const money = (value: string) => `$${Number(value).toLocaleString("en-US", { max
 
 const reasonLabel = (reason: string) => reason.replaceAll("_", " ");
 
-export function OpportunityDetail({ opportunity, observations, detail, invalidated, intentPreviewCapability }: {
+export function OpportunityDetail({ opportunity, quoteTimestamps, detail, invalidated, intentPreviewCapability }: {
   opportunity: Opportunity;
-  observations: MarketObservation[];
+  quoteTimestamps: QuoteTimestamp[];
   detail?: OpportunityDetailEnvelope;
   invalidated: boolean;
   intentPreviewCapability: DashboardApi["intentPreviewCapability"];
@@ -41,14 +41,14 @@ export function OpportunityDetail({ opportunity, observations, detail, invalidat
       <section className="legs" aria-labelledby="legs-heading">
         <h3 id="legs-heading">Executable-depth inputs</h3>
         {opportunity.legs.map((leg) => {
-          const observation = observations.find((candidate) => candidate.eventId === leg.executableQuote.sourceBookEventId);
+          const timestamp = (detail?.result.quote_timestamps ?? quoteTimestamps).find((candidate) => candidate.event_id === leg.executableQuote.sourceBookEventId);
           return <div className="leg" key={leg.legId}>
             <div><span className={`side side-${leg.side}`}>{leg.side}</span><strong>{leg.instrumentId}</strong></div>
             <dl>
               <div><dt>Average</dt><dd>{leg.executableQuote.averagePrice}</dd></div><div><dt>Worst</dt><dd>{leg.executableQuote.worstPrice}</dd></div><div><dt>Book age</dt><dd>{formatAge(leg.executableQuote.ageMs)}</dd></div>
               <div><dt>Source event</dt><dd className="hash">{leg.executableQuote.sourceBookEventId}</dd></div>
-              <div className="leg-timestamp"><dt>Source time</dt><dd>{formatTimestamp(observation?.sourceTimestamp)}</dd></div>
-              <div className="leg-timestamp"><dt>Received time</dt><dd>{formatTimestamp(observation?.receivedTimestamp)}</dd></div>
+              <div className="leg-timestamp"><dt>Source time</dt><dd>{formatTimestamp(timestamp?.source_timestamp_ms)}</dd></div>
+              <div className="leg-timestamp"><dt>Received time</dt><dd>{formatTimestamp(timestamp?.received_timestamp_ms)}</dd></div>
             </dl>
           </div>;
         })}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import type { DashboardApi, DashboardStreamEvent, MarketObservation, Opportunity, OpportunityDetailEnvelope, OpportunityFilters, VenueView } from "../api/client.js";
+import type { DashboardApi, DashboardStreamEvent, Opportunity, OpportunityDetailEnvelope, OpportunityFilters, QuoteTimestamp, VenueView } from "../api/client.js";
 import { OpportunityDetail } from "../components/OpportunityDetail.js";
 import { OpportunityTable } from "../components/OpportunityTable.js";
 import { VenueHealth } from "../components/VenueHealth.js";
@@ -8,7 +8,7 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
   const [draft, setDraft] = useState({ underlying: initialUnderlying, strategy: "", minEdge: "", notional: "", maxAge: "5000" });
   const [filters, setFilters] = useState<OpportunityFilters>({ underlying: initialUnderlying, max_age_ms: 5000 });
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [observations, setObservations] = useState<MarketObservation[]>([]);
+  const [quoteTimestamps, setQuoteTimestamps] = useState<QuoteTimestamp[]>([]);
   const [venues, setVenues] = useState<VenueView[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [venueWarnings, setVenueWarnings] = useState<string[]>([]);
@@ -22,9 +22,8 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
   const loadOpportunities = useCallback(async (query: OpportunityFilters) => {
     try {
       const response = await api.scanOpportunities(query);
-      const snapshot = await api.getMarketSnapshot(query.underlying).catch(() => undefined);
       setOpportunities(response.result.items);
-      setObservations(snapshot?.result.observations ?? []);
+      setQuoteTimestamps(response.result.quote_timestamps);
       setWarnings(response.warnings);
       setSelectedId((current) => current && response.result.items.some((item) => item.opportunityId === current) ? current : response.result.items[0]?.opportunityId);
       setError(undefined);
@@ -104,9 +103,9 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
           </form>
           {warnings.length > 0 && <div className="inline-warning" role="status"><strong>Partial coverage</strong><p>{warnings.join(" · ")}</p></div>}
           {error && <div className="error-state" role="alert"><strong>Results unavailable</strong><p>{error}</p></div>}
-          {loading ? <p className="loading">Loading application-service results…</p> : <OpportunityTable opportunities={opportunities} observations={observations} selectedId={selectedId} invalidatedIds={invalidatedIds} onSelect={setSelectedId} />}
+          {loading ? <p className="loading">Loading application-service results…</p> : <OpportunityTable opportunities={opportunities} quoteTimestamps={quoteTimestamps} selectedId={selectedId} invalidatedIds={invalidatedIds} onSelect={setSelectedId} />}
         </div>
-        {selected ? <OpportunityDetail opportunity={selected} observations={observations} detail={detail} invalidated={invalidatedIds.has(selected.opportunityId)} intentPreviewCapability={api.intentPreviewCapability} /> : <aside className="detail-panel placeholder"><p>Select a current result to inspect economics, depth, freshness, and evidence lineage.</p></aside>}
+        {selected ? <OpportunityDetail opportunity={selected} quoteTimestamps={quoteTimestamps} detail={detail} invalidated={invalidatedIds.has(selected.opportunityId)} intentPreviewCapability={api.intentPreviewCapability} /> : <aside className="detail-panel placeholder"><p>Select a current result to inspect economics, depth, freshness, and evidence lineage.</p></aside>}
       </section>
     </main>
   );

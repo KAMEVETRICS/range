@@ -17,23 +17,18 @@ const envelope = (result: unknown, warnings: string[] = []) => ({
   evidence: [{ event_id: "evt_book_nvda_12" }], warnings, trace_id: "rng_trace_browser-test",
 });
 
+const quoteTimestamps = [
+  { event_id: "evt_book_buy_12", source_timestamp_ms: Date.parse("2026-09-27T17:59:59.716Z"), received_timestamp_ms: Date.parse("2026-09-27T17:59:59.748Z") },
+  { event_id: "evt_book_sell_12", source_timestamp_ms: Date.parse("2026-09-27T17:59:59.700Z"), received_timestamp_ms: Date.parse("2026-09-27T17:59:59.735Z") },
+];
+
 async function mockApi(page: Page) {
   await page.route("**/v1/venues**", (route) => route.fulfill({ json: envelope({ items: [
     { venue: "bitget", capabilities: ["book"], freshnessBudgetMs: 2000, asOfMs: 1790532000000, health: { venue: "bitget", connectionState: "connected", lastEventAgeMs: 284, clockSkewMs: 12, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } },
     { venue: "variational", capabilities: ["reference_quote"], freshnessBudgetMs: 60000, asOfMs: null, health: null },
   ], next_offset: null }, ["variational: venue missing"]) }));
-  await page.route("**/v1/markets/snapshot**", (route) => route.fulfill({ json: envelope({ underlying: "equity:NVDA", observations: [
-    { eventId: "evt_book_buy_12", schemaVersion: 1, venue: "bitget", instrumentId: "ins_bitget_NVDAUSDT", sequence: 812,
-      transport: "websocket", freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live",
-      sourceTimestamp: Date.parse("2026-09-27T17:59:59.716Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.748Z"),
-      payload: { kind: "order_book", bids: [{ price: "131.10", quantity: "76.20" }], asks: [{ price: "131.20", quantity: "76.20" }], capacityUsd: "15000" } },
-    { eventId: "evt_book_sell_12", schemaVersion: 1, venue: "hyperliquid_hip3", instrumentId: "ins_hyperliquid_NVDA", sequence: "0x12",
-      transport: "websocket", freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live",
-      sourceTimestamp: Date.parse("2026-09-27T17:59:59.700Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.735Z"),
-      payload: { kind: "order_book", bids: [{ price: "131.94", quantity: "76.20" }], asks: [{ price: "132.02", quantity: "76.20" }], capacityUsd: "12500" } },
-  ] }) }));
-  await page.route("**/v1/opportunities/opp_nvda_spread_1", (route) => route.fulfill({ json: envelope({ opportunity, rejection_history: [] }) }));
-  await page.route(/\/v1\/opportunities(?:\?.*)?$/, (route) => route.fulfill({ json: envelope({ items: [opportunity], next_offset: null }) }));
+  await page.route("**/v1/opportunities/opp_nvda_spread_1", (route) => route.fulfill({ json: envelope({ opportunity, rejection_history: [], quote_timestamps: quoteTimestamps }) }));
+  await page.route(/\/v1\/opportunities(?:\?.*)?$/, (route) => route.fulfill({ json: envelope({ items: [opportunity], quote_timestamps: quoteTimestamps, next_offset: null }) }));
   await page.route("**/v1/stream**", (route) => route.abort());
 }
 
@@ -60,11 +55,20 @@ test("scan, inspect evidence, and explain the safe intent-preview boundary", asy
   await expect(page.getByText(/requires a server-side intent:create scope/i)).toBeVisible();
 });
 
-test("keeps the dashboard within a 320 px viewport", async ({ page }) => {
+test("keeps a long valid decimal price within a 320 px viewport", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await mockApi(page);
+  const longPrice = "0.12345678901234567890123456789012345678901234567890123456789012345678901234567890";
+  await page.route(/\/v1\/opportunities(?:\?.*)?$/, (route) => route.fulfill({ json: envelope({ items: [{
+    ...opportunity,
+    legs: opportunity.legs.map((leg) => ({ ...leg, executableQuote: { ...leg.executableQuote, averagePrice: longPrice, worstPrice: longPrice } })),
+  }], quote_timestamps: quoteTimestamps, next_offset: null }) }));
   await page.goto("/");
   await expect(page.getByRole("cell", { name: /Net edge 51\.48 bps/ })).toBeVisible();
+  const price = page.getByRole("row", { name: /NVDA/ }).getByText(`${longPrice} avg / ${longPrice} worst`).first();
+  const bounds = await price.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(overflow).toBe(false);
 });

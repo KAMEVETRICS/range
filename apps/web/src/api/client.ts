@@ -41,22 +41,10 @@ export interface Opportunity {
   evidenceHash?: string;
 }
 
-export interface MarketObservation {
-  eventId: string;
-  schemaVersion: number;
-  venue: string;
-  instrumentId: string;
-  sequence?: string | number;
-  transport: "websocket" | "rest" | "replay";
-  freshnessBudgetMs: number;
-  qualityFlags: string[];
-  eligibility: Eligibility;
-  sourceTimestamp: number;
-  receivedTimestamp: number;
-  payload: {
-    kind: "order_book" | "funding" | "index_price";
-    [key: string]: unknown;
-  };
+export interface QuoteTimestamp {
+  event_id: string;
+  source_timestamp_ms: number;
+  received_timestamp_ms: number;
 }
 
 export interface VenueView {
@@ -87,11 +75,11 @@ export interface Envelope<TResult> {
   trace_id: string;
 }
 
-export type OpportunityEnvelope = Envelope<{ items: Opportunity[]; next_offset: number | null }>;
-export type MarketSnapshotEnvelope = Envelope<{ underlying: string; observations: MarketObservation[] }>;
+export type OpportunityEnvelope = Envelope<{ items: Opportunity[]; quote_timestamps: QuoteTimestamp[]; next_offset: number | null }>;
 export type OpportunityDetailEnvelope = Envelope<{
   opportunity: Opportunity;
   rejection_history: Array<{ state_revision: number; status: string; rejection_reasons: string[] }>;
+  quote_timestamps: QuoteTimestamp[];
 }>;
 export type VenueEnvelope = Envelope<{ items: VenueView[]; next_offset: number | null }>;
 
@@ -111,7 +99,6 @@ export type DashboardStreamEvent =
 
 export interface DashboardApi {
   scanOpportunities(filters: OpportunityFilters): Promise<OpportunityEnvelope>;
-  getMarketSnapshot(underlying: string): Promise<MarketSnapshotEnvelope>;
   inspectOpportunity(id: string): Promise<OpportunityDetailEnvelope>;
   listVenues(): Promise<VenueEnvelope>;
   subscribe(underlying: string, handler: (event: DashboardStreamEvent) => void | Promise<void>): () => void;
@@ -142,7 +129,6 @@ export function createDashboardApi(options: { baseUrl?: string; readToken?: stri
       if (filters.max_age_ms !== undefined) query.set("max_age_ms", String(filters.max_age_ms));
       return request<OpportunityEnvelope>(`/v1/opportunities?${query}`);
     },
-    getMarketSnapshot: (underlying) => request<MarketSnapshotEnvelope>(`/v1/markets/snapshot?underlying=${encodeURIComponent(underlying)}`),
     inspectOpportunity: (id) => request<OpportunityDetailEnvelope>(`/v1/opportunities/${encodeURIComponent(id)}`),
     listVenues: () => request<VenueEnvelope>("/v1/venues?limit=100&offset=0"),
     subscribe: (underlying, handler) => subscribeToRangeStream({ url: `${baseUrl}/v1/stream?underlying=${encodeURIComponent(underlying)}`, headers: headers(), handler }),

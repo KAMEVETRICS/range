@@ -1,4 +1,4 @@
-import type { MarketObservation, Opportunity } from "../api/client.js";
+import type { Opportunity, QuoteTimestamp } from "../api/client.js";
 
 export function formatAge(ageMs: number) {
   return ageMs < 1000 ? `${ageMs} ms old` : `${(ageMs / 1000).toFixed(1)} s old`;
@@ -7,9 +7,9 @@ export function formatAge(ageMs: number) {
 const strategyLabel = (strategy: string) => strategy.replaceAll("_", " ");
 export const formatTimestamp = (timestamp?: number) => timestamp === undefined ? "Unavailable" : new Date(timestamp).toISOString();
 
-export function OpportunityTable({ opportunities, observations, selectedId, invalidatedIds, onSelect }: {
+export function OpportunityTable({ opportunities, quoteTimestamps, selectedId, invalidatedIds, onSelect }: {
   opportunities: Opportunity[];
-  observations: MarketObservation[];
+  quoteTimestamps: QuoteTimestamp[];
   selectedId?: string;
   invalidatedIds: ReadonlySet<string>;
   onSelect(id: string): void;
@@ -30,12 +30,12 @@ export function OpportunityTable({ opportunities, observations, selectedId, inva
                 <td data-label="Strategy">{strategyLabel(item.strategy)}</td>
                 <td data-label="Prices / evidence" className="lineage-cell">
                   {item.legs.map((leg) => {
-                    const observation = observations.find((candidate) => candidate.eventId === leg.executableQuote.sourceBookEventId);
+                    const timestamp = quoteTimestamps.find((candidate) => candidate.event_id === leg.executableQuote.sourceBookEventId);
                     return <div className="row-leg" key={leg.legId}>
                       <span className={`side side-${leg.side}`}>{leg.side}</span>
                       <strong>{leg.executableQuote.averagePrice} avg / {leg.executableQuote.worstPrice} worst</strong>
                       <span className="hash">{leg.executableQuote.sourceBookEventId}</span>
-                      <small>src {formatTimestamp(observation?.sourceTimestamp)} · recv {formatTimestamp(observation?.receivedTimestamp)}</small>
+                      <small>src {formatTimestamp(timestamp?.source_timestamp_ms)} · recv {formatTimestamp(timestamp?.received_timestamp_ms)}</small>
                     </div>;
                   })}
                   <span className="row-evidence hash">{item.evidenceHash ?? "Evidence hash unavailable"}</span>

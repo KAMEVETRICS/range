@@ -15,6 +15,8 @@ export const EnvelopeSchema = z.object({ status: z.enum(["ok", "partial", "rejec
 export type Envelope = z.infer<typeof EnvelopeSchema>;
 const page = (items: z.ZodType) => z.object({ items: z.array(items).max(100), next_offset: z.number().int().nullable() }).strict();
 const HistorySummarySchema = z.object({ state_revision: z.number().int(), status: z.string(), rejection_reasons: z.array(z.string()) }).strict();
+const QuoteTimestampSchema = z.object({ event_id: z.string().regex(/^evt_[A-Za-z0-9_.:-]+$/), source_timestamp_ms: z.number().int().nonnegative(),
+  received_timestamp_ms: z.number().int().nonnegative() }).strict().refine(value => value.received_timestamp_ms >= value.source_timestamp_ms);
 const FundingOutcomeSchema = z.union([FundingProjectionSchema,
   z.object({ status: z.literal("partial"), reason: z.literal("MISSING_SETTLEMENT_COVERAGE"), missingSettlementMs: z.number().int() }).strict(),
   z.object({ status: z.literal("no_settlement_due"), nextSettlementMs: z.number().int() }).strict(),
@@ -25,8 +27,9 @@ export const responseSchemas = {
   markets: EnvelopeSchema.extend({ result: z.object({ underlying: z.string(), observations: z.array(PublicObservationSchema).max(1000) }).strict() }),
   funding: EnvelopeSchema.extend({ result: z.object({ underlying: z.string(), notional_usd: z.string(), holding_horizon_ms: z.number().int(),
     comparisons: z.array(z.object({ venue: z.string(), instrument_id: z.string(), long: FundingOutcomeSchema, short: FundingOutcomeSchema }).strict()).max(100) }).strict() }),
-  opportunities: EnvelopeSchema.extend({ result: page(OpportunitySchema) }),
-  opportunity: EnvelopeSchema.extend({ result: z.object({ opportunity: OpportunitySchema, rejection_history: z.array(HistorySummarySchema).max(100) }).strict() }),
+  opportunities: EnvelopeSchema.extend({ result: page(OpportunitySchema).extend({ quote_timestamps: z.array(QuoteTimestampSchema).max(1000) }).strict() }),
+  opportunity: EnvelopeSchema.extend({ result: z.object({ opportunity: OpportunitySchema, rejection_history: z.array(HistorySummarySchema).max(100),
+    quote_timestamps: z.array(QuoteTimestampSchema).max(1000) }).strict() }),
   invalidation: EnvelopeSchema.extend({ result: z.object({ opportunity_id: z.string(), current: z.literal(false) }).strict() }),
   health: EnvelopeSchema.extend({ result: VenueViewSchema }),
   error: EnvelopeSchema.extend({ result: z.object({ code: z.string() }).strict() }),
@@ -130,10 +133,21 @@ export class RangeApplication {
     if (!evidence || evidence.evidenceHash !== opportunity.evidenceHash) throw new ApplicationError(503, "EVIDENCE_UNAVAILABLE");
     const sourceIds = [...new Set(evidence.sourceEventIds)];
     const times = await this.queries.getSourceTimestamps(context, sourceIds);
-    if (times.length !== sourceIds.length) throw new ApplicationError(503, "SOURCE_TIMES_UNAVAILABLE");
-    const sourceMs = Math.min(...times);
-    if (sourceMs > this.now() || !Number.isFinite(sourceMs)) throw new ApplicationError(503, "INVALID_SOURCE_TIME");
-    return { sourceMs, evidence, opportunity: OpportunitySchema.parse({ ...opportunity, freshness: { ...opportunity.freshness, oldestInputMs: this.now() - sourceMs } }) };
+    if (times.length !== sourceIds.length || times.some(item => !sourceIds.includes(item.eventId)) || new Set(times.map(item => item.eventId)).size !== sourceIds.length) {
+      throw new ApplicationError(503, "SOURCE_TIMES_UNAVAILABLE");
+    }
+    const quoteIds = new Set<string>(opportunity.legs.map(leg => leg.executableQuote.sourceBookEventId));
+    const quoteTimes = times.filter(item => quoteIds.has(item.eventId));
+    if (quoteTimes.length !== quoteIds.size) throw new ApplicationError(503, "SOURCE_TIMES_UNAVAILABLE");
+    const now = this.now();
+    if (times.some(item => !Number.isSafeInteger(item.sourceTimestampMs) || item.sourceTimestampMs < 0 ||
+      !Number.isSafeInteger(item.receivedTimestampMs) || item.receivedTimestampMs < item.sourceTimestampMs || item.receivedTimestampMs > now)) {
+      throw new ApplicationError(503, "INVALID_SOURCE_TIME");
+    }
+    const sourceMs = Math.min(...times.map(item => item.sourceTimestampMs));
+    if (!Number.isFinite(sourceMs)) throw new ApplicationError(503, "INVALID_SOURCE_TIME");
+    const quoteTimestamps = quoteTimes.map(item => ({ event_id: item.eventId, source_timestamp_ms: item.sourceTimestampMs, received_timestamp_ms: item.receivedTimestampMs }));
+    return { sourceMs, evidence, quoteTimestamps, opportunity: OpportunitySchema.parse({ ...opportunity, freshness: { ...opportunity.freshness, oldestInputMs: this.now() - sourceMs } }) };
   }
   private async current(context: RequestContext, candidate: Opportunity) {
     const current = await this.queries.inspectOpportunity(context, candidate.opportunityId);
@@ -174,7 +188,8 @@ export class RangeApplication {
     const evidence = verified.flatMap(detail => detail.evidence.sourceEventIds);
     const times = verified.map(detail => detail.sourceMs);
     warnings.push(...verified.flatMap(detail => detail.evidence.warnings));
-    return responseSchemas.opportunities.parse(this.envelope(context, { items, next_offset: query.offset + query.limit < valid.length && query.offset + query.limit <= 900 ? query.offset + query.limit : null },
+    const quote_timestamps = [...new Map(verified.flatMap(detail => detail.quoteTimestamps).map(item => [item.event_id, item])).values()];
+    return responseSchemas.opportunities.parse(this.envelope(context, { items, quote_timestamps, next_offset: query.offset + query.limit < valid.length && query.offset + query.limit <= 900 ? query.offset + query.limit : null },
       Math.min(coverage.sourceMs, ...times), evidence, warnings,
       coverage.warnings.length || warnings.some(warning => /excluded|truncated/.test(warning)) ? "partial" : "ok"));
   }
@@ -189,7 +204,7 @@ export class RangeApplication {
     const detail = await this.details(context, opportunity);
     if (opportunity.status === "actionable" && !await this.current(context, opportunity)) throw new ApplicationError(404, "OPPORTUNITY_NOT_CURRENT");
     const rejection_history = history.map(item => ({ state_revision: item.stateRevision, status: item.status === "actionable" ? "historical" : item.status, rejection_reasons: item.rejectionReasons }));
-    return responseSchemas.opportunity.parse(this.envelope(context, { opportunity: detail.opportunity, rejection_history }, detail.sourceMs, detail.evidence.sourceEventIds,
+    return responseSchemas.opportunity.parse(this.envelope(context, { opportunity: detail.opportunity, rejection_history, quote_timestamps: detail.quoteTimestamps }, detail.sourceMs, detail.evidence.sourceEventIds,
       detail.evidence.warnings, opportunity.status === "rejected" ? "rejected" : "ok"));
   }
   async streamEvent(item: EventPageItem, context: RequestContext): Promise<{ event: "opportunity" | "health"; body: Envelope } | undefined> {

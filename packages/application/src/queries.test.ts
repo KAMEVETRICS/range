@@ -4,6 +4,27 @@ import { StorageQueries, type RequestContext } from "./queries.js";
 const context: RequestContext = { traceId: "rng_trace_adapter", clientId: "reader" };
 
 describe("storage query adapter", () => {
+  it("reads source and receive timestamps from immutable observation history without returning payloads", async () => {
+    const query = vi.fn(async () => ({ rows: [{
+      event_id: "evt_book",
+      source_time: "2026-09-23T11:59:59.990Z",
+      received_timestamp: "1790164799995",
+    }] }));
+    const adapter = new StorageQueries(
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
+      { query }, [],
+    );
+
+    expect(await adapter.getSourceTimestamps(context, ["evt_book"])).toEqual([{
+      eventId: "evt_book",
+      sourceTimestampMs: 1_790_164_799_990,
+      receivedTimestampMs: 1_790_164_799_995,
+    }]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("receivedTimestamp"), [["evt_book"]]);
+    expect(JSON.stringify(await adapter.getSourceTimestamps(context, ["evt_book"]))).not.toContain("payload");
+  });
+
   it("uses public venue manifests and passes the request trace through every storage read", async () => {
     const get = vi.fn(async () => undefined);
     const getOpportunity = vi.fn(async () => undefined);
@@ -23,7 +44,7 @@ describe("storage query adapter", () => {
     expect(await adapter.inspectOpportunity(context, "opp_1")).toBeUndefined();
     expect(getOpportunity).toHaveBeenCalledWith("opp_1");
     expect(await adapter.getSourceTimestamps(context, ["evt_book", "evt_funding"])).toEqual([]);
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("GROUP BY event_id"), [["evt_book", "evt_funding"]]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("receivedTimestamp"), [["evt_book", "evt_funding"]]);
     expect(await adapter.latestEventOrdinal(context)).toBe(7);
     expect(await adapter.readEvents(context, 2, 3)).toEqual([]);
     expect(readPage).toHaveBeenCalledWith({ afterOrdinal: 2, limit: 3 });

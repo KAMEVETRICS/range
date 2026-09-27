@@ -50,7 +50,7 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
     async scanOpportunities(context) { check(context); return current.queryOpportunities("equity:TSLA", 1000); },
     async inspectOpportunity(context, id) { check(context); return current.getOpportunity(id); },
     async getEvidence(context) { check(context); return EvidenceBundleSchema.parse({ sourceEventIds: ["evt_book"], calculationVersion: "v1", canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: ["legs are non-atomic"], evidenceHash: `sha256:${"a".repeat(64)}` }); },
-    async getSourceTimestamps(context) { check(context); return [now - 10]; },
+    async getSourceTimestamps(context) { check(context); return [{ eventId: "evt_book", sourceTimestampMs: now - 10, receivedTimestampMs: now - 5 }]; },
     async getOpportunityHistory(context) { check(context); return []; },
     async getAcceptedRevision(context) { check(context); return revision; },
     async readEvents(context) { check(context); return []; },
@@ -75,6 +75,29 @@ describe("REST application boundary", () => {
     expect(contexts.length).toBeGreaterThan(0);
     expect(new Set(contexts.map(context => context.traceId))).toEqual(new Set([body.trace_id]));
     expect(logs).toContainEqual(expect.objectContaining({ trace_id: body.trace_id, client_id: "reader", status_code: 200 }));
+  });
+
+  it("returns immutable quote timestamps keyed by the opportunity's historical book event", async () => {
+    const { app } = await fixture();
+    const response = await app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().result.quote_timestamps).toEqual([{
+      event_id: "evt_book",
+      source_timestamp_ms: now - 10,
+      received_timestamp_ms: now - 5,
+    }]);
+  });
+
+  it("fails closed when immutable quote receive time is in the future", async () => {
+    const f = await fixture();
+    f.queries.getSourceTimestamps = async () => [{ eventId: "evt_book", sourceTimestampMs: now - 10, receivedTimestampMs: now + 1 }];
+
+    const response = await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().result.code).toBe("INVALID_SOURCE_TIME");
+    expect(response.body).not.toContain('"status":"actionable"');
   });
 
   it("names a degraded venue in partial market responses", async () => {

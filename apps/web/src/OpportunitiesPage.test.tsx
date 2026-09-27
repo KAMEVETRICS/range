@@ -4,7 +4,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpportunitiesPage } from "./pages/OpportunitiesPage.js";
-import type { DashboardApi, Opportunity, OpportunityEnvelope, VenueEnvelope } from "./api/client.js";
+import type { DashboardApi, Opportunity, OpportunityEnvelope, QuoteTimestamp, VenueEnvelope } from "./api/client.js";
 
 const opportunity = (overrides: Partial<Opportunity> = {}): Opportunity => ({
   opportunityId: "opp_nvda_spread_1",
@@ -39,37 +39,20 @@ const staleOpportunity = opportunity({
   rejectionReasons: ["STALE_INPUT"],
 });
 
+const quoteTimestamps: QuoteTimestamp[] = [
+  { event_id: "evt_book_buy_12", source_timestamp_ms: Date.parse("2026-09-27T17:59:59.716Z"), received_timestamp_ms: Date.parse("2026-09-27T17:59:59.748Z") },
+  { event_id: "evt_book_sell_12", source_timestamp_ms: Date.parse("2026-09-27T17:59:59.700Z"), received_timestamp_ms: Date.parse("2026-09-27T17:59:59.735Z") },
+];
+
 const opportunities = (items: Opportunity[], warnings: string[] = []): OpportunityEnvelope => ({
   status: warnings.length ? "partial" : "ok",
   as_of: "2026-09-27T18:00:00.000Z",
   freshness: { oldest_input_ms: Math.max(0, ...items.map((item) => item.freshness.oldestInputMs)) },
-  result: { items, next_offset: null },
+  result: { items, quote_timestamps: quoteTimestamps, next_offset: null },
   evidence: items.flatMap((item) => item.evidenceHash ? [{ event_id: `evt_${item.stateRevision}` }] : []),
   warnings,
   trace_id: "rng_trace_dashboard-test",
 });
-
-const marketSnapshot = {
-  status: "ok" as const,
-  as_of: "2026-09-27T17:59:59.716Z",
-  freshness: { oldest_input_ms: 284 },
-  result: {
-    underlying: "equity:NVDA",
-    observations: [
-      { eventId: "evt_book_buy_12", schemaVersion: 1, venue: "bitget", instrumentId: "ins_bitget_NVDAUSDT", sequence: 812,
-        transport: "websocket" as const, freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live" as const,
-        sourceTimestamp: Date.parse("2026-09-27T17:59:59.716Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.748Z"),
-        payload: { kind: "order_book" as const, bids: [{ price: "131.10", quantity: "76.20" }], asks: [{ price: "131.20", quantity: "76.20" }], capacityUsd: "15000" } },
-      { eventId: "evt_book_sell_12", schemaVersion: 1, venue: "hyperliquid_hip3", instrumentId: "ins_hyperliquid_NVDA", sequence: "0x12",
-        transport: "websocket" as const, freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live" as const,
-        sourceTimestamp: Date.parse("2026-09-27T17:59:59.700Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.735Z"),
-        payload: { kind: "order_book" as const, bids: [{ price: "131.94", quantity: "76.20" }], asks: [{ price: "132.02", quantity: "76.20" }], capacityUsd: "12500" } },
-    ],
-  },
-  evidence: [{ event_id: "evt_book_buy_12" }, { event_id: "evt_book_sell_12" }],
-  warnings: [],
-  trace_id: "rng_trace_market-test",
-};
 
 const venues: VenueEnvelope = {
   status: "partial",
@@ -96,9 +79,9 @@ function apiWith(items: Opportunity[], detail = items[0], warnings: string[] = [
       result: {
         opportunity: detail!,
         rejection_history: detail?.rejectionReasons.length ? [{ state_revision: detail.stateRevision, status: "rejected", rejection_reasons: detail.rejectionReasons }] : [],
+        quote_timestamps: quoteTimestamps,
       },
     }),
-    getMarketSnapshot: vi.fn().mockResolvedValue(marketSnapshot),
     listVenues: vi.fn().mockResolvedValue(venues),
     subscribe: vi.fn(() => () => undefined),
     intentPreviewCapability: { available: false as const, reason: "Intent preview requires a server-side intent:create scope; no privileged token is exposed to this browser." },
@@ -158,6 +141,19 @@ describe("Range opportunities dashboard", () => {
     expect(within(detail).getAllByText("Received time")).toHaveLength(2);
     expect(within(detail).getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
     expect(within(detail).getByText("Envelope as of")).toBeVisible();
+  });
+
+  it("uses historical quote timestamps returned with the scan after the current book advances", async () => {
+    const api = apiWith([opportunity()]);
+    const response = opportunities([opportunity()]);
+    response.result.quote_timestamps = [{ event_id: "evt_book_buy_12", source_timestamp_ms: Date.parse("2026-09-27T17:59:59.716Z"), received_timestamp_ms: Date.parse("2026-09-27T17:59:59.748Z") }];
+    vi.mocked(api.scanOpportunities).mockResolvedValue(response);
+
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" />);
+
+    const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
+    expect(within(detail).getByText("2026-09-27T17:59:59.716Z")).toBeVisible();
+    expect(within(detail).getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
   });
 
   it("shows executable prices and evidence lineage on every result row", async () => {

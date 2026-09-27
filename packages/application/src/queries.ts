@@ -28,6 +28,7 @@ export const VenueViewSchema = z.object({ venue: VenueFilterSchema, capabilities
   health: VenueHealthSchema.nullable(), asOfMs: z.number().int().nonnegative().nullable() }).strict();
 export type VenueView = z.infer<typeof VenueViewSchema>;
 export type EventPageItem = { ordinal: number; event: StoredEvent };
+export type ObservationTimestamp = { eventId: string; sourceTimestampMs: number; receivedTimestampMs: number };
 
 /** Every read carries its caller trace, including authoritative currentness reads.
  * Adapters must not replace inspectOpportunity with a cache of delivered events. */
@@ -38,7 +39,7 @@ export interface ApplicationQueries {
   scanOpportunities(context: RequestContext, filter: ScanQuery): Promise<Opportunity[]>;
   inspectOpportunity(context: RequestContext, id: string): Promise<Opportunity | undefined>;
   getEvidence(context: RequestContext, hash: string): Promise<EvidenceBundle | undefined>;
-  getSourceTimestamps(context: RequestContext, eventIds: string[]): Promise<number[]>;
+  getSourceTimestamps(context: RequestContext, eventIds: string[]): Promise<ObservationTimestamp[]>;
   getOpportunityHistory(context: RequestContext, id: string): Promise<Opportunity[]>;
   getAcceptedRevision(context: RequestContext, underlying: string): Promise<number | undefined>;
   readEvents(context: RequestContext, afterOrdinal: number, limit: number): Promise<EventPageItem[]>;
@@ -97,8 +98,17 @@ export class StorageQueries implements ApplicationQueries {
   }
   async getSourceTimestamps(context: RequestContext, ids: string[]) {
     this.audit(context, "storage.source-times");
-    const result = await this.sql.query("SELECT MIN(source_time) AS source_time FROM observations WHERE event_id = ANY($1::text[]) GROUP BY event_id", [ids]);
-    return result.rows.map(row => new Date(row.source_time).getTime());
+    const boundedIds = z.array(z.string().max(200).regex(/^evt_[A-Za-z0-9_.:-]+$/)).max(1000).parse([...new Set(ids)]);
+    const result = await this.sql.query(`SELECT event_id, source_time, payload->>'receivedTimestamp' AS received_timestamp
+      FROM observations WHERE event_id = ANY($1::text[]) ORDER BY event_id LIMIT 1000`, [boundedIds]);
+    return result.rows.map(row => {
+      const timestamp = { eventId: row.event_id, sourceTimestampMs: new Date(row.source_time).getTime(), receivedTimestampMs: Number(row.received_timestamp) };
+      if (!Number.isSafeInteger(timestamp.sourceTimestampMs) || timestamp.sourceTimestampMs < 0 ||
+        !Number.isSafeInteger(timestamp.receivedTimestampMs) || timestamp.receivedTimestampMs < timestamp.sourceTimestampMs) {
+        throw new Error("Invalid observation timestamps");
+      }
+      return timestamp;
+    });
   }
   async getOpportunityHistory(context: RequestContext, id: string) {
     this.audit(context, "storage.opportunity-history");

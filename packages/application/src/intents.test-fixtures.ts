@@ -37,13 +37,18 @@ export async function intentFixture(strategy = "perp_spread") {
       holdingHorizonMs: { kind: "integer", value: 120000 }, minNetEdgeBps: { kind: "decimal", value: "1" },
       synchronizationBudgetMs: { kind: "integer", value: 1000 }, maxClockSkewMs: { kind: "integer", value: 1000 },
     } });
+  const observationTimestamps = new Map<string, { eventId: string; sourceTimestampMs: number; receivedTimestampMs: number }>(observations.map(item => [item.eventId, {
+    eventId: item.eventId,
+    sourceTimestampMs: item.sourceTimestamp,
+    receivedTimestampMs: item.receivedTimestamp,
+  }]));
   const queries: ApplicationQueries = {
     async listVenues() { return instruments.map(item => ({ venue: item.venue as "bitget", capabilities: ["orderbook", "funding"], freshnessBudgetMs: 60000, asOfMs: instant,
       health: VenueHealthSchema.parse({ venue: item.venue, connectionState: "connected", sequenceIntegrity: "consistent", lastEventAgeMs: 0,
         clockSkewMs: 0, rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} }) })); },
     async findInstruments() { return instruments; }, async getMarketSnapshot() { return observations; }, async scanOpportunities() { return [opportunity]; },
     async inspectOpportunity(_context, id) { return id === opportunity.opportunityId && revision === opportunity.stateRevision ? opportunity : undefined; },
-    async getEvidence() { return evidence; }, async getSourceTimestamps() { return observations.map(item => item.sourceTimestamp); },
+    async getEvidence() { return evidence; }, async getSourceTimestamps(_context, ids) { return ids.flatMap(id => observationTimestamps.get(id) ?? []); },
     async getOpportunityHistory() { return []; }, async getAcceptedRevision() { return revision; }, async readEvents() { return []; }, async latestEventOrdinal() { return 0; },
   };
   const { Pool } = newDb().adapters.createPg();
