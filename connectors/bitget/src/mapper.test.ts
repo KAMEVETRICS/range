@@ -14,6 +14,19 @@ it("uses explicit RWA evidence, retains category identity and excludes lookalike
   expect(result[0]?.underlyingId).toBe("bitget:rAAPL");
 });
 
+it("accepts the live unknown launchTime \"0\" without inventing a launch date", () => {
+  const input = fixture("instruments");
+  input.data[1].launchTime = "0";
+  const result = mapBitgetInstruments(input);
+  const perp = result.find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_AAPLUSDT")!;
+  expect(perp.effectiveFrom).toBe(new Date(input.requestTime).toISOString());
+  expect(perp.capabilities).toContain("launch_time_unknown");
+  expect(result).toHaveLength(3);
+
+  delete input.requestTime;
+  expect(mapBitgetInstruments(input).map(i => i.instrumentId)).not.toContain("ins_bitget_USDT-FUTURES_AAPLUSDT");
+});
+
 it("retains REST current funding evidence without inventing a settlement time or canonical funding event", () => {
   const instruments = mapBitgetInstruments(fixture("instruments"));
   const result = mapBitgetTickers(fixture("tickers"), instruments);

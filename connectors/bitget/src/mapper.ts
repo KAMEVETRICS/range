@@ -19,8 +19,10 @@ const instrumentRow = z.object({
   pricePrecision: z.string().regex(/^\d{1,2}$/), quantityPrecision: z.string().regex(/^\d{1,2}$/),
   priceMultiplier: positive.optional(), quantityMultiplier: positive.optional(),
   minOrderAmount: nonnegative, status: text, type: z.string().optional(), fundInterval: z.string().optional(),
-  launchTime: timestamp,
+  // Bitget reports "0" when a listing's launch time is unknown.
+  launchTime: z.union([z.literal("0").transform(() => undefined), timestamp]),
 });
+const instrumentsResponse = response.extend({ requestTime: timestamp.optional() });
 
 function safe<T>(operation: () => T): T {
   try { return operation(); } catch { throw new ConnectorDiagnosticError("ADAPTER_FAILURE"); }
@@ -47,13 +49,19 @@ export function isReality(instrument: Instrument): boolean {
 
 /** Venue-local underlying IDs deliberately await the reviewed cross-venue registry. */
 export function mapBitgetInstruments(input: unknown): Instrument[] {
-  return safe(() => z.array(instrumentRow).parse(response.parse(input).data).flatMap(row => {
+  return safe(() => {
+    const body = instrumentsResponse.parse(input);
+    return z.array(instrumentRow).parse(body.data).flatMap(row => {
     if (!BITGET_CATEGORIES.includes(row.category as BitgetCategory) || row.status !== "online") return [];
     const spot = row.category === "SPOT";
     if (spot ? row.isRwa !== "YES" && row.isReality !== "yes" : row.type !== "perpetual") return [];
     const interval = Number(row.fundInterval) * 3_600_000;
     if (!spot && (!Number.isSafeInteger(interval) || interval <= 0)) return [];
+    // Without a launch time, metadata is effective only from when it was observed.
+    const effectiveFromMs = row.launchTime ?? body.requestTime;
+    if (effectiveFromMs === undefined) return [];
     const capabilities = [spot ? "spot" : "perpetual", "underlying_unverified", "trading_schedule_unverified"];
+    if (row.launchTime === undefined) capabilities.push("launch_time_unknown");
     if (row.isRwa === "YES") capabilities.push("isRwa=YES", "tokenized_stock");
     if (row.symbolType === "stock") capabilities.push("symbolType=stock", "tokenized_stock");
     if (row.isReality === "yes") capabilities.push("isReality=yes", "tokenized_stock", "reality_raw_book=access_pending");
@@ -67,9 +75,10 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
       // Schema requires a schedule. This placeholder is explicitly unverified; events are reference-only.
       tradingSchedule: { timezone: "UTC", sessions: [{ daysOfWeek: [1,2,3,4,5,6,7], opensAt: "00:00", closesAt: "23:59" }] },
       capabilities: [...new Set(capabilities)], metadataVersion: 1,
-      effectiveFrom: new Date(row.launchTime).toISOString(), ...(spot ? {} : { fundingInterval: interval }),
+      effectiveFrom: new Date(effectiveFromMs).toISOString(), ...(spot ? {} : { fundingInterval: interval }),
     })];
-  }));
+    });
+  });
 }
 
 function event(instrument: Instrument, raw: unknown, sourceTimestampMs: number,
