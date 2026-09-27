@@ -9,8 +9,9 @@
   "scripts": {
     "build": "pnpm --recursive run build",
     "test": "pnpm test:unit && pnpm test:e2e",
-    "test:unit": "vitest --run",
+    "test:unit": "vitest --run --exclude tests/e2e/dashboard.spec.ts",
     "vitest": "vitest",
+    "playwright": "playwright",
     "seed:mappings": "tsx scripts/seed-mappings.ts",
     "test:e2e": "playwright test",
     "lint": "eslint .",
@@ -18,6 +19,7 @@
     "dev:compose": "docker compose -f infra/compose.yaml up"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "tsx": "^4.20.0",
