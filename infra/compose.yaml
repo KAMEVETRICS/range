@@ -181,7 +181,7 @@ services:
   dashboard:
     build: { context: .., dockerfile: infra/Dockerfile, target: dashboard }
     read_only: true
-    tmpfs: [/var/cache/nginx, /var/run]
+    tmpfs: [/var/cache/nginx, /var/run, /etc/nginx/conf.d]
     restart: unless-stopped
     environment: { RANGE_DASHBOARD_READ_TOKEN: "${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN}" }
     ports: ["127.0.0.1:4173:8080"]
