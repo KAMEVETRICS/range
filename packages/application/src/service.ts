@@ -15,6 +15,7 @@ export const EnvelopeSchema = z.object({ status: z.enum(["ok", "partial", "rejec
 export type Envelope = z.infer<typeof EnvelopeSchema>;
 const page = (items: z.ZodType) => z.object({ items: z.array(items).max(100), next_offset: z.number().int().nullable() }).strict();
 const HistorySummarySchema = z.object({ state_revision: z.number().int(), status: z.string(), rejection_reasons: z.array(z.string()) }).strict();
+const MAX_EVIDENCE_SOURCE_IDS = 1000;
 const QuoteTimestampSchema = z.object({ event_id: z.string().regex(/^evt_[A-Za-z0-9_.:-]+$/), source_timestamp_ms: z.number().int().nonnegative(),
   received_timestamp_ms: z.number().int().nonnegative() }).strict().refine(value => value.received_timestamp_ms >= value.source_timestamp_ms);
 const FundingOutcomeSchema = z.union([FundingProjectionSchema,
@@ -132,6 +133,7 @@ export class RangeApplication {
     const evidence = await this.queries.getEvidence(context, opportunity.evidenceHash);
     if (!evidence || evidence.evidenceHash !== opportunity.evidenceHash) throw new ApplicationError(503, "EVIDENCE_UNAVAILABLE");
     const sourceIds = [...new Set(evidence.sourceEventIds)];
+    if (sourceIds.length > MAX_EVIDENCE_SOURCE_IDS) throw new ApplicationError(503, "SOURCE_TIMES_UNAVAILABLE");
     const times = await this.queries.getSourceTimestamps(context, sourceIds);
     if (times.length !== sourceIds.length || times.some(item => !sourceIds.includes(item.eventId)) || new Set(times.map(item => item.eventId)).size !== sourceIds.length) {
       throw new ApplicationError(503, "SOURCE_TIMES_UNAVAILABLE");

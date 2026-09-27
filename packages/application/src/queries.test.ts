@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { StorageQueries, type RequestContext } from "./queries.js";
 
 const context: RequestContext = { traceId: "rng_trace_adapter", clientId: "reader" };
@@ -23,6 +24,19 @@ describe("storage query adapter", () => {
     }]);
     expect(query).toHaveBeenCalledWith(expect.stringContaining("receivedTimestamp"), [["evt_book"]]);
     expect(JSON.stringify(await adapter.getSourceTimestamps(context, ["evt_book"]))).not.toContain("payload");
+  });
+
+  it("rejects timestamp batches above the storage query limit before issuing SQL", async () => {
+    const query = vi.fn(async () => ({ rows: [] }));
+    const adapter = new StorageQueries(
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
+      { query }, [],
+    );
+    const eventIds = Array.from({ length: 1001 }, (_, index) => `evt_history_${index}`);
+
+    await expect(adapter.getSourceTimestamps(context, eventIds)).rejects.toBeInstanceOf(z.ZodError);
+    expect(query).not.toHaveBeenCalled();
   });
 
   it("uses public venue manifests and passes the request trace through every storage read", async () => {

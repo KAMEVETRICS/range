@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Redis from "ioredis-mock";
 import { CurrentStateStore } from "@range/storage";
 import { OpportunitySchema, EvidenceBundleSchema, VenueHealthSchema, ObservationEnvelopeSchema, type Opportunity } from "@range/domain";
@@ -12,6 +12,7 @@ import { EnvelopeSchema, responseSchemas } from "@range/application";
 import { generateOpenApi, validateOpenApi } from "./openapi.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { z } from "zod";
 
 const now = Date.parse("2026-09-23T12:00:00Z");
 const token = "rng_client_test_only_01234567890123456789";
@@ -198,6 +199,25 @@ describe("REST application boundary", () => {
     expect(response.statusCode).toBe(503);
     expect(response.json().result.code).toBe("SOURCE_TIMES_UNAVAILABLE");
     expect(response.body).not.toContain('"status":"actionable"');
+  });
+
+  it("fails closed before a bounded timestamp adapter receives valid oversized evidence", async () => {
+    const f = await fixture();
+    const evidence = await f.queries.getEvidence({ traceId: "rng_trace_test", clientId: "reader" }, opportunity().evidenceHash!);
+    const sourceEventIds = ["evt_book", ...Array.from({ length: 1000 }, (_, index) => `evt_history_${index}`)];
+    f.queries.getEvidence = async () => EvidenceBundleSchema.parse({ ...evidence, sourceEventIds });
+    const getSourceTimestamps = vi.fn(async (_context: RequestContext, ids: string[]) => {
+      z.array(z.string()).max(1000).parse(ids);
+      return [];
+    });
+    f.queries.getSourceTimestamps = getSourceTimestamps;
+
+    const response = await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json().result.code).toBe("SOURCE_TIMES_UNAVAILABLE");
+    expect(response.body).not.toContain('"status":"actionable"');
+    expect(getSourceTimestamps).not.toHaveBeenCalled();
   });
 
   it("shows rejected calculations and rejection history without reviving historical actionable state", async () => {
