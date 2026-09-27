@@ -114,7 +114,10 @@ services:
   connector-hyperliquid:
     <<: *range-service
     command: [node, --import, tsx, connectors/hyperliquid/src/service.ts]
-    environment: *connector-environment
+    environment:
+      <<: *connector-environment
+      # Measured source-vs-receive lag: p50 1.5s, p95 3.6s, max 6.4s. Freshness budgets still gate actionability.
+      RANGE_MAX_CLOCK_SKEW_MS: "10000"
     depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
     healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
 
