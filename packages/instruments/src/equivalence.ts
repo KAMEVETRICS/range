@@ -26,6 +26,24 @@ export const ReviewedMappingSchema = z.object({
 
 export type ReviewedMapping = z.infer<typeof ReviewedMappingSchema>;
 
+const EvidenceReferenceSchema = z.string().trim().refine(value => {
+  if (/^sha256:[a-f0-9]{64}$/.test(value)) return true;
+  try { return new URL(value).protocol === "https:"; } catch { return false; }
+}, "Evidence must be an HTTPS primary reference or a SHA-256 content reference");
+
+export const LiveVenueEvidenceSchema = z.object({
+  venue: z.string().trim().min(1),
+  observedAt: IsoTimestampSchema,
+  primarySourceUrl: z.string().url().refine(value => new URL(value).protocol === "https:", "Primary source must use HTTPS"),
+  product: EvidenceReferenceSchema,
+  fees: EvidenceReferenceSchema,
+  funding: EvidenceReferenceSchema,
+  sequence: EvidenceReferenceSchema,
+  recovery: EvidenceReferenceSchema,
+  rateLimit: EvidenceReferenceSchema,
+  marketHours: EvidenceReferenceSchema,
+}).strict();
+
 export const SeedMappingSchema = ReviewedMappingSchema.omit({ members: true }).extend({
   members: z.array(z.object({
     venue: z.string().trim().min(1),
@@ -34,6 +52,9 @@ export const SeedMappingSchema = ReviewedMappingSchema.omit({ members: true }).e
     instrumentVersion: z.number().int().positive(),
     metadataHash: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict()).min(2),
+  // Operational release evidence is kept beside the reviewed declaration but
+  // is not part of the runtime equivalence object or metadata hash.
+  liveEvidence: z.array(LiveVenueEvidenceSchema).optional(),
 }).strict();
 
 export const SeedConfigSchema = z.object({

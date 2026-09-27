@@ -11,7 +11,7 @@ export interface OpportunityLifecycle {
 /** Active records expire in place when their proof loses validity. */
 export function activeLifecycle(initial: Opportunity): OpportunityLifecycle {
   let record = OpportunitySchema.parse(initial);
-  const expire = (reason: "CAPABILITY_WITHDRAWN" | "VENUE_DEGRADED" | "STALE_INPUT" | "UNKNOWN_INSTRUMENT_EQUIVALENCE") => {
+  const expire = (reason: "CAPABILITY_WITHDRAWN" | "VENUE_DEGRADED" | "BOOK_SEQUENCE_GAP" | "STALE_INPUT" | "UNKNOWN_INSTRUMENT_EQUIVALENCE") => {
     if (record.status === "actionable" || record.status === "intent_ready") {
       record = OpportunitySchema.parse({ ...record, status: "expired", rejectionReasons: [...record.rejectionReasons, reason] });
     }
@@ -31,7 +31,8 @@ export function activeLifecycle(initial: Opportunity): OpportunityLifecycle {
       return structuredClone(record);
     },
     onVenueHealth(health) {
-      if (health.connectionState !== "connected" || health.sequenceIntegrity !== "consistent" ||
+      if (health.sequenceIntegrity !== "consistent") expire("BOOK_SEQUENCE_GAP");
+      else if (health.connectionState !== "connected" ||
           health.rateLimit.state !== "healthy") expire("VENUE_DEGRADED");
       return structuredClone(record);
     },

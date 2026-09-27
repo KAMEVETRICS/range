@@ -4,6 +4,7 @@ import { intentFixture, instant } from "../../../packages/application/src/intent
 import { buildServer } from "./server.js";
 import { hashClientToken } from "./auth.js";
 import { generateOpenApi, validateOpenApi } from "./openapi.js";
+import { createGatewayClients } from "./service-config.js";
 
 const token = "intent_test_012345678901234567890123456789";
 const bobToken = "intent_test_bob_01234567890123456789012345";
@@ -11,7 +12,7 @@ const pepper = "intent_test_pepper_012345678901234567890123456789";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
-async function fixture(scopes = ["intent:create"]) {
+async function fixture(scopes = ["intent:create"], onIntentExpiry?: () => void) {
   const f = await intentFixture();
   const store = new SqlIntentStore(f.sql);
   const app = buildServer({
@@ -23,6 +24,7 @@ async function fixture(scopes = ["intent:create"]) {
       { id: "bob", tokenHash: hashClientToken(bobToken, pepper), scopes: ["intent:create"] },
     ],
     now: f.now,
+    onIntentExpiry,
   });
   cleanup.push(() => app.close());
   return { ...f, app, store };
@@ -76,7 +78,8 @@ it("creates, replays, and validates from POST /v1/opportunities/{id}/intent with
 });
 
 it("replays the same expired intent with an explicit non-actionable envelope", async () => {
-  const f = await fixture();
+  let expiries = 0;
+  const f = await fixture(["intent:create"], () => { expiries += 1; });
   const original = (await create(f.app)).json().result;
   f.setNow(instant + 2001);
   const replay = await create(f.app);
@@ -84,6 +87,7 @@ it("replays the same expired intent with an explicit non-actionable envelope", a
   expect(replay.json()).toMatchObject({ status: "partial", warnings: expect.arrayContaining(["intent_expired_no_handoff"]) });
   expect(replay.json().result).toEqual(original);
   expect((await validate(f.app, original.intentId)).json().result).toMatchObject({ status: "expired", reason: "TTL_EXPIRED" });
+  expect(expiries).toBeGreaterThanOrEqual(2);
 });
 
 it("replays the same intent after authority withdrawal without presenting a fresh handoff", async () => {
@@ -146,6 +150,18 @@ it("rejects insufficient scope, caller legs, body keys, conflicts, and stale sou
   expect(stale.statusCode).toBe(409);
   expect(stale.json().result.code).toBe("STALE_INPUT");
   expect(stale.body).not.toContain("private-locator");
+});
+
+it("keeps the dashboard/browser proxy token read-only for intent POSTs", async () => {
+  const dashboardToken = "dashboard_read_012345678901234567890123";
+  const f = await intentFixture();
+  const clients = createGatewayClients({ demoToken: token, dashboardToken, pepper });
+  const dashboard = clients.find(client => client.id === "dashboard")!;
+  expect(dashboard.scopes).toEqual(["market:read", "opportunity:read"]);
+  const app = buildServer({ application: f.application, intents: new IntentService(f.application, new SqlIntentStore(f.sql), f.now),
+    pepper, clients, now: f.now });
+  cleanup.push(() => app.close());
+  expect((await create(app, { token: dashboardToken })).statusCode).toBe(403);
 });
 
 it.each(["", "bad key", "x".repeat(129)])("rejects absent or malformed Idempotency-Key %s", async key => {

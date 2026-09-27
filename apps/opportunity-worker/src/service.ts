@@ -8,6 +8,7 @@ import { InstrumentRegistry, SeedConfigSchema } from "@range/instruments";
 import { createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@range/observability";
 import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersistentOpportunityWorker,
   type RedisCommands, type SqlPool, type StoredEvent } from "@range/storage";
+import { checkWorkerHealth } from "./health.js";
 
 const calculationVersion = "range.calc.v1";
 const archiveId = "archive_live_redpanda";
@@ -33,7 +34,7 @@ async function main() {
   const brokers = (process.env.REDPANDA_BROKERS ?? "").split(",").map(value => value.trim()).filter(Boolean);
   if (!databaseUrl || !redisUrl || !brokers.length) throw new Error("DATABASE_URL, REDIS_URL, and REDPANDA_BROKERS are required");
   const sql = new pg.Pool({ connectionString: databaseUrl, max: 10, connectionTimeoutMillis: 5_000 }) as unknown as SqlPool & { end(): Promise<void> };
-  const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { disconnect(): void };
+  const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { disconnect(): void; ping(): Promise<string> };
   const telemetry = createTelemetry({ service: "opportunity-worker",
     traceSink: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(process.env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const transport = new RedpandaEventBus({ clientId: "range-opportunity-worker", brokers });
@@ -79,7 +80,8 @@ async function main() {
       if (publishedMappings.has(id)) continue;
       const members = declaration.members.map(member => seedRegistry.resolveVenueSymbol(member.venue, member.venueSymbol, member.venueFamily));
       if (members.some(member => !member)) continue;
-      const mapping = { ...declaration, members: declaration.members.map((expected, index) => {
+      const { liveEvidence: _liveEvidence, ...reviewedDeclaration } = declaration;
+      const mapping = { ...reviewedDeclaration, members: declaration.members.map((expected, index) => {
         const actual = members[index]!;
         if (actual.version !== expected.instrumentVersion || actual.metadataHash !== expected.metadataHash) throw new Error("Reviewed mapping does not match live metadata");
         return { instrumentId: actual.instrument.instrumentId, instrumentVersion: actual.version, metadataHash: actual.metadataHash };
@@ -128,14 +130,19 @@ async function main() {
     feesBpsByVenue, slippageBpsByVenue, financingBps: "0", gasAndTransferBps: "0",
     fxConversionBps: "0", uncertaintyBufferBps: "0", calculationVersion,
   }, sql, redis);
-  const healthServer = createServer((request, response) => {
-    if (request.url === "/healthz") { response.writeHead(200, { "content-type": "application/json" }).end('{"status":"healthy"}'); return; }
+  let subscriptionsReady = true;
+  const healthServer = createServer(async (request, response) => {
+    if (request.url === "/healthz") {
+      const health = await checkWorkerHealth({ subscriptionsReady, sql, redis });
+      response.writeHead(health.statusCode, { "content-type": "application/json" }).end(JSON.stringify(health.body)); return;
+    }
     if (request.url === "/metrics") { response.writeHead(200, { "content-type": "text/plain; version=0.0.4" }).end(telemetry.metrics.prometheus()); return; }
     response.writeHead(404).end();
   });
   await new Promise<void>((resolve, reject) => { healthServer.once("error", reject); healthServer.listen(Number(process.env.HEALTH_PORT ?? 8081), "0.0.0.0", resolve); });
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
+    subscriptionsReady = false;
     await service.stop(); for (const stop of stops.reverse()) await stop(); await transport.close();
     await new Promise<void>((resolve, reject) => healthServer.close(error => error ? reject(error) : resolve()));
     redis.disconnect(); await sql.end();

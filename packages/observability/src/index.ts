@@ -43,7 +43,10 @@ function correlation(event: unknown): Correlation {
   };
 }
 
-function recordEvent<T extends Topic>(topic: T, event: TopicPayload[T], telemetry: RangeTelemetry): void {
+interface ConnectionHistory { everConnected: boolean; last?: unknown }
+
+function recordEvent<T extends Topic>(topic: T, event: TopicPayload[T], telemetry: RangeTelemetry,
+  connections: Map<string, ConnectionHistory>): void {
   const value = event as unknown as Record<string, unknown>;
   if (topic === "market.observation.v1" || topic === "book.state.v1" || topic === "funding.observation.v1") {
     const source = Number(value.sourceTimestamp);
@@ -59,7 +62,11 @@ function recordEvent<T extends Topic>(topic: T, event: TopicPayload[T], telemetr
     const skew = Number(value.clockSkewMs);
     if (Number.isFinite(skew)) telemetry.metrics.set("range_clock_skew_ms", Math.max(0, skew), { venue });
     if (value.sequenceIntegrity === "gap") telemetry.metrics.increment("range_book_sequence_gaps_total", { venue });
-    if (value.connectionState === "reconnecting") telemetry.metrics.increment("range_connector_reconnects_total", { venue });
+    const previous = connections.get(venue) ?? { everConnected: false };
+    if (value.connectionState === "connected" && previous.everConnected && previous.last !== "connected") {
+      telemetry.metrics.increment("range_connector_reconnects_total", { venue });
+    }
+    connections.set(venue, { everConnected: previous.everConnected || value.connectionState === "connected", last: value.connectionState });
   }
   if (topic === "opportunity.v1") {
     const reasons = Array.isArray(value.rejectionReasons) ? value.rejectionReasons : [];
@@ -73,12 +80,13 @@ function recordEvent<T extends Topic>(topic: T, event: TopicPayload[T], telemetr
 /** Decorates the real bus; validation, retention, delivery and failure behavior
  * remain owned by the wrapped implementation. */
 export function instrumentEventBus(bus: EventBus, telemetry: RangeTelemetry): EventBus {
+  const connections = new Map<string, ConnectionHistory>();
   return {
     async publish<T extends Topic>(topic: T, key: string, event: TopicPayload[T]) {
       const fields = correlation(event);
       await telemetry.tracer.span(`event.publish ${topic}`, fields, async span => {
         span.setAttribute("topic", topic); span.setAttribute("key", key);
-        recordEvent(topic, event, telemetry);
+        recordEvent(topic, event, telemetry, connections);
         await bus.publish(topic, key, event);
       });
     },

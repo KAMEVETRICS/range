@@ -2,7 +2,7 @@
 
 ## Start and verify
 
-Set `RANGE_API_TOKEN_PEPPER` (32+ random characters) and `RANGE_DEMO_API_TOKEN` (24+ random characters). Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
+Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN` (24+ random characters), and a different `RANGE_DASHBOARD_READ_TOKEN` (24+ random characters). The dashboard token is read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
 
 ```powershell
 docker compose -f infra/compose.yaml up -d --build
@@ -31,7 +31,7 @@ The non-container fault suite is repeatable with:
 pnpm vitest tests/e2e/fault-containment.test.ts --run
 ```
 
-It proves stale input and sequence-gap containment against the real worker/event-bus contracts. A Docker-host release additionally needs an authorized internal fault controller URL in `RANGE_FAULT_CONTROL_URL`; the verifier sends stale and gap injections there and expects the active opportunity to expire. The reference Compose file does not expose a mutation endpoint by default. Absence of that controlled harness is a failed release invariant, not a skipped pass.
+It freezes a live in-process feed until the real TTL timer expires its opportunity, then introduces a deterministic sequence discontinuity and proves the worker expires the affected opportunity. A Docker-host release additionally needs an authorized internal fault controller URL in `RANGE_FAULT_CONTROL_URL`; the controller returns only the target opportunity ID and the verifier re-queries Range to prove it is no longer current. The reference Compose file does not expose a mutation endpoint by default. Absence of that controlled harness is a failed release invariant, not a skipped pass.
 
 ## Shutdown and recovery
 

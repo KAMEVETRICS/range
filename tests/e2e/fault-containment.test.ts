@@ -31,11 +31,12 @@ function registry() {
   return value;
 }
 
-function observation(id: string, venue: string, eventId: string, bid: string, ask: string) {
+function observation(id: string, venue: string, eventId: string, bid: string, ask: string, sequence?: number) {
   return {
     eventId, schemaVersion: 1, venue, instrumentId: id, transport: "websocket" as const,
     sourceTimestamp: NOW - 10, receivedTimestamp: NOW - 5, freshnessBudgetMs: 2_000,
     qualityFlags: [], rawPayloadRefOrHash: `sha256:${eventId}`, eligibility: "live" as const,
+    ...(sequence === undefined ? {} : { sequence }),
     payload: { kind: "order_book" as const, bids: [{ price: bid, quantity: "20" }],
       asks: [{ price: ask, quantity: "20" }], capacityUsd: "2000" },
   };
@@ -52,17 +53,38 @@ async function publishInputs(bus: InMemoryEventBus) {
         rate: "0.0001", positiveRatePayer: "long", intervalMs: 28_800_000, nextSettlementMs: NOW + 1_000 },
     });
   }
-  await bus.publish("book.state.v1", "ins_a", observation("ins_a", "venue_a", "evt_book_a", "99", "100"));
-  await bus.publish("book.state.v1", "ins_b", observation("ins_b", "venue_b", "evt_book_b", "125", "126"));
+  await bus.publish("book.state.v1", "ins_a", observation("ins_a", "venue_a", "evt_book_a", "99", "100", 100));
+  await bus.publish("book.state.v1", "ins_b", observation("ins_b", "venue_b", "evt_book_b", "125", "126", 100));
+}
+
+function deterministicClock() {
+  let now = NOW;
+  let id = 0;
+  const tasks = new Map<number, { due: number; callback: () => void }>();
+  return {
+    now: () => now,
+    schedule(callback: () => void, delay: number) {
+      const key = id++; tasks.set(key, { due: now + delay, callback });
+      return () => { tasks.delete(key); };
+    },
+    advanceBy(ms: number) {
+      now += ms;
+      for (const [key, task] of [...tasks].sort((a, b) => a[1].due - b[1].due)) {
+        if (task.due <= now) { tasks.delete(key); task.callback(); }
+      }
+    },
+  };
 }
 
 describe("assembled fault containment", () => {
   it("invalidates an opportunity when one connector feed becomes stale", async () => {
-    const telemetry = createTelemetry({ service: "fault-test", now: () => NOW });
+    const clock = deterministicClock();
+    const telemetry = createTelemetry({ service: "fault-test", now: clock.now });
     const bus = instrumentEventBus(new InMemoryEventBus(), telemetry);
     const seen: Array<{ opportunityId: string; status: string; rejectionReasons: string[] }> = [];
     await bus.subscribe("opportunity.v1", "fault-assertion", async opportunity => { seen.push(opportunity); });
-    const worker = await startOpportunityWorker(bus, registry(), { runtime: "development", now: () => NOW, debounceMs: 0,
+    const worker = await startOpportunityWorker(bus, registry(), { runtime: "development", now: clock.now,
+      schedule: clock.schedule, debounceMs: 0,
       requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
       feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
       financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" });
@@ -71,10 +93,10 @@ describe("assembled fault containment", () => {
     const actionable = seen.find(item => item.status === "actionable");
     expect(actionable).toBeDefined();
 
-    await bus.publish("book.state.v1", "ins_a", {
-      ...observation("ins_a", "venue_a", "evt_stale", "99", "100"), eligibility: "reference_only",
-    });
-    await worker.flush();
+    // Freeze every input feed. The worker's real TTL timer, not a synthetic
+    // reference-only event, must withdraw the opportunity.
+    clock.advanceBy(2_001);
+    await worker.settle();
 
     expect(seen).toContainEqual(expect.objectContaining({ opportunityId: actionable!.opportunityId,
       status: "expired", rejectionReasons: expect.arrayContaining(["STALE_INPUT"]) }));
@@ -85,8 +107,35 @@ describe("assembled fault containment", () => {
   it("records a sequence-gap fault before the opportunity can remain actionable", async () => {
     const telemetry = createTelemetry({ service: "gap-test", now: () => NOW });
     const bus = instrumentEventBus(new InMemoryEventBus(), telemetry);
-    await bus.publish("venue.health.v1", "venue_a", { venue: "venue_a", connectionState: "degraded", lastEventAgeMs: 10,
-      clockSkewMs: 0, sequenceIntegrity: "gap", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} });
+    const seen: Array<{ opportunityId: string; status: string; rejectionReasons: string[] }> = [];
+    await bus.subscribe("opportunity.v1", "gap-assertion", async opportunity => { seen.push(opportunity); });
+    const worker = await startOpportunityWorker(bus, registry(), { runtime: "development", now: () => NOW, debounceMs: 0,
+      requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
+      feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
+      financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" });
+    await publishInputs(bus);
+    await worker.flush();
+    const actionable = seen.find(item => item.status === "actionable");
+    expect(actionable).toBeDefined();
+
+    // A deterministic feed gate derives health from the actual discontinuity;
+    // the invalid delta never reaches canonical book state.
+    let previousSequence = 100;
+    const acceptDelta = async (sequence: number) => {
+      if (sequence !== previousSequence + 1) {
+        await bus.publish("venue.health.v1", "venue_a", { venue: "venue_a", connectionState: "degraded", lastEventAgeMs: 10,
+          clockSkewMs: 0, sequenceIntegrity: "gap", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} });
+        return;
+      }
+      previousSequence = sequence;
+      await bus.publish("book.state.v1", "ins_a", observation("ins_a", "venue_a", `evt_delta_${sequence}`, "99", "100", sequence));
+    };
+    await acceptDelta(102);
+    await worker.flush();
+
+    expect(seen).toContainEqual(expect.objectContaining({ opportunityId: actionable!.opportunityId,
+      status: "expired", rejectionReasons: expect.arrayContaining(["BOOK_SEQUENCE_GAP"]) }));
     expect(telemetry.metrics.value("range_book_sequence_gaps_total", { venue: "venue_a" })).toBe(1);
+    await worker.stop();
   });
 });

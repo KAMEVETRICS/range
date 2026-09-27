@@ -166,6 +166,7 @@ services:
       REDPANDA_BROKERS: redpanda:9092
       RANGE_API_TOKEN_PEPPER: ${RANGE_API_TOKEN_PEPPER:?set RANGE_API_TOKEN_PEPPER to at least 32 characters}
       RANGE_DEMO_API_TOKEN: ${RANGE_DEMO_API_TOKEN:?set RANGE_DEMO_API_TOKEN to at least 24 characters}
+      RANGE_DASHBOARD_READ_TOKEN: ${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN to at least 24 characters}
       RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","capabilities":["orderbook","funding_current"],"freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","capabilities":["orderbook"],"freshnessBudgetMs":2000},{"venue":"extended","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"ondo_perps","capabilities":["orderbook"],"freshnessBudgetMs":5000}]'
       RANGE_ALLOWED_HOSTS: localhost,127.0.0.1,gateway
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -182,7 +183,7 @@ services:
     read_only: true
     tmpfs: [/var/cache/nginx, /var/run]
     restart: unless-stopped
-    environment: { RANGE_DEMO_API_TOKEN: "${RANGE_DEMO_API_TOKEN:?set RANGE_DEMO_API_TOKEN}" }
+    environment: { RANGE_DASHBOARD_READ_TOKEN: "${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN}" }
     ports: ["127.0.0.1:4173:8080"]
     depends_on: { gateway: { condition: service_healthy } }
     healthcheck: { test: [CMD, wget, -qO-, http://127.0.0.1:8080/healthz], interval: 10s, timeout: 3s, retries: 5 }

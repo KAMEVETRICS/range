@@ -14,6 +14,7 @@ export interface GatewayOptions {
   application: RangeApplication; pepper: string; clients: readonly ClientRecord[]; now?: () => number;
   log?: (entry: { trace_id: string; client_id: string; operation: string; status_code: number }) => void;
   observeLatency?: (entry: { operation: string; duration_ms: number }) => void;
+  onIntentExpiry?: () => void;
   stream?: Partial<StreamOptions>;
   intents?: IntentService;
   mcpAllowedHosts?: readonly string[];
@@ -71,6 +72,7 @@ export function buildServer(options: GatewayOptions) {
       idempotencyKey: route.idempotencyKey.parse(request.headers["idempotency-key"]) }, caller) : await options.intents.validateUnsignedIntent(id, caller);
     const envelope = await options.intents.response(result, caller, "intentId" in result ? result.intentId :
       result.status === "changed" ? result.proposedIntent.intentId : id!);
+    if (result.status === "expired" || envelope.warnings?.includes("intent_expired_no_handoff")) options.onIntentExpiry?.();
     return reply.send(route.response.parse(envelope));
   });
   const mcp = createRangeMcpHandler(options, auth);
