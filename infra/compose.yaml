@@ -32,8 +32,8 @@ services:
     image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
     restart: unless-stopped
     command: [redpanda, start, --mode=dev-container, --smp=1, --memory=1G, --reserve-memory=0M,
-      --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092,
-      --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092,
+      "--kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092",
+      "--advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092",
       --rpc-addr=0.0.0.0:33145, --advertise-rpc-addr=redpanda:33145]
     ports: ["127.0.0.1:19092:19092", "127.0.0.1:19644:9644"]
     volumes: [redpanda-data:/var/lib/redpanda/data]
