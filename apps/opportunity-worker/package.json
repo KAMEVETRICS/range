@@ -10,6 +10,13 @@
     "@range/evidence": "workspace:*",
     "@range/instruments": "workspace:*",
     "@range/market-state": "workspace:*",
-    "@range/opportunity": "workspace:*"
+    "@range/observability": "workspace:*",
+    "@range/opportunity": "workspace:*",
+    "@range/storage": "workspace:*",
+    "ioredis": "^5.8.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0"
   }
 }

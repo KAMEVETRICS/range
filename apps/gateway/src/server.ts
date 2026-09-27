@@ -13,6 +13,7 @@ declare module "fastify" { interface FastifyRequest { rangeContext: RequestConte
 export interface GatewayOptions {
   application: RangeApplication; pepper: string; clients: readonly ClientRecord[]; now?: () => number;
   log?: (entry: { trace_id: string; client_id: string; operation: string; status_code: number }) => void;
+  observeLatency?: (entry: { operation: string; duration_ms: number }) => void;
   stream?: Partial<StreamOptions>;
   intents?: IntentService;
   mcpAllowedHosts?: readonly string[];
@@ -24,10 +25,12 @@ export function buildServer(options: GatewayOptions) {
     throw new Error("Invalid MCP concurrency limit");
   }
   const auth = new ClientAuth(options.clients, options.pepper, options.now);
+  const requestStartedAt = new WeakMap<object, number>();
   const app = Fastify({ logger: false, genReqId: () => `rng_trace_${randomUUID()}`, requestIdHeader: false,
     bodyLimit: 16_384, routerOptions: { maxParamLength: 200 } });
   app.decorateRequest("rangeContext");
   app.addHook("onRequest", async (request, reply) => {
+    requestStartedAt.set(request, Date.now());
     request.rangeContext = { traceId: request.id, clientId: "anonymous" };
     reply.header("x-range-trace-id", request.id).header("cache-control", "no-store");
   });
@@ -35,6 +38,8 @@ export function buildServer(options: GatewayOptions) {
     // No raw URL/query, authorization, private headers, or exception strings.
     options.log?.({ trace_id: request.id, client_id: request.rangeContext.clientId,
       operation: request.routeOptions.url ?? "unknown", status_code: reply.statusCode });
+    options.observeLatency?.({ operation: request.routeOptions.url ?? "unknown",
+      duration_ms: Math.max(0, Date.now() - (requestStartedAt.get(request) ?? Date.now())) });
   });
   app.setErrorHandler((error, request, reply) => {
     const applicationError = error instanceof ApplicationError;
@@ -111,7 +116,8 @@ export function buildServer(options: GatewayOptions) {
       "X-Range-Trace-Id": request.id, "X-Accel-Buffering": "no" });
     const stream = new StreamSession(options.application, request.rangeContext, reply.raw, { ...options.stream, afterOrdinal: after,
       underlying: query.underlying, expiresAtMs: client.expiresAtMs, now: options.now,
-      onClose: () => { streams.delete(stream); options.log?.({ trace_id: request.id, client_id: client.id, operation: "/v1/stream", status_code: 200 }); } });
+      onClose: () => { streams.delete(stream); options.log?.({ trace_id: request.id, client_id: client.id, operation: "/v1/stream", status_code: 200 });
+        options.observeLatency?.({ operation: "/v1/stream", duration_ms: Math.max(0, Date.now() - (requestStartedAt.get(request) ?? Date.now())) }); } });
     streams.add(stream);
     stream.start();
   });

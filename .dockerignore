@@ -1,0 +1,10 @@
+.git
+.worktrees
+node_modules
+**/node_modules
+.env
+.env.*
+coverage
+test-results
+playwright-report
+.superpowers

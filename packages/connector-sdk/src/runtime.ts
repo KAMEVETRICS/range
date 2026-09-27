@@ -134,6 +134,9 @@ export class ConnectorRuntime {
         return [];
       }
       this.instruments = await this.call(() => this.options.adapter.discover(signal), signal);
+      for (const instrument of this.instruments) {
+        await this.options.eventBus.publish("instrument.registry.v1", instrument.instrumentId, { kind: "upsert", instrument });
+      }
       this.resetRecoveredSession();
       await this.markHealthy();
       await this.snapshotAll(this.instruments, signal);

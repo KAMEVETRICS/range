@@ -70,6 +70,20 @@ it("emits degraded venue health when a stream disconnects", async () => {
   expect(healthEvents.at(-1)?.connectionState).toBe("degraded");
 });
 
+it("publishes each discovered instrument before its first market observation", async () => {
+  const bus = new InMemoryEventBus();
+  const order: string[] = [];
+  await bus.subscribe("instrument.registry.v1", "registry-order", async event => {
+    order.push(`instrument:${event.kind === "upsert" ? event.instrument.instrumentId : "mapping"}`);
+  });
+  await bus.subscribe("market.observation.v1", "market-order", async event => { order.push(`market:${event.instrumentId}`); });
+  const runtime = new ConnectorRuntime({ adapter: fakeAdapter(), eventBus: bus, nowMs: () => 10_000 });
+
+  await runtime.pollOnce();
+
+  expect(order).toEqual([`instrument:${instrument.instrumentId}`, `market:${instrument.instrumentId}`]);
+});
+
 it("honors Retry-After before retrying a transient adapter failure", async () => {
   const delays: number[] = [];
   let attempts = 0;

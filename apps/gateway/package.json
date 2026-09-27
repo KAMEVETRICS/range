@@ -15,6 +15,7 @@
     "@range/application": "workspace:*",
     "@range/config": "workspace:*",
     "@range/domain": "workspace:*",
+    "@range/observability": "workspace:*",
     "@range/storage": "workspace:*",
     "fastify": "^5.6.0",
     "ioredis": "^5.8.0",
