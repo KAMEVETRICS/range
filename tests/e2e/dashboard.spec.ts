@@ -22,20 +22,40 @@ async function mockApi(page: Page) {
     { venue: "bitget", capabilities: ["book"], freshnessBudgetMs: 2000, asOfMs: 1790532000000, health: { venue: "bitget", connectionState: "connected", lastEventAgeMs: 284, clockSkewMs: 12, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } },
     { venue: "variational", capabilities: ["reference_quote"], freshnessBudgetMs: 60000, asOfMs: null, health: null },
   ], next_offset: null }, ["variational: venue missing"]) }));
+  await page.route("**/v1/markets/snapshot**", (route) => route.fulfill({ json: envelope({ underlying: "equity:NVDA", observations: [
+    { eventId: "evt_book_buy_12", schemaVersion: 1, venue: "bitget", instrumentId: "ins_bitget_NVDAUSDT", sequence: 812,
+      transport: "websocket", freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live",
+      sourceTimestamp: Date.parse("2026-09-27T17:59:59.716Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.748Z"),
+      payload: { kind: "order_book", bids: [{ price: "131.10", quantity: "76.20" }], asks: [{ price: "131.20", quantity: "76.20" }], capacityUsd: "15000" } },
+    { eventId: "evt_book_sell_12", schemaVersion: 1, venue: "hyperliquid_hip3", instrumentId: "ins_hyperliquid_NVDA", sequence: "0x12",
+      transport: "websocket", freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live",
+      sourceTimestamp: Date.parse("2026-09-27T17:59:59.700Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.735Z"),
+      payload: { kind: "order_book", bids: [{ price: "131.94", quantity: "76.20" }], asks: [{ price: "132.02", quantity: "76.20" }], capacityUsd: "12500" } },
+  ] }) }));
   await page.route("**/v1/opportunities/opp_nvda_spread_1", (route) => route.fulfill({ json: envelope({ opportunity, rejection_history: [] }) }));
   await page.route(/\/v1\/opportunities(?:\?.*)?$/, (route) => route.fulfill({ json: envelope({ items: [opportunity], next_offset: null }) }));
   await page.route("**/v1/stream**", (route) => route.abort());
 }
 
 test("scan, inspect evidence, and explain the safe intent-preview boundary", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
   await mockApi(page);
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Opportunity intelligence" })).toBeVisible();
-  await expect(page.getByRole("row", { name: /NVDA.*51\.48 bps/ })).toBeVisible();
-  await page.getByRole("row", { name: /NVDA.*51\.48 bps/ }).click();
-  await expect(page.getByRole("heading", { name: "Evidence" })).toBeVisible();
-  await expect(page.getByText("evh_0123456789abcdef")).toBeVisible();
+  const row = page.getByRole("row", { name: /NVDA.*51\.48 bps/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("131.10 avg / 131.20 worst")).toBeVisible();
+  await expect(row.getByText("evt_book_buy_12")).toBeVisible();
+  await row.click();
+  const detail = page.getByRole("complementary", { name: "Selected opportunity detail" });
+  await expect(detail.getByRole("heading", { name: "Evidence" })).toBeVisible();
+  await expect(detail.getByText("evh_0123456789abcdef")).toBeVisible();
+  await expect(detail.getByText("Financing")).toBeVisible();
+  await expect(detail.getByText("Gas / transfer")).toBeVisible();
+  await expect(detail.getByText("FX conversion")).toBeVisible();
+  await expect(detail.getByText("2026-09-27T17:59:59.716Z")).toBeVisible();
+  await expect(detail.getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create unsigned intent" })).toBeDisabled();
   await expect(page.getByText(/requires a server-side intent:create scope/i)).toBeVisible();
 });

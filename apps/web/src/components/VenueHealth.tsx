@@ -23,6 +23,7 @@ export function VenueHealth({ venues, warnings }: { venues: VenueView[]; warning
             <article className={`venue-item state-${label.toLowerCase()}`} key={venue.venue}>
               <div className="venue-title"><strong>{venue.venue.replaceAll("_", " ")}</strong><span className="status-label">{label}</span></div>
               <p>{venue.health ? `${(venue.health.lastEventAgeMs / 1000).toFixed(1)} s · sequence ${venue.health.sequenceIntegrity}` : "No current health record"}</p>
+              <p className="accepted-time">{venue.asOfMs === null ? "Accepted time unavailable" : `Accepted ${new Date(venue.asOfMs).toISOString()}`}</p>
             </article>
           );
         })}

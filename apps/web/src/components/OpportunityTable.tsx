@@ -1,13 +1,15 @@
-import type { Opportunity } from "../api/client.js";
+import type { MarketObservation, Opportunity } from "../api/client.js";
 
 export function formatAge(ageMs: number) {
   return ageMs < 1000 ? `${ageMs} ms old` : `${(ageMs / 1000).toFixed(1)} s old`;
 }
 
 const strategyLabel = (strategy: string) => strategy.replaceAll("_", " ");
+export const formatTimestamp = (timestamp?: number) => timestamp === undefined ? "Unavailable" : new Date(timestamp).toISOString();
 
-export function OpportunityTable({ opportunities, selectedId, invalidatedIds, onSelect }: {
+export function OpportunityTable({ opportunities, observations, selectedId, invalidatedIds, onSelect }: {
   opportunities: Opportunity[];
+  observations: MarketObservation[];
   selectedId?: string;
   invalidatedIds: ReadonlySet<string>;
   onSelect(id: string): void;
@@ -17,7 +19,7 @@ export function OpportunityTable({ opportunities, selectedId, invalidatedIds, on
     <div className="table-shell">
       <table>
         <caption className="sr-only">Current opportunity intelligence</caption>
-        <thead><tr><th>Underlying</th><th>Strategy</th><th className="numeric">Gross</th><th className="numeric">Costs</th><th className="numeric">Net edge</th><th className="numeric">Capacity</th><th>Freshness</th></tr></thead>
+        <thead><tr><th>Underlying</th><th>Strategy</th><th>Prices / evidence</th><th className="numeric">Gross</th><th className="numeric">Costs</th><th className="numeric">Net edge</th><th className="numeric">Capacity</th><th>Freshness</th></tr></thead>
         <tbody>
           {opportunities.map((item) => {
             const invalidated = invalidatedIds.has(item.opportunityId);
@@ -26,6 +28,18 @@ export function OpportunityTable({ opportunities, selectedId, invalidatedIds, on
               <tr key={item.opportunityId} className={`${selectedId === item.opportunityId ? "selected" : ""} ${stale ? "non-actionable" : ""}`} onClick={() => onSelect(item.opportunityId)}>
                 <td data-label="Underlying"><button className="row-select" type="button" onClick={() => onSelect(item.opportunityId)}>{item.underlyingId.split(":").at(-1)}</button></td>
                 <td data-label="Strategy">{strategyLabel(item.strategy)}</td>
+                <td data-label="Prices / evidence" className="lineage-cell">
+                  {item.legs.map((leg) => {
+                    const observation = observations.find((candidate) => candidate.eventId === leg.executableQuote.sourceBookEventId);
+                    return <div className="row-leg" key={leg.legId}>
+                      <span className={`side side-${leg.side}`}>{leg.side}</span>
+                      <strong>{leg.executableQuote.averagePrice} avg / {leg.executableQuote.worstPrice} worst</strong>
+                      <span className="hash">{leg.executableQuote.sourceBookEventId}</span>
+                      <small>src {formatTimestamp(observation?.sourceTimestamp)} · recv {formatTimestamp(observation?.receivedTimestamp)}</small>
+                    </div>;
+                  })}
+                  <span className="row-evidence hash">{item.evidenceHash ?? "Evidence hash unavailable"}</span>
+                </td>
                 <td data-label="Gross" className="numeric">{item.grossSpreadBps} bps</td>
                 <td data-label="Costs" className="numeric costs">Fees {item.tradingFeesBps} · slip {item.slippageBps} bps</td>
                 <td data-label="Net edge" className="numeric net-value">{item.netEdgeBps} bps</td>

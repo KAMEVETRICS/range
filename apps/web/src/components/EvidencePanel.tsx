@@ -7,7 +7,7 @@ export function EvidencePanel({ opportunity, detail }: { opportunity: Opportunit
       <dl className="evidence-list">
         <div><dt>Evidence hash</dt><dd className="hash">{opportunity.evidenceHash ?? "Not available"}</dd></div>
         <div><dt>Source events</dt><dd>{detail?.evidence.length ? detail.evidence.map((item) => item.event_id).join(", ") : "Available after inspection"}</dd></div>
-        <div><dt>Server as of</dt><dd>{detail ? new Date(detail.as_of).toLocaleString() : "Loading current detail…"}</dd></div>
+        <div><dt>Envelope as of</dt><dd>{detail ? new Date(detail.as_of).toISOString() : "Loading current detail…"}</dd></div>
         <div><dt>Trace</dt><dd className="hash">{detail?.trace_id ?? "Pending"}</dd></div>
       </dl>
       {detail?.warnings.length ? <div className="inline-warning"><strong>Evidence warnings</strong><p>{detail.warnings.join(" · ")}</p></div> : null}

@@ -49,6 +49,28 @@ const opportunities = (items: Opportunity[], warnings: string[] = []): Opportuni
   trace_id: "rng_trace_dashboard-test",
 });
 
+const marketSnapshot = {
+  status: "ok" as const,
+  as_of: "2026-09-27T17:59:59.716Z",
+  freshness: { oldest_input_ms: 284 },
+  result: {
+    underlying: "equity:NVDA",
+    observations: [
+      { eventId: "evt_book_buy_12", schemaVersion: 1, venue: "bitget", instrumentId: "ins_bitget_NVDAUSDT", sequence: 812,
+        transport: "websocket" as const, freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live" as const,
+        sourceTimestamp: Date.parse("2026-09-27T17:59:59.716Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.748Z"),
+        payload: { kind: "order_book" as const, bids: [{ price: "131.10", quantity: "76.20" }], asks: [{ price: "131.20", quantity: "76.20" }], capacityUsd: "15000" } },
+      { eventId: "evt_book_sell_12", schemaVersion: 1, venue: "hyperliquid_hip3", instrumentId: "ins_hyperliquid_NVDA", sequence: "0x12",
+        transport: "websocket" as const, freshnessBudgetMs: 2000, qualityFlags: [], eligibility: "live" as const,
+        sourceTimestamp: Date.parse("2026-09-27T17:59:59.700Z"), receivedTimestamp: Date.parse("2026-09-27T17:59:59.735Z"),
+        payload: { kind: "order_book" as const, bids: [{ price: "131.94", quantity: "76.20" }], asks: [{ price: "132.02", quantity: "76.20" }], capacityUsd: "12500" } },
+    ],
+  },
+  evidence: [{ event_id: "evt_book_buy_12" }, { event_id: "evt_book_sell_12" }],
+  warnings: [],
+  trace_id: "rng_trace_market-test",
+};
+
 const venues: VenueEnvelope = {
   status: "partial",
   as_of: "2026-09-27T18:00:00.000Z",
@@ -67,7 +89,7 @@ const venues: VenueEnvelope = {
 };
 
 function apiWith(items: Opportunity[], detail = items[0], warnings: string[] = []): DashboardApi {
-  return {
+  const api = {
     scanOpportunities: vi.fn().mockResolvedValue(opportunities(items, warnings)),
     inspectOpportunity: vi.fn().mockResolvedValue({
       ...opportunities([detail!]),
@@ -76,10 +98,12 @@ function apiWith(items: Opportunity[], detail = items[0], warnings: string[] = [
         rejection_history: detail?.rejectionReasons.length ? [{ state_revision: detail.stateRevision, status: "rejected", rejection_reasons: detail.rejectionReasons }] : [],
       },
     }),
+    getMarketSnapshot: vi.fn().mockResolvedValue(marketSnapshot),
     listVenues: vi.fn().mockResolvedValue(venues),
     subscribe: vi.fn(() => () => undefined),
-    intentPreviewCapability: { available: false, reason: "Intent preview requires a server-side intent:create scope; no privileged token is exposed to this browser." },
+    intentPreviewCapability: { available: false as const, reason: "Intent preview requires a server-side intent:create scope; no privileged token is exposed to this browser." },
   };
+  return api;
 }
 
 afterEach(cleanup);
@@ -113,6 +137,47 @@ describe("Range opportunities dashboard", () => {
     expect(within(row).queryByText("19.90 bps")).not.toBeInTheDocument();
   });
 
+  it("shows every returned cost component including zero values", async () => {
+    render(<OpportunitiesPage api={apiWith([opportunity()])} initialUnderlying="equity:NVDA" />);
+
+    const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
+    const financing = within(detail).getByText("Financing").closest("div")!;
+    const transfer = within(detail).getByText("Gas / transfer").closest("div")!;
+    const fx = within(detail).getByText("FX conversion").closest("div")!;
+    expect(within(financing).getByText("−0.50 bps")).toBeVisible();
+    expect(within(transfer).getByText("−0 bps")).toBeVisible();
+    expect(within(fx).getByText("−0 bps")).toBeVisible();
+  });
+
+  it("shows source and receive timestamps for executable quote events", async () => {
+    render(<OpportunitiesPage api={apiWith([opportunity()])} initialUnderlying="equity:NVDA" />);
+
+    const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
+    expect(within(detail).getAllByText("Source time")).toHaveLength(2);
+    expect(within(detail).getByText("2026-09-27T17:59:59.716Z")).toBeVisible();
+    expect(within(detail).getAllByText("Received time")).toHaveLength(2);
+    expect(within(detail).getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
+    expect(within(detail).getByText("Envelope as of")).toBeVisible();
+  });
+
+  it("shows executable prices and evidence lineage on every result row", async () => {
+    render(<OpportunitiesPage api={apiWith([opportunity()])} initialUnderlying="equity:NVDA" />);
+
+    const row = await screen.findByRole("row", { name: /NVDA/ });
+    expect(within(row).getByText("131.10 avg / 131.20 worst")).toBeVisible();
+    expect(within(row).getByText("evt_book_buy_12")).toBeVisible();
+    expect(within(row).getByText("evh_0123456789abcdef")).toBeVisible();
+  });
+
+  it("shows current rejection reasons and historical revision provenance", async () => {
+    render(<OpportunitiesPage api={apiWith([staleOpportunity])} initialUnderlying="equity:NVDA" />);
+
+    const provenance = await screen.findByRole("region", { name: "Rejection provenance" });
+    expect(within(provenance).getByText("Current reasons")).toBeVisible();
+    expect(within(provenance).getAllByText("STALE INPUT").length).toBeGreaterThan(0);
+    expect(await within(provenance).findByText("Revision 12 · rejected")).toBeVisible();
+  });
+
   it("preserves filters and refetches after a streamed invalidation", async () => {
     const api = apiWith([opportunity()]);
     let streamHandler: Parameters<DashboardApi["subscribe"]>[1] | undefined;
@@ -131,6 +196,24 @@ describe("Range opportunities dashboard", () => {
     expect(await screen.findByText("Opportunity invalidated by live update.")).toBeVisible();
     expect(screen.getByLabelText("Minimum net edge")).toHaveValue(25);
     expect(api.scanOpportunities).toHaveBeenLastCalledWith(expect.objectContaining({ strategy: "perp_spread", min_edge_bps: "25" }));
+  });
+
+  it("refetches when a streamed opportunity is absent from the current scan", async () => {
+    const current = opportunity();
+    const incoming = opportunity({ opportunityId: "opp_nvda_spread_2", stateRevision: 13, netEdgeBps: "44.00", evidenceHash: "evh_fedcba9876543210" });
+    const api = apiWith([current]);
+    let streamHandler: Parameters<DashboardApi["subscribe"]>[1] | undefined;
+    vi.mocked(api.subscribe).mockImplementation((_underlying, handler) => { streamHandler = handler; return () => undefined; });
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" />);
+    await screen.findByRole("row", { name: /opp_nvda_spread_1|NVDA/ });
+    vi.mocked(api.scanOpportunities).mockResolvedValueOnce(opportunities([current, incoming]));
+
+    await streamHandler?.({ kind: "opportunity", message: "New opportunity published.", detail: {
+      ...opportunities([incoming]), result: { opportunity: incoming, rejection_history: [] },
+    } });
+
+    expect(await screen.findByText("44.00 bps")).toBeVisible();
+    expect(api.scanOpportunities).toHaveBeenCalledTimes(2);
   });
 
   it("labels degraded and missing venues without implying they are actionable", async () => {
