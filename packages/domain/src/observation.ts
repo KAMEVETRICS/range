@@ -50,6 +50,8 @@ const observationEnvelopeFields = {
   venue: VenueSchema,
   instrumentId: InstrumentIdSchema,
   sequence: z.union([z.string().trim().min(1), z.number().int().nonnegative()]).optional(),
+  sequencePolicy: z.literal("contiguous").optional(),
+  sequenceReset: z.literal(true).optional(),
   transport: z.enum(["websocket", "rest", "replay"]),
   freshnessBudgetMs: z.number().int().positive(),
   qualityFlags: z.array(z.string().trim().min(1)),

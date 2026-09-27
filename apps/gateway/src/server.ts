@@ -72,7 +72,8 @@ export function buildServer(options: GatewayOptions) {
       idempotencyKey: route.idempotencyKey.parse(request.headers["idempotency-key"]) }, caller) : await options.intents.validateUnsignedIntent(id, caller);
     const envelope = await options.intents.response(result, caller, "intentId" in result ? result.intentId :
       result.status === "changed" ? result.proposedIntent.intentId : id!);
-    if (result.status === "expired" || envelope.warnings?.includes("intent_expired_no_handoff")) options.onIntentExpiry?.();
+    if (("status" in result && result.status === "expired") ||
+        envelope.warnings?.includes("intent_expired_no_handoff")) options.onIntentExpiry?.();
     return reply.send(route.response.parse(envelope));
   });
   const mcp = createRangeMcpHandler(options, auth);

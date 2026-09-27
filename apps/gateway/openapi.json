@@ -2139,6 +2139,14 @@
                                   }
                                 ]
                               },
+                              "sequencePolicy": {
+                                "type": "string",
+                                "const": "contiguous"
+                              },
+                              "sequenceReset": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "transport": {
                                 "type": "string",
                                 "enum": [

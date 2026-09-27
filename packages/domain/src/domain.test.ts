@@ -246,6 +246,17 @@ describe("canonical schemas", () => {
     })).toThrow();
   });
 
+  it("carries an explicit contiguous-sequence reset contract beside the book sequence", () => {
+    const observation = {
+      eventId: "evt_reset_1", schemaVersion: 1, venue: "extended", instrumentId: instrument.instrumentId,
+      sourceTimestamp: 1_790_000_000_000, receivedTimestamp: 1_790_000_000_084,
+      sequence: 42, sequencePolicy: "contiguous", sequenceReset: true,
+      transport: "websocket", freshnessBudgetMs: 500, qualityFlags: [], rawPayloadRefOrHash: "sha256:raw_reset",
+      eligibility: "live", payload: { kind: "order_book", bids: [], asks: [], capacityUsd: "0" },
+    };
+    expect(ObservationEnvelopeSchema.safeParse(observation).success).toBe(true);
+  });
+
   it("rejects duplicate opportunity leg IDs", () => {
     expect(() => OpportunitySchema.parse({
       ...opportunity,

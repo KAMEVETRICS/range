@@ -200,6 +200,7 @@ function rawEvent(
     instrumentId: instrument.instrumentId,
     sourceTimestampMs,
     ...(sequence === undefined ? {} : { sequence }),
+    ...(isSequencedRealStream ? { sequencePolicy: "contiguous" as const } : {}),
     transport,
     freshnessBudgetMs: 5_000,
     qualityFlags,

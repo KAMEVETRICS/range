@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseReplayArgs, runReplayCli } from "./replay.js";
-import { MetricRegistry } from "../packages/observability/src/metrics.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -27,10 +26,11 @@ describe("replay CLI", () => {
     try {
       await writeFile(file, lines.join("\n"));
       const log = vi.spyOn(console, "log").mockImplementation(() => {});
-      const metrics = new MetricRegistry();
-      expect(await runReplayCli(["--fixture", file, "--dry-run"], { metrics })).toBe(1);
-      expect(JSON.parse(String(log.mock.calls[0]?.[0])).driftCount).toBe(1);
-      expect(metrics.value("range_replay_drift_total")).toBe(1);
+      expect(await runReplayCli(["--fixture", file, "--dry-run"])).toBe(1);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+        driftCount: 1,
+        metrics: { range_replay_drift_total: 1 },
+      });
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

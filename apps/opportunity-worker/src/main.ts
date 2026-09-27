@@ -43,6 +43,8 @@ interface BookCursor {
   receivedTimestamp: number;
   sequencePresent: boolean;
   sequence?: bigint;
+  contiguous: boolean;
+  gapped: boolean;
 }
 
 const DECIMAL_SEQUENCE = /^(?:0|[1-9]\d*)$/;
@@ -130,10 +132,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     }
   };
-  const expireBook = (instrumentId: string, revision: number) => {
+  const expireBook = (instrumentId: string, revision: number, reason: "STALE_INPUT" | "BOOK_SEQUENCE_GAP" = "STALE_INPUT") => {
     for (const [id, lifecycle] of active) {
       if (lifecycle.current(now()).status !== "actionable") continue;
-      const after = lifecycle.onQuoteWithdrawal(instrumentId);
+      const after = reason === "BOOK_SEQUENCE_GAP"
+        ? lifecycle.onSequenceGap(instrumentId) : lifecycle.onQuoteWithdrawal(instrumentId);
       if (after.status === "expired") {
         expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
         queuePublish({ ...after, stateRevision: revision });
@@ -255,18 +258,40 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     const current = bookCursors.get(event.instrumentId);
     const sequence = bookSequence(event.sequence);
     const sequencePresent = event.sequence !== undefined;
+    const contiguous = event.sequencePolicy === "contiguous";
+    const reset = event.sequenceReset === true && contiguous && sequence !== undefined;
     if (current) {
       if (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp) return;
+      if (reset && event.sourceTimestamp <= current.sourceTimestamp) return;
+      if (current.gapped && !reset) {
+        if (sequence !== undefined && (current.sequence === undefined || sequence > current.sequence)) {
+          bookCursors.set(event.instrumentId, { ...current, eventId: event.eventId,
+            sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
+            sequencePresent, sequence });
+        }
+        return;
+      }
       // A sequence regression is stale even if transport receive time advances.
       // Once a feed provides sequence, an unsequenced snapshot cannot silently
       // reset it; a new feed epoch needs an explicit version/reset contract.
-      if (current.sequencePresent && !sequencePresent ||
-          current.sequence !== undefined && sequence !== undefined && sequence <= current.sequence) return;
-      if (event.sourceTimestamp === current.sourceTimestamp &&
+      if (!reset && (current.sequencePresent && !sequencePresent ||
+          current.sequence !== undefined && sequence !== undefined && sequence <= current.sequence)) return;
+      if (!reset && event.sourceTimestamp === current.sourceTimestamp &&
           (current.sequencePresent !== sequencePresent ||
            current.sequencePresent && current.sequence === undefined && sequence !== undefined ||
            (current.sequence === undefined || sequence === undefined) &&
              event.receivedTimestamp < current.receivedTimestamp)) return;
+      if (!reset && current.contiguous && contiguous && current.sequence !== undefined && sequence !== undefined &&
+          sequence > current.sequence + 1n) {
+        const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+        const revision = underlying ? await bump(underlying) : undefined;
+        if (revision !== undefined) expireBook(event.instrumentId, revision, "BOOK_SEQUENCE_GAP");
+        books.delete(event.instrumentId);
+        bookCursors.set(event.instrumentId, { eventId: event.eventId, sourceTimestamp: event.sourceTimestamp,
+          receivedTimestamp: event.receivedTimestamp, sequencePresent, sequence, contiguous: true, gapped: true });
+        if (underlying) schedule(underlying);
+        return;
+      }
     }
     const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
     const revision = underlying ? await bump(underlying) : undefined;
@@ -275,7 +300,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
       // An opaque sequence invalidates the book but cannot erase the last
       // comparable sequence; otherwise a stale numeric snapshot could revive it.
-      sequencePresent, sequence: sequence ?? current?.sequence });
+      sequencePresent, sequence: sequence ?? current?.sequence, contiguous, gapped: false });
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
     if (underlying) schedule(underlying);

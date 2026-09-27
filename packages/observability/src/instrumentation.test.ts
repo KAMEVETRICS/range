@@ -1,11 +1,12 @@
 import { expect, it } from "vitest";
 import { InMemoryEventBus } from "../../event-bus/src/index.js";
+import { VenueHealthSchema } from "../../domain/src/index.js";
 import { createTelemetry, instrumentEventBus } from "./index.js";
 
 function health(connectionState: "connected" | "degraded" | "reconnecting") {
-  return { venue: "venue_a", connectionState, lastEventAgeMs: 1, clockSkewMs: 0,
+  return VenueHealthSchema.parse({ venue: "venue_a", connectionState, lastEventAgeMs: 1, clockSkewMs: 0,
     sequenceIntegrity: "consistent" as const, rateLimit: { state: "healthy" as const },
-    capabilityChanges: [], errorCounters: {} };
+    capabilityChanges: [], errorCounters: {} });
 }
 
 it("counts only a recovery after a previously connected venue disconnects", async () => {

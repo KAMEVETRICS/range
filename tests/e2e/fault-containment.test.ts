@@ -31,18 +31,21 @@ function registry() {
   return value;
 }
 
-function observation(id: string, venue: string, eventId: string, bid: string, ask: string, sequence?: number) {
+function observation(id: string, venue: string, eventId: string, bid: string, ask: string, sequence?: string | number,
+  sequencePolicy?: "contiguous", sequenceReset?: true) {
   return {
     eventId, schemaVersion: 1, venue, instrumentId: id, transport: "websocket" as const,
     sourceTimestamp: NOW - 10, receivedTimestamp: NOW - 5, freshnessBudgetMs: 2_000,
     qualityFlags: [], rawPayloadRefOrHash: `sha256:${eventId}`, eligibility: "live" as const,
     ...(sequence === undefined ? {} : { sequence }),
+    ...(sequencePolicy === undefined ? {} : { sequencePolicy }),
+    ...(sequenceReset === undefined ? {} : { sequenceReset }),
     payload: { kind: "order_book" as const, bids: [{ price: bid, quantity: "20" }],
       asks: [{ price: ask, quantity: "20" }], capacityUsd: "2000" },
   };
 }
 
-async function publishInputs(bus: InMemoryEventBus) {
+async function publishInputs(bus: InMemoryEventBus, validatedSequence = false) {
   for (const [venue, id] of [["venue_a", "ins_a"], ["venue_b", "ins_b"]] as const) {
     await bus.publish("venue.health.v1", venue, { venue, connectionState: "connected", lastEventAgeMs: 10,
       clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} });
@@ -53,7 +56,8 @@ async function publishInputs(bus: InMemoryEventBus) {
         rate: "0.0001", positiveRatePayer: "long", intervalMs: 28_800_000, nextSettlementMs: NOW + 1_000 },
     });
   }
-  await bus.publish("book.state.v1", "ins_a", observation("ins_a", "venue_a", "evt_book_a", "99", "100", 100));
+  await bus.publish("book.state.v1", "ins_a", observation("ins_a", "venue_a", "evt_book_a", "99", "100", 100,
+    validatedSequence ? "contiguous" : undefined, validatedSequence ? true : undefined));
   await bus.publish("book.state.v1", "ins_b", observation("ins_b", "venue_b", "evt_book_b", "125", "126", 100));
 }
 
@@ -113,29 +117,33 @@ describe("assembled fault containment", () => {
       requestedNotionalUsd: "1000", minimumNotionalUsd: "100", holdingHorizonMs: 2_000,
       feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
       financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" });
-    await publishInputs(bus);
+    await publishInputs(bus, true);
     await worker.flush();
     const actionable = seen.find(item => item.status === "actionable");
     expect(actionable).toBeDefined();
 
-    // A deterministic feed gate derives health from the actual discontinuity;
-    // the invalid delta never reaches canonical book state.
-    let previousSequence = 100;
-    const acceptDelta = async (sequence: number) => {
-      if (sequence !== previousSequence + 1) {
-        await bus.publish("venue.health.v1", "venue_a", { venue: "venue_a", connectionState: "degraded", lastEventAgeMs: 10,
-          clockSkewMs: 0, sequenceIntegrity: "gap", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} });
-        return;
-      }
-      previousSequence = sequence;
-      await bus.publish("book.state.v1", "ins_a", observation("ins_a", "venue_a", `evt_delta_${sequence}`, "99", "100", sequence));
-    };
-    await acceptDelta(102);
+    await bus.publish("book.state.v1", "ins_a",
+      observation("ins_a", "venue_a", "evt_gap_102", "99", "100", 102, "contiguous"));
     await worker.flush();
 
     expect(seen).toContainEqual(expect.objectContaining({ opportunityId: actionable!.opportunityId,
       status: "expired", rejectionReasons: expect.arrayContaining(["BOOK_SEQUENCE_GAP"]) }));
-    expect(telemetry.metrics.value("range_book_sequence_gaps_total", { venue: "venue_a" })).toBe(1);
+    const blockedAt = seen.length;
+    const gapRevision = worker.currentRevision("equity:TSLA");
+    await bus.publish("book.state.v1", "ins_a",
+      observation("ins_a", "venue_a", "evt_opaque_during_gap", "99", "100", "opaque", "contiguous"));
+    await bus.publish("book.state.v1", "ins_a",
+      observation("ins_a", "venue_a", "evt_still_gapped_103", "99", "100", 103, "contiguous"));
+    await worker.flush();
+    expect(worker.currentRevision("equity:TSLA")).toBe(gapRevision);
+    expect(seen.slice(blockedAt).some(item => item.status === "actionable")).toBe(false);
+
+    await bus.publish("book.state.v1", "ins_a", {
+      ...observation("ins_a", "venue_a", "evt_clean_reset", "99", "100", 1, "contiguous", true),
+      sourceTimestamp: NOW - 9, receivedTimestamp: NOW - 4,
+    });
+    await worker.flush();
+    expect(seen.slice(blockedAt).some(item => item.status === "actionable")).toBe(true);
     await worker.stop();
   });
 });

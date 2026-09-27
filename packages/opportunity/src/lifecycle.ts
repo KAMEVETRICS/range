@@ -4,6 +4,7 @@ export interface OpportunityLifecycle {
   current(nowMs?: number): Opportunity;
   onCapabilityWithdrawal(instrumentId: string): Opportunity;
   onQuoteWithdrawal(instrumentId: string): Opportunity;
+  onSequenceGap(instrumentId: string): Opportunity;
   onVenueHealth(health: VenueHealth): Opportunity;
   onMappingWithdrawal(underlyingId: string): Opportunity;
 }
@@ -28,6 +29,10 @@ export function activeLifecycle(initial: Opportunity): OpportunityLifecycle {
     },
     onQuoteWithdrawal(instrumentId) {
       if (record.legs.some(leg => leg.instrumentId === instrumentId)) expire("STALE_INPUT");
+      return structuredClone(record);
+    },
+    onSequenceGap(instrumentId) {
+      if (record.legs.some(leg => leg.instrumentId === instrumentId)) expire("BOOK_SEQUENCE_GAP");
       return structuredClone(record);
     },
     onVenueHealth(health) {

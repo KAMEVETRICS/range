@@ -201,7 +201,7 @@ export class ConnectorRuntime {
     }
     this.lastReceivedAtMs = receivedTimestamp;
     this.lastClockSkewMs = clockSkewMs(event.sourceTimestampMs, receivedTimestamp);
-    this.trackSequence(event);
+    const sequenceReset = this.trackSequence(event);
     if (this.lastClockSkewMs > this.maxClockSkewMs) {
       this.quarantined = true;
       await this.transition("quarantined");
@@ -216,6 +216,8 @@ export class ConnectorRuntime {
       venue: this.options.adapter.venue,
       instrumentId: event.instrumentId,
       ...(event.sequence === undefined ? {} : { sequence: event.sequence }),
+      ...(event.sequencePolicy === undefined ? {} : { sequencePolicy: event.sequencePolicy }),
+      ...(sequenceReset ? { sequenceReset: true as const } : {}),
       transport: event.transport,
       sourceTimestamp: event.sourceTimestampMs,
       receivedTimestamp,
@@ -230,12 +232,13 @@ export class ConnectorRuntime {
     await this.options.eventBus.publish("market.observation.v1", `${this.options.adapter.venue}:${event.instrumentId}`, observation);
   }
 
-  private trackSequence(event: RawVenueEvent): void {
-    if (typeof event.sequence !== "number") return;
+  private trackSequence(event: RawVenueEvent): boolean {
+    if (event.sequencePolicy !== "contiguous" || typeof event.sequence !== "number") return false;
     const prior = this.sequences.get(event.instrumentId);
-    if (prior !== undefined && event.sequence > prior + 1) this.sequenceIntegrity = "gap";
+    if (prior !== undefined && event.sequence !== prior + 1) this.sequenceIntegrity = "gap";
     else if (this.sequenceIntegrity === "unknown") this.sequenceIntegrity = "consistent";
     this.sequences.set(event.instrumentId, event.sequence);
+    return prior === undefined;
   }
 
   private async degrade(error: unknown): Promise<void> {

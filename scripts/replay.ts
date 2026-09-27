@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { ReplayRunner, type ReplayEvent } from "../packages/storage/src/replay.js";
 import type { WorkerPolicy } from "../apps/opportunity-worker/src/main.js";
-import type { MetricRegistry } from "../packages/observability/src/metrics.js";
+import { MetricRegistry } from "../packages/observability/src/metrics.js";
 
 export function parseReplayArgs(args: string[]) {
   const options: Record<string, string | boolean> = { "calculation-version": "calc.v1" };
@@ -31,7 +31,7 @@ export function parseReplayArgs(args: string[]) {
   };
 }
 
-export async function runReplayCli(args: string[], telemetry: { metrics?: MetricRegistry } = {}): Promise<number> {
+export async function runReplayCli(args: string[]): Promise<number> {
   const options = parseReplayArgs(args);
   const lines = (await readFile(options.fixture, "utf8")).split(/\r?\n/).filter(line => line.trim() && !line.trimStart().startsWith("#"));
   const records = lines.map((line, index) => {
@@ -44,10 +44,12 @@ export async function runReplayCli(args: string[], telemetry: { metrics?: Metric
   }
   const policy = policyRecord.policy as unknown as WorkerPolicy;
   const result = await new ReplayRunner(policy).run(records as unknown as ReplayEvent[], options.calculationVersion, options.filter);
-  if (result.drift.length) telemetry.metrics?.increment("range_replay_drift_total", {}, result.drift.length);
+  const metrics = new MetricRegistry();
+  metrics.increment("range_replay_drift_total", {}, result.drift.length);
   console.log(JSON.stringify({ dryRun: options.dryRun, inputCount: result.inputCount,
     opportunityCount: result.opportunities.length, evidenceCount: result.evidence.length,
-    driftCount: result.drift.length, drift: result.drift }, null, 2));
+    driftCount: result.drift.length, drift: result.drift,
+    metrics: { range_replay_drift_total: metrics.value("range_replay_drift_total") } }, null, 2));
   return result.drift.length ? 1 : 0;
 }
 

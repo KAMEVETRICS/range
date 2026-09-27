@@ -25,6 +25,8 @@ export interface RawVenueEvent {
   readonly instrumentId: string;
   readonly sourceTimestampMs: number;
   readonly sequence?: string | number;
+  /** Declared only by adapters whose stream contract proves adjacent values. */
+  readonly sequencePolicy?: "contiguous";
   readonly transport: "websocket" | "rest" | "replay";
   readonly freshnessBudgetMs: number;
   readonly qualityFlags: readonly string[];

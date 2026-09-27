@@ -150,6 +150,36 @@ it("reconnects after a stream disconnect and snapshots before the replacement se
   expect(healthEvents.slice(degraded + 1).some(event => event.connectionState === "connected" && event.rateLimit.state === "healthy")).toBe(true);
 });
 
+it("marks the first validated numeric sequence in a recovered stream as an explicit reset snapshot", async () => {
+  const bus = new InMemoryEventBus();
+  const marketEvents = await published(bus, "market.observation.v1");
+  const adapter = fakeAdapter();
+  adapter.stream = async function* () {
+    yield { ...snapshot(), transport: "websocket", sequence: 42,
+      sequencePolicy: "contiguous", payload: { kind: "order_book", bids: [], asks: [], capacityUsd: "0" } };
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+
+  await runtime.runUntilDisconnected();
+
+  const sequenced = marketEvents.find(event => event.sequence === 42)!;
+  expect(sequenced).toMatchObject({ sequencePolicy: "contiguous", sequenceReset: true });
+});
+
+it("does not infer contiguous semantics for unvalidated numeric full snapshots", async () => {
+  const bus = new InMemoryEventBus();
+  const adapter = fakeAdapter();
+  adapter.stream = async function* () {
+    yield { ...snapshot(), transport: "websocket", sequence: 100 };
+    yield { ...snapshot(), eventId: "evt_jump", transport: "websocket", sequence: 102 };
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+
+  await runtime.runUntilDisconnected();
+
+  expect(runtime.health().sequenceIntegrity).not.toBe("gap");
+});
+
 it("publishes degraded rate-limit health before Retry-After and healthy recovery afterwards", async () => {
   const bus = new InMemoryEventBus();
   const healthEvents = await published(bus, "venue.health.v1");
