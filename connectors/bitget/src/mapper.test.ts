@@ -27,6 +27,13 @@ it("accepts the live unknown launchTime \"0\" without inventing a launch date", 
   expect(mapBitgetInstruments(input).map(i => i.instrumentId)).not.toContain("ins_bitget_USDT-FUTURES_AAPLUSDT");
 });
 
+it("skips a live listing whose symbol cannot form a Range instrument ID instead of failing discovery", () => {
+  const input = fixture("instruments");
+  input.data.push({ ...input.data[1], symbol: "龙虾USDT", baseCoin: "龙虾", symbolType: "crypto" });
+  expect(mapBitgetInstruments(input).map(i => i.instrumentId)).toEqual(
+    ["ins_bitget_SPOT_RAAPLUSDT", "ins_bitget_USDT-FUTURES_AAPLUSDT", "ins_bitget_SPOT_AAPLXUSDT"]);
+});
+
 it("retains REST current funding evidence without inventing a settlement time or canonical funding event", () => {
   const instruments = mapBitgetInstruments(fixture("instruments"));
   const result = mapBitgetTickers(fixture("tickers"), instruments);

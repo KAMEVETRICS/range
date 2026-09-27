@@ -65,7 +65,8 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
     if (row.isRwa === "YES") capabilities.push("isRwa=YES", "tokenized_stock");
     if (row.symbolType === "stock") capabilities.push("symbolType=stock", "tokenized_stock");
     if (row.isReality === "yes") capabilities.push("isReality=yes", "tokenized_stock", "reality_raw_book=access_pending");
-    return [InstrumentSchema.parse({
+    // A listing Range cannot represent (e.g. non-ASCII symbols) is excluded alone rather than failing discovery.
+    const instrument = InstrumentSchema.safeParse({
       instrumentId: `ins_bitget_${row.category}_${row.symbol}`, underlyingId: `bitget:${row.baseCoin}`,
       venue: "bitget", venueFamily: row.category, venueSymbol: row.symbol,
       productType: spot ? "tokenized_spot" : "perpetual",
@@ -76,7 +77,8 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
       tradingSchedule: { timezone: "UTC", sessions: [{ daysOfWeek: [1,2,3,4,5,6,7], opensAt: "00:00", closesAt: "23:59" }] },
       capabilities: [...new Set(capabilities)], metadataVersion: 1,
       effectiveFrom: new Date(effectiveFromMs).toISOString(), ...(spot ? {} : { fundingInterval: interval }),
-    })];
+    });
+    return instrument.success ? [instrument.data] : [];
     });
   });
 }
