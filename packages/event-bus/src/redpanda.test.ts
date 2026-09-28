@@ -34,6 +34,7 @@ const delivery = (value: string | null, traceId = "9ca8b23b-0d61-4a91-a2d7-00000
   heartbeat: async () => {}, pause: () => () => {},
 });
 const receive = () => broker.consumer.run.mock.calls[0]![0].eachMessage as (message: EachMessagePayload) => Promise<void>;
+const settled = () => new Promise(resolve => setTimeout(resolve, 0));
 
 it("publishes validated messages with keyed ordering and idempotence", async () => {
   const transport = bus();
@@ -45,19 +46,22 @@ it("publishes validated messages with keyed ordering and idempotence", async () 
   await transport.close();
 });
 
-it("commits the next exact offset only after the handler succeeds", async () => {
+it("batches commits through KafkaJS and resolves a message only after its handler succeeds", async () => {
   const transport = bus();
   let release!: () => void;
   const blocked = new Promise<void>(resolve => { release = resolve; });
   const seen: unknown[] = [];
   const stop = await transport.subscribe("market.observation.v1", "test", async event => { seen.push(event); await blocked; });
-  const processing = receive()(delivery(JSON.stringify(observation(1))));
-  expect(broker.consumer.run.mock.calls[0]![0]).toMatchObject({ autoCommit: false });
-  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  expect(broker.consumer.run.mock.calls[0]![0]).toMatchObject({ autoCommit: true, autoCommitInterval: 1_000, autoCommitThreshold: 1_000 });
+  let resolved = false;
+  const processing = receive()(delivery(JSON.stringify(observation(1)))).then(() => { resolved = true; });
+  await settled();
+  expect(resolved).toBe(false);
   release();
   await processing;
   expect(seen).toEqual([observation(1)]);
-  expect(broker.consumer.commitOffsets).toHaveBeenCalledWith([{ topic: "market.observation.v1", partition: 2, offset: "9007199254740994" }]);
+  // KafkaJS resolves and commits the offset once eachMessage succeeds; the bus never commits per message itself.
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
   await stop();
   await stop();
   expect(broker.consumer.disconnect).toHaveBeenCalledTimes(1);
@@ -77,16 +81,17 @@ it.each([
   ['{"apiSecret":"NEVER_LOG"}', "INVALID_SCHEMA"],
   ['{"apiSecret":"NEVER_LOG"', "INVALID_JSON"],
   [null, "INVALID_JSON"],
-])("quarantines an invalid consumed payload and commits only after durable dead-letter send", async (raw, code) => {
+])("quarantines an invalid consumed payload and resolves it only after durable dead-letter send", async (raw, code) => {
   const transport = bus();
   const handler = vi.fn();
   await transport.subscribe("market.observation.v1", "test", handler);
   let release!: () => void;
   broker.producer.send.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
-  const processing = receive()(delivery(raw));
+  let resolved = false;
+  const processing = receive()(delivery(raw)).then(() => { resolved = true; });
   await vi.waitFor(() => expect(broker.producer.send).toHaveBeenCalledTimes(1));
   expect(handler).not.toHaveBeenCalled();
-  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  expect(resolved).toBe(false);
   const sent = broker.producer.send.mock.calls[0]![0];
   expect(sent.topic).toBe("range.dead-letter.v1");
   expect(JSON.parse(sent.messages[0].value)).toEqual({
@@ -97,7 +102,8 @@ it.each([
   expect(JSON.stringify(sent)).not.toContain("NEVER_LOG");
   release();
   await processing;
-  expect(broker.consumer.commitOffsets).toHaveBeenCalledTimes(1);
+  expect(resolved).toBe(true);
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
   await transport.close();
 });
 

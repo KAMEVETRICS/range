@@ -4,8 +4,9 @@ import type { EventBus } from "./event-bus.js";
 import type { Topic, TopicPayload } from "./topics.js";
 import { deadLetter, decodeEvent, encodeEvent, InvalidEventError, payloadBytes } from "./validation.js";
 
-/** At-least-once consumption: make handlers idempotent. A successful handler
- * precedes its offset commit; an intervening crash may replay that event.
+/** At-least-once consumption: make handlers idempotent. An offset is committed
+ * only after its handler succeeds, in batches, so a crash may replay up to about
+ * a second of already-handled events.
  */
 export class RedpandaEventBus implements EventBus {
   private readonly kafka: Kafka;
@@ -43,8 +44,10 @@ export class RedpandaEventBus implements EventBus {
       await consumer.connect();
       await consumer.subscribe({ topic, fromBeginning: true });
       await consumer.run({
-        autoCommit: false,
-        eachMessage: async ({ partition, message }) => {
+        // KafkaJS resolves an offset only once eachMessage succeeds, and commits resolved offsets at the end of
+        // each fetched batch or every second / 1,000 messages. A failed message is never resolved, so it retries.
+        autoCommit: true, autoCommitInterval: 1_000, autoCommitThreshold: 1_000,
+        eachMessage: async ({ message }) => {
           let event: TopicPayload[T];
           try { event = decodeEvent(topic, message.value); }
           catch (error) {
@@ -54,13 +57,11 @@ export class RedpandaEventBus implements EventBus {
             await this.publish("range.dead-letter.v1", message.key?.toString() ?? "", deadLetter(
               topic, message.key?.toString() ?? "", message.value, error, traceId,
             ));
-            await consumer.commitOffsets([{ topic, partition, offset: (BigInt(message.offset) + 1n).toString() }]);
             return;
           }
           // Handler errors are transient unless a future explicit contract says
           // otherwise. Let KafkaJS retry; never commit or quarantine them here.
           await handler(event);
-          await consumer.commitOffsets([{ topic, partition, offset: (BigInt(message.offset) + 1n).toString() }]);
         },
       });
     } catch (error) {

@@ -53,3 +53,34 @@ it("replays one key in order after restarting the consumer with a new group", as
     finally { await container.stop(); }
   }
 }, 180_000);
+
+it("commits handled offsets in batches so a restarted member of the same group resumes after them", async () => {
+  const container = await new RedpandaContainer("docker.redpanda.com/redpandadata/redpanda:v26.2.3")
+    .withStartupTimeout(120_000).start();
+  const config = { clientId: "range-contract", brokers: [container.getBootstrapServers()], logLevel: logLevel.NOTHING };
+  const admin = new Kafka(config).admin();
+  const first = new RedpandaEventBus(config);
+  const resumed = new RedpandaEventBus(config);
+  try {
+    await admin.connect();
+    await admin.createTopics({ topics: [
+      { topic: "market.observation.v1", numPartitions: 1, replicationFactor: 1 },
+      { topic: "range.dead-letter.v1", numPartitions: 1, replicationFactor: 1 },
+    ] });
+    const seen: (number | string | undefined)[] = [];
+    await first.subscribe("market.observation.v1", "resume", async event => { seen.push(event.sequence); });
+    for (const sequence of [1, 2, 3]) await first.publish("market.observation.v1", "bitget:RAAPLUSDT", observation(sequence));
+    await vi.waitFor(() => expect(seen).toEqual([1, 2, 3]), { timeout: 30_000 });
+    await first.close();
+    const [committed] = await admin.fetchOffsets({ groupId: "resume", topics: ["market.observation.v1"] });
+    expect(committed!.partitions).toEqual([expect.objectContaining({ partition: 0, offset: "3" })]);
+
+    for (const sequence of [4, 5]) await resumed.publish("market.observation.v1", "bitget:RAAPLUSDT", observation(sequence));
+    const later: (number | string | undefined)[] = [];
+    await resumed.subscribe("market.observation.v1", "resume", async event => { later.push(event.sequence); });
+    await vi.waitFor(() => expect(later).toEqual([4, 5]), { timeout: 30_000 });
+  } finally {
+    try { await Promise.allSettled([first.close(), resumed.close(), admin.disconnect()]); }
+    finally { await container.stop(); }
+  }
+}, 180_000);
