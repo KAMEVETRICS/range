@@ -115,6 +115,23 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     generations.set(underlyingId, revision);
     return revision;
   };
+  const bumpMany = async (underlyingIds: readonly string[]) => {
+    if (!underlyingIds.length) return;
+    let revisions: ReadonlyMap<string, number>;
+    try {
+      revisions = await revisionAuthority.advanceMany(underlyingIds);
+      for (const underlyingId of underlyingIds) {
+        const revision = revisions.get(underlyingId);
+        if (revision === undefined || !Number.isSafeInteger(revision) || revision <= revisionOf(underlyingId)) {
+          throw new Error(`Revision authority returned a non-increasing revision for ${underlyingId}`);
+        }
+      }
+    } catch (error) {
+      authorityFailed = true;
+      throw new Error("Revision authority unavailable");
+    }
+    for (const underlyingId of underlyingIds) generations.set(underlyingId, revisions.get(underlyingId)!);
+  };
   const publish = async (opportunity: Opportunity) => {
     await bus.publish("opportunity.v1", opportunity.underlyingId, opportunity);
   };
@@ -342,7 +359,9 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         affected.add(current.underlyingId);
       }
     }
-    for (const underlying of affected) { await bump(underlying); schedule(underlying); }
+    // One durable statement for the whole fan-out; a venue can carry thousands of underlyings.
+    await bumpMany([...affected]);
+    for (const underlying of affected) schedule(underlying);
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
       if (before.status !== "actionable" || !before.legs.some(leg => registry.identityOf(leg.instrumentId)?.venue === event.venue)) continue;

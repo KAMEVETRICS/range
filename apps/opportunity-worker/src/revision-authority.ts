@@ -6,6 +6,8 @@
 export interface RevisionAuthority {
   readonly kind: "durable" | "volatile";
   advance(underlyingId: string): Promise<number>;
+  /** Advances each distinct underlying exactly once, atomically (all or none), and returns the new revisions. */
+  advanceMany(underlyingIds: readonly string[]): Promise<ReadonlyMap<string, number>>;
   read(underlyingId: string): Promise<number>;
 }
 
@@ -18,6 +20,12 @@ export function createInMemoryRevisionAuthority(): RevisionAuthority {
       const revision = (revisions.get(underlyingId) ?? 0) + 1;
       revisions.set(underlyingId, revision);
       return revision;
+    },
+    async advanceMany(underlyingIds) {
+      const advanced = new Map<string, number>();
+      for (const underlyingId of new Set(underlyingIds)) advanced.set(underlyingId, (revisions.get(underlyingId) ?? 0) + 1);
+      for (const [underlyingId, revision] of advanced) revisions.set(underlyingId, revision);
+      return advanced;
     },
     async read(underlyingId) { return revisions.get(underlyingId) ?? 0; },
   };

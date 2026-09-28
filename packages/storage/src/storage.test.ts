@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import Redis from "ioredis-mock";
 import { DataType, newDb } from "pg-mem";
 import { CurrentStateStore, type RedisCommands } from "./current-state.js";
@@ -134,6 +134,20 @@ describe("Postgres history and revision authority", () => {
     expect(await Promise.all([first.advance("equity:A"), second.advance("equity:A")])).toEqual([1, 2]);
     expect(await new PostgresRevisionAuthority(pool).read("equity:A")).toBe(2);
     expect(await second.advance("equity:B")).toBe(1);
+    await pool.end();
+  });
+
+  it("advances every distinct underlying exactly once in one statement", async () => {
+    const pool = await database();
+    const authority = new PostgresRevisionAuthority(pool);
+    await authority.advance("equity:A");
+    const query = vi.spyOn(pool, "query");
+    const advanced = await authority.advanceMany(["equity:B", "equity:A", "equity:B"]);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(Object.fromEntries(advanced)).toEqual({ "equity:A": 2, "equity:B": 1 });
+    expect(await authority.read("equity:A")).toBe(2);
+    expect(await authority.read("equity:B")).toBe(1);
+    expect(await authority.advanceMany([])).toEqual(new Map());
     await pool.end();
   });
 

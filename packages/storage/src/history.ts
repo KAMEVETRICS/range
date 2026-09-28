@@ -34,6 +34,18 @@ export class PostgresRevisionAuthority implements RevisionAuthority {
       ON CONFLICT (underlying_id) DO UPDATE SET revision = accepted_revisions.revision + 1 RETURNING revision`, [underlyingId]);
     return this.revision(result.rows[0]?.revision);
   }
+  async advanceMany(underlyingIds: readonly string[]): Promise<ReadonlyMap<string, number>> {
+    // Sorted and distinct: one row per underlying, taken in a stable lock order. One autocommitted statement
+    // advances every revision or none, like advance.
+    const ids = [...new Set(underlyingIds)].sort();
+    if (!ids.length) return new Map();
+    const result = await this.sql.query(`INSERT INTO accepted_revisions(underlying_id, revision)
+      VALUES ${ids.map((_, index) => `($${index + 1}, 1)`).join(", ")}
+      ON CONFLICT (underlying_id) DO UPDATE SET revision = accepted_revisions.revision + 1 RETURNING underlying_id, revision`, ids);
+    const advanced = new Map(result.rows.map(row => [String(row.underlying_id), this.revision(row.revision)]));
+    if (ids.some(id => !advanced.has(id))) throw new Error("Invalid accepted revision");
+    return advanced;
+  }
   async read(underlyingId: string): Promise<number> {
     const result = await this.sql.query("SELECT revision FROM accepted_revisions WHERE underlying_id = $1", [underlyingId]);
     return result.rows.length ? this.revision(result.rows[0].revision) : 0;

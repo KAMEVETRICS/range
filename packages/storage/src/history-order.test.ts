@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool, type PoolClient } from "pg";
 import { parseEvent } from "@range/event-bus";
-import { HistoryStore, type SqlClient, type SqlPool, type StoredEvent } from "./history.js";
+import { HistoryStore, PostgresRevisionAuthority, type SqlClient, type SqlPool, type StoredEvent } from "./history.js";
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -155,4 +155,27 @@ describe("commit-ordered history cursor", () => {
       await admin.end();
     }
   });
+});
+
+it.skipIf(!process.env.RANGE_TEST_DATABASE_URL)("advances many revisions atomically in real Postgres", async () => {
+  const schema = `range_revisions_${randomUUID().replaceAll("-", "")}`;
+  const admin = new Pool({ connectionString: process.env.RANGE_TEST_DATABASE_URL });
+  await admin.query(`CREATE SCHEMA "${schema}"`);
+  const pool = new Pool({ connectionString: process.env.RANGE_TEST_DATABASE_URL, options: `-c search_path=${schema},public` });
+  try {
+    await pool.query(await readFile(new URL("./migrations/0001_initial.sql", import.meta.url), "utf8"));
+    const authority = new PostgresRevisionAuthority(pool);
+    await authority.advance("equity:A");
+    const ids = Array.from({ length: 3_000 }, (_, index) => `equity:U${index}`);
+    const advanced = await authority.advanceMany([...ids, "equity:A", "equity:A"]);
+    expect(advanced.size).toBe(3_001);
+    expect(advanced.get("equity:A")).toBe(2);
+    expect(advanced.get("equity:U2999")).toBe(1);
+    expect(Object.fromEntries(await authority.advanceMany(["equity:A", "equity:U0"]))).toEqual({ "equity:A": 3, "equity:U0": 2 });
+    expect(await authority.read("equity:U1")).toBe(1);
+  } finally {
+    await pool.end();
+    await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
 });

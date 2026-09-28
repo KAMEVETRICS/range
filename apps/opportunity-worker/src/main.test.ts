@@ -67,6 +67,39 @@ async function publishEligibleInputs(bus: InMemoryEventBus) {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunity worker", () => {
+  it("advances every underlying affected by a venue health event in one authority call", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    for (let index = 0; index < 5; index++) {
+      registry.upsert({ ...instrument(`ins_x_${index}`, "venue_x"), underlyingId: `equity:X${index}` });
+    }
+    const backing = createInMemoryRevisionAuthority();
+    const calls = { advance: [] as string[], advanceMany: [] as string[][] };
+    const authority: RevisionAuthority = {
+      kind: "volatile",
+      advance: async underlyingId => { calls.advance.push(underlyingId); return backing.advance(underlyingId); },
+      advanceMany: async underlyingIds => { calls.advanceMany.push([...underlyingIds]); return backing.advanceMany(underlyingIds); },
+      read: underlyingId => backing.read(underlyingId),
+    };
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority });
+    const underlyings = [0, 1, 2, 3, 4].map(index => `equity:X${index}`);
+    for (let index = 0; index < 5; index++) {
+      await bus.publish("book.state.v1", `ins_x_${index}`, book(`ins_x_${index}`, "venue_x", "100", `evt_x_${index}`) as never);
+    }
+    await worker.flush();
+    const before = underlyings.map(underlying => worker.currentRevision(underlying));
+    calls.advance.length = 0;
+
+    await bus.publish("venue.health.v1", "venue_x", { venue: "venue_x", connectionState: "degraded", lastEventAgeMs: 10,
+      clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
+    await worker.flush();
+
+    expect(calls.advance).toEqual([]);
+    expect(calls.advanceMany).toEqual([underlyings]);
+    expect(underlyings.map(underlying => worker.currentRevision(underlying))).toEqual(before.map(revision => revision + 1));
+    await worker.stop();
+  });
+
   it("evaluates and routes health without copying every unrelated instrument that has a book", async () => {
     const bus = new InMemoryEventBus();
     const seen: Opportunity[] = [];
@@ -183,11 +216,17 @@ describe("opportunity worker", () => {
     const registry = reviewedRegistry();
     const backing = createInMemoryRevisionAuthority();
     let failNext = false;
+    const advance = async (underlyingId: string) => {
+      if (failNext) { failNext = false; return Promise.reject(reason); }
+      return backing.advance(underlyingId);
+    };
     const authority: RevisionAuthority = {
       kind: "volatile",
-      async advance(underlyingId) {
-        if (failNext) { failNext = false; return Promise.reject(reason); }
-        return backing.advance(underlyingId);
+      advance,
+      async advanceMany(underlyingIds) {
+        const advanced = new Map<string, number>();
+        for (const underlyingId of underlyingIds) advanced.set(underlyingId, await advance(underlyingId));
+        return advanced;
       },
       read: underlyingId => backing.read(underlyingId),
     };
@@ -210,6 +249,7 @@ describe("opportunity worker", () => {
     const authority: RevisionAuthority = {
       kind: "durable",
       advance: async () => 1,
+      advanceMany: async underlyingIds => new Map(underlyingIds.map(underlyingId => [underlyingId, 1])),
       read: async () => Promise.reject(reason),
     };
     await expect(startOpportunityWorker(new InMemoryEventBus(), reviewedRegistry(), {
