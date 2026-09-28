@@ -13,7 +13,8 @@ export async function runConnectorService(adapter: ConnectorAdapter, env: NodeJS
     traceSink: env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const transport = new RedpandaEventBus({ clientId: `range-${adapter.venue}`, brokers });
   const eventBus = instrumentEventBus(transport, telemetry);
-  const runtime = new ConnectorRuntime({ adapter, eventBus, maxClockSkewMs: Number(env.RANGE_MAX_CLOCK_SKEW_MS ?? 5_000) });
+  const runtime = new ConnectorRuntime({ adapter, eventBus, maxClockSkewMs: Number(env.RANGE_MAX_CLOCK_SKEW_MS ?? 5_000),
+    publishRawEvents: env.RANGE_PUBLISH_RAW_EVENTS === "true" });
   const controller = new AbortController();
   const port = Number(env.HEALTH_PORT ?? 8081);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error("Invalid HEALTH_PORT");

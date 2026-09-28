@@ -29,7 +29,8 @@ never copied. Routing keys must be identifiers, never credentials. An invalid
 dead-letter message fails consumption without recursive quarantine.
 
 `market.raw.v1` carries observation metadata and `rawPayloadRefOrHash`, without
-a parsed payload. Raw bytes stay in object storage. Book and funding topics use
+a parsed payload. Connectors publish it only when `RANGE_PUBLISH_RAW_EVENTS=true`:
+nothing reads it until the raw archive exists. Raw bytes stay in object storage. Book and funding topics use
 the canonical observation envelope with their respective payload schemas. Health,
 opportunity, evidence, and intent topics reuse their canonical domain objects;
 `intent.lifecycle.v1` currently carries the unsigned intent domain contract.

@@ -239,6 +239,21 @@ it("keeps an in-session gap when another instrument starts its validated sequenc
   expect(runtime.health().sequenceIntegrity).toBe("gap");
 });
 
+it("publishes the raw-event copy only when enabled, since nothing reads it until the raw archive exists", async () => {
+  for (const publishRawEvents of [false, true]) {
+    const bus = new InMemoryEventBus();
+    const raw = await published(bus, "market.raw.v1");
+    const observations = await published(bus, "market.observation.v1");
+    const runtime = new ConnectorRuntime({ adapter: fakeAdapter(), eventBus: bus, nowMs: () => 10_000,
+      ...(publishRawEvents ? { publishRawEvents } : {}) });
+
+    await runtime.pollOnce();
+
+    expect(observations).toHaveLength(1);
+    expect(raw).toHaveLength(publishRawEvents ? 1 : 0);
+  }
+});
+
 it("republishes unchanged health as a heartbeat while events keep flowing", async () => {
   let now = 10_000;
   const bus = new InMemoryEventBus();

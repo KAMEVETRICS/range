@@ -63,14 +63,21 @@ function snapshotChannel(data: string): string | undefined {
 }
 
 /** Full books5 snapshots avoid incremental-book reconstruction and resync ambiguity. */
-export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => new WebSocket(url)): BitgetWebSocketPort {
+export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => new WebSocket(url),
+  options: { tickerIntervalMs?: number; nowMs?: () => number } = {}): BitgetWebSocketPort {
+  const tickerIntervalMs = options.tickerIntervalMs ?? 0;
+  const nowMs = options.nowMs ?? Date.now;
+  const intervalOf = (channel: string) => channel.split(":")[1] === "ticker" ? tickerIntervalMs : 0;
   return {
     async *stream(subscriptions, signal) {
       if (signal.aborted || !subscriptions.length) return;
       if (subscriptions.length > 3_960) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
       // Full snapshots supersede their predecessors, so a slow consumer receives each channel's newest state.
-      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones.
+      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones. Ticker channels
+      // (prices, funding) are also delivered at most once per tickerIntervalMs; order books are never held back.
       const pending = new Map<string, string>();
+      const deliveredAt = new Map<string, number>();
+      let dueTimer: ReturnType<typeof setTimeout> | undefined;
       let unconflated = 0;
       const cleanups: (() => void)[] = [];
       let wake: (() => void) | undefined;
@@ -123,18 +130,31 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
           });
         }
         while (!stopped) {
-          const next = pending.entries().next();
-          if (!next.done) {
-            pending.delete(next.value[0]);
-            yield next.value[1];
+          const now = nowMs();
+          let next: [string, string] | undefined;
+          let nextDueAt = Number.POSITIVE_INFINITY;
+          for (const entry of pending) {
+            const dueAt = (deliveredAt.get(entry[0]) ?? Number.NEGATIVE_INFINITY) + intervalOf(entry[0]);
+            if (dueAt <= now) { next = entry; break; }
+            nextDueAt = Math.min(nextDueAt, dueAt);
+          }
+          if (next) {
+            pending.delete(next[0]);
+            if (intervalOf(next[0]) > 0) deliveredAt.set(next[0], now);
+            yield next[1];
             continue;
           }
-          await new Promise<void>(resolve => { wake = resolve; });
+          await new Promise<void>(resolve => {
+            wake = resolve;
+            if (Number.isFinite(nextDueAt)) dueTimer = setTimeout(resolve, nextDueAt - now);
+          });
+          clearTimeout(dueTimer);
         }
         if (failure && !signal.aborted) throw failure;
       } catch (error) {
         if (!signal.aborted) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
       } finally {
+        clearTimeout(dueTimer);
         signal.removeEventListener("abort", onAbort);
         for (const cleanup of cleanups) cleanup();
       }

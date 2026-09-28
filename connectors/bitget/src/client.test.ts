@@ -114,3 +114,38 @@ it("still fails closed when messages that cannot be conflated exceed the queue b
   expect(socket.closed).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("caps each ticker channel to one delivery per interval, keeping its newest, while order books flow uncapped", async () => {
+  vi.useFakeTimers();
+  let clock = 0;
+  const advance = async (ms: number) => { clock += ms; await vi.advanceTimersByTimeAsync(ms); };
+  const controller = new AbortController();
+  const sockets: SocketDouble[] = [];
+  const transport = createBitgetPublicWebSocket(() => {
+    const socket = new SocketDouble("none");
+    sockets.push(socket);
+    return socket as unknown as WebSocket;
+  }, { tickerIntervalMs: 5_000, nowMs: () => clock });
+  const iterator = transport.stream([{ instType:"spot", topic:"ticker", symbol:"A" }], controller.signal)[Symbol.asyncIterator]();
+  const first = iterator.next();
+  const socket = sockets[0]!;
+  socket.emit("open");
+  socket.message(snapshotFrame("ticker", "A", 1));
+  expect((await first).value).toBe(snapshotFrame("ticker", "A", 1));
+
+  const second = iterator.next();
+  socket.message(snapshotFrame("ticker", "A", 2));
+  socket.message(snapshotFrame("books5", "A", 1));
+  expect((await second).value).toBe(snapshotFrame("books5", "A", 1));
+
+  let third: unknown;
+  void iterator.next().then(result => { third = result.value; });
+  await advance(1_000);
+  socket.message(snapshotFrame("ticker", "A", 3));
+  await advance(3_999);
+  expect(third).toBeUndefined();
+  await advance(1);
+  expect(third).toBe(snapshotFrame("ticker", "A", 3));
+  controller.abort();
+  expect(await iterator.next()).toEqual({ value: undefined, done: true });
+});

@@ -23,6 +23,8 @@ export interface ConnectorRuntimeOptions {
   readonly sleep?: (delayMs: number) => Promise<void>;
   /** Unchanged health is republished at least this often while events flow, so a restarted consumer relearns it. */
   readonly healthHeartbeatMs?: number;
+  /** market.raw.v1 has no reader until the raw archive exists, and publishing it doubled each event's broker writes. */
+  readonly publishRawEvents?: boolean;
 }
 
 type ConnectionState = VenueHealth["connectionState"];
@@ -232,8 +234,10 @@ export class ConnectorRuntime {
       eligibility: event.eligibility,
       payload: event.payload,
     });
-    const { payload: _payload, ...rawEvent } = observation;
-    await this.options.eventBus.publish("market.raw.v1", `${this.options.adapter.venue}:${event.instrumentId}`, rawEvent);
+    if (this.options.publishRawEvents) {
+      const { payload: _payload, ...rawEvent } = observation;
+      await this.options.eventBus.publish("market.raw.v1", `${this.options.adapter.venue}:${event.instrumentId}`, rawEvent);
+    }
     await this.options.eventBus.publish("market.observation.v1", `${this.options.adapter.venue}:${event.instrumentId}`, observation);
   }
 
