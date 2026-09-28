@@ -6,7 +6,7 @@ class SocketDouble {
   readonly listeners = new Map<string, Set<(event: unknown) => void>>();
   readonly sent: string[] = [];
   closed = false;
-  constructor(readonly failOn: "subscription" | "heartbeat") {}
+  constructor(readonly failOn: "subscription" | "heartbeat" | "none") {}
   addEventListener(type: string, listener: (event: unknown) => void) {
     const listeners = this.listeners.get(type) ?? new Set();
     listeners.add(listener);
@@ -14,8 +14,9 @@ class SocketDouble {
   }
   removeEventListener(type: string, listener: (event: unknown) => void) { this.listeners.get(type)?.delete(listener); }
   emit(type: string) { for (const listener of this.listeners.get(type) ?? []) listener({}); }
+  message(data: string) { for (const listener of this.listeners.get("message") ?? []) listener({ data }); }
   send(value: string) {
-    if ((value === "ping") === (this.failOn === "heartbeat")) throw new Error("sensitive-send-context");
+    if (this.failOn !== "none" && (value === "ping") === (this.failOn === "heartbeat")) throw new Error("sensitive-send-context");
     this.sent.push(value);
   }
   close() { this.closed = true; }
@@ -59,3 +60,57 @@ for (const failOn of ["subscription", "heartbeat"] as const) {
     }
   });
 }
+
+function singleSocketTransport(controller: AbortController) {
+  const sockets: SocketDouble[] = [];
+  const transport = createBitgetPublicWebSocket(() => {
+    const socket = new SocketDouble("none");
+    sockets.push(socket);
+    return socket as unknown as WebSocket;
+  });
+  const iterator = transport.stream([{ instType:"spot", topic:"ticker", symbol:"A" }], controller.signal)[Symbol.asyncIterator]();
+  return { sockets, iterator };
+}
+const snapshotFrame = (topic: string, symbol: string, n: number) =>
+  JSON.stringify({ action:"snapshot", arg:{ instType:"spot", topic, symbol }, data:[{ n }], ts:n });
+const updateFrame = (n: number) => JSON.stringify({ action:"update", arg:{ instType:"spot", topic:"books5", symbol:"A" }, data:[{ n }], ts:n });
+
+it("conflates full snapshots per channel so a slow consumer gets the newest state without overflowing", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const { sockets, iterator } = singleSocketTransport(controller);
+  const first = iterator.next();
+  const socket = sockets[0]!;
+  socket.emit("open");
+  socket.message(snapshotFrame("ticker", "A", 0));
+  socket.message(snapshotFrame("books5", "A", 0));
+  socket.message(updateFrame(1));
+  socket.message(updateFrame(2));
+  for (let n = 1; n <= 12_000; n++) socket.message(snapshotFrame("ticker", "A", n));
+  socket.message(snapshotFrame("ticker", "B", 0));
+
+  const delivered = [(await first).value];
+  for (let index = 0; index < 4; index++) delivered.push((await iterator.next()).value);
+  expect(delivered).toEqual([snapshotFrame("ticker", "A", 12_000), snapshotFrame("books5", "A", 0),
+    updateFrame(1), updateFrame(2), snapshotFrame("ticker", "B", 0)]);
+
+  const later = iterator.next();
+  socket.message(snapshotFrame("ticker", "A", 12_001));
+  expect((await later).value).toBe(snapshotFrame("ticker", "A", 12_001));
+  controller.abort();
+  expect(await iterator.next()).toEqual({ value: undefined, done: true });
+});
+
+it("still fails closed when messages that cannot be conflated exceed the queue bound", async () => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const { sockets, iterator } = singleSocketTransport(controller);
+  const outcome = iterator.next().then(value => ({ value, error: undefined }), (error: unknown) => ({ value: undefined, error }));
+  const socket = sockets[0]!;
+  socket.emit("open");
+  for (let n = 0; n <= 10_000; n++) socket.message(updateFrame(n));
+
+  expect((await outcome).error).toMatchObject({ code: "ADAPTER_FAILURE" });
+  expect(socket.closed).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});

@@ -51,13 +51,27 @@ export interface BitgetSubscription { instType: string; topic: "ticker" | "books
 export interface BitgetWebSocketPort { stream(subscriptions: readonly BitgetSubscription[], signal: AbortSignal): AsyncIterable<unknown> }
 type SocketFactory = (url: string) => WebSocket;
 
+/** Channel identity of a full books5/ticker snapshot; any other message is never conflated. */
+function snapshotChannel(data: string): string | undefined {
+  try {
+    const frame = JSON.parse(data) as { action?: unknown; arg?: { instType?: unknown; topic?: unknown; symbol?: unknown } };
+    const arg = frame.arg;
+    if (frame.action !== "snapshot" || typeof arg?.instType !== "string" || typeof arg.topic !== "string"
+      || typeof arg.symbol !== "string") return undefined;
+    return `${arg.instType}:${arg.topic}:${arg.symbol}`;
+  } catch { return undefined; }
+}
+
 /** Full books5 snapshots avoid incremental-book reconstruction and resync ambiguity. */
 export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => new WebSocket(url)): BitgetWebSocketPort {
   return {
     async *stream(subscriptions, signal) {
       if (signal.aborted || !subscriptions.length) return;
       if (subscriptions.length > 3_960) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
-      const queue: unknown[] = [];
+      // Full snapshots supersede their predecessors, so a slow consumer receives each channel's newest state.
+      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones.
+      const pending = new Map<string, string>();
+      let unconflated = 0;
       const cleanups: (() => void)[] = [];
       let wake: (() => void) | undefined;
       let failure: ConnectorDiagnosticError | undefined;
@@ -90,8 +104,10 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
           };
           const onMessage = (message: MessageEvent) => {
             if (message.data === "pong") { awaitingPong = false; return; }
-            if (typeof message.data !== "string" || queue.length >= 10_000) { stop(true); return; }
-            queue.push(message.data);
+            if (typeof message.data !== "string") { stop(true); return; }
+            const key = snapshotChannel(message.data) ?? `unconflated:${unconflated++}`;
+            if (!pending.has(key) && pending.size >= 10_000) { stop(true); return; }
+            pending.set(key, message.data);
             wake?.();
           };
           const onFailure = () => stop(true);
@@ -107,7 +123,12 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
           });
         }
         while (!stopped) {
-          if (queue.length) { yield queue.shift(); continue; }
+          const next = pending.entries().next();
+          if (!next.done) {
+            pending.delete(next.value[0]);
+            yield next.value[1];
+            continue;
+          }
           await new Promise<void>(resolve => { wake = resolve; });
         }
         if (failure && !signal.aborted) throw failure;
