@@ -4,3 +4,4 @@ export * from "./retry.js";
 export * from "./runtime.js";
 export * from "./service.js";
 export * from "./types.js";
+export * from "./universe.js";

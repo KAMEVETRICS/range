@@ -47,6 +47,16 @@ export function isReality(instrument: Instrument): boolean {
   return instrument.capabilities.includes("isReality=yes");
 }
 
+/** The stock ticker a Bitget instrument trades, for matching other venues' listings: Reality tokens drop their
+ * "r" prefix (rAAPL -> AAPL) and stock perps use their base coin. Other instruments have no derivable ticker. */
+export function bitgetEquityTicker(instrument: Instrument): string | undefined {
+  if (!instrument.underlyingId.startsWith("bitget:")) return undefined;
+  const base = instrument.underlyingId.slice("bitget:".length);
+  if (isReality(instrument)) return /^r[A-Z0-9]/.test(base) ? base.slice(1).toUpperCase() : undefined;
+  if (instrument.productType === "perpetual" && instrument.capabilities.includes("symbolType=stock")) return base.toUpperCase();
+  return undefined;
+}
+
 /** Venue-local underlying IDs deliberately await the reviewed cross-venue registry. */
 export function mapBitgetInstruments(input: unknown): Instrument[] {
   return safe(() => {

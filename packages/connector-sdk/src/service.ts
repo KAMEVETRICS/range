@@ -1,18 +1,19 @@
 import { createServer } from "node:http";
-import { RedpandaEventBus } from "@range/event-bus";
+import { RedpandaEventBus, type EventBus } from "@range/event-bus";
 import { createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@range/observability";
 import { ConnectorRuntime } from "./runtime.js";
 import type { ConnectorAdapter } from "./types.js";
 
-export async function runConnectorService(adapter: ConnectorAdapter, env: NodeJS.ProcessEnv = process.env) {
+export async function runConnectorService(adapter: ConnectorAdapter, env: NodeJS.ProcessEnv = process.env,
+  options: { beforeStart?: (bus: EventBus) => Promise<void> } = {}) {
   const brokers = (env.REDPANDA_BROKERS ?? "redpanda:9092").split(",").map(value => value.trim()).filter(Boolean);
   if (!brokers.length) throw new Error("REDPANDA_BROKERS is required");
   const secrets = [env.EXTENDED_API_KEY].filter((value): value is string => Boolean(value));
   const telemetry = createTelemetry({ service: `connector-${adapter.venue}`, secrets,
     traceSink: env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const transport = new RedpandaEventBus({ clientId: `range-${adapter.venue}`, brokers });
-  const runtime = new ConnectorRuntime({ adapter, eventBus: instrumentEventBus(transport, telemetry),
-    maxClockSkewMs: Number(env.RANGE_MAX_CLOCK_SKEW_MS ?? 5_000) });
+  const eventBus = instrumentEventBus(transport, telemetry);
+  const runtime = new ConnectorRuntime({ adapter, eventBus, maxClockSkewMs: Number(env.RANGE_MAX_CLOCK_SKEW_MS ?? 5_000) });
   const controller = new AbortController();
   const port = Number(env.HEALTH_PORT ?? 8081);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error("Invalid HEALTH_PORT");
@@ -31,6 +32,7 @@ export async function runConnectorService(adapter: ConnectorAdapter, env: NodeJS
     response.writeHead(404).end();
   });
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(port, "0.0.0.0", resolve); });
+  await options.beforeStart?.(eventBus);
   const running = runtime.start(controller.signal).catch(error => {
     telemetry.logger.error("connector runtime stopped", { error });
     controller.abort();

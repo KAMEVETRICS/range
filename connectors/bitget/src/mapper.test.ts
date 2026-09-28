@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { mapBitgetInstruments, mapBitgetBook, mapBitgetTickers, mapBitgetMessage } from "./mapper.js";
+import { bitgetEquityTicker, mapBitgetInstruments, mapBitgetBook, mapBitgetTickers, mapBitgetMessage } from "./mapper.js";
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`../../../tests/contracts/fixtures/bitget/${name}.json`, import.meta.url), "utf8"));
 
@@ -88,4 +88,10 @@ it("preserves numeric JSON sequence IDs beyond JavaScript safe integer precision
   const instruments = mapBitgetInstruments(fixture("instruments"));
   const frame = '{"arg":{"instType":"usdt-futures","topic":"books5","symbol":"AAPLUSDT"},"action":"snapshot","ts":1770531248001,"data":[{"a":[[200.11,3]],"b":[[200.09,2]],"ts":"1770531248000","seq":1304314508780744705}]}';
   expect(mapBitgetMessage(frame,instruments).events[0]?.sequence).toBe("1304314508780744705");
+});
+
+it("derives the stock ticker of Reality tokens and stock perps only", () => {
+  const tickers = Object.fromEntries(mapBitgetInstruments(fixture("instruments"))
+    .map(instrument => [instrument.venueSymbol, bitgetEquityTicker(instrument) ?? null]));
+  expect(tickers).toEqual({ RAAPLUSDT: "AAPL", AAPLUSDT: "AAPL", AAPLXUSDT: null });
 });

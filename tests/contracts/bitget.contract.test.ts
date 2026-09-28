@@ -7,7 +7,8 @@ import { BitgetPublicClient, type BitgetWebSocketPort } from "../../connectors/b
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/bitget/${name}.json`, import.meta.url), "utf8"));
 const signal = () => new AbortController().signal;
 
-function setup(capture: (headers: unknown) => void = () => {}, clock = { nowMs: () => 1_000 }) {
+function setup(capture: (headers: unknown) => void = () => {}, clock = { nowMs: () => 1_000 },
+  followTicker?: (ticker: string) => boolean) {
   const requests: { url: URL; init: RequestInit }[] = [];
   const delays: number[] = [];
   let limited = false;
@@ -24,7 +25,7 @@ function setup(capture: (headers: unknown) => void = () => {}, clock = { nowMs: 
   let frames: unknown[] = [];
   const subscriptions: unknown[] = [];
   const ws: BitgetWebSocketPort = { async *stream(args) { subscriptions.push(...args); yield* frames; } };
-  const adapter = createBitgetAdapter(client, ws, { nowMs: clock.nowMs });
+  const adapter = createBitgetAdapter(client, ws, { nowMs: clock.nowMs, ...(followTicker ? { followTicker } : {}) });
   return { adapter, client, requests, delays, subscriptions, limit: () => { limited = true; }, frames: (values: unknown[]) => { frames = values; } };
 }
 
@@ -116,4 +117,14 @@ it("serves Reality snapshots from one bulk ticker request per freshness window",
   now += 1_001;
   await context.adapter.snapshot(reality, signal());
   expect(tickerRequests()).toHaveLength(2);
+});
+
+it("follows only instruments whose stock ticker another venue lists", async () => {
+  const listedElsewhere = new Set<string>();
+  const context = setup(() => {}, { nowMs: () => 1_000 }, ticker => listedElsewhere.has(ticker));
+  expect(await context.adapter.probe(signal())).toMatchObject({ available: false });
+
+  listedElsewhere.add("AAPL");
+
+  expect((await context.adapter.discover(signal())).map(instrument => instrument.venueSymbol)).toEqual(["RAAPLUSDT", "AAPLUSDT"]);
 });

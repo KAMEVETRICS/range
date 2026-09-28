@@ -1,7 +1,7 @@
 import { ConnectorDiagnosticError, type ConnectorAdapter, type RawVenueEvent } from "@range/connector-sdk";
 import type { Instrument } from "@range/domain";
 import { BitgetPublicClient, type BitgetSubscription, type BitgetWebSocketPort } from "./client.js";
-import { BITGET_CATEGORIES, type BitgetCategory, bitgetCategory, isReality, mapBitgetBook, mapBitgetInstruments, mapBitgetMessage, mapBitgetTickers, type BitgetMappedMessages, type BitgetTickerEvidence } from "./mapper.js";
+import { BITGET_CATEGORIES, type BitgetCategory, bitgetCategory, bitgetEquityTicker, isReality, mapBitgetBook, mapBitgetInstruments, mapBitgetMessage, mapBitgetTickers, type BitgetMappedMessages, type BitgetTickerEvidence } from "./mapper.js";
 
 export interface BitgetAdapter extends ConnectorAdapter { tickerEvidence(): readonly BitgetTickerEvidence[] }
 
@@ -9,7 +9,7 @@ export interface BitgetAdapter extends ConnectorAdapter { tickerEvidence(): read
 const REALITY_TICKER_REUSE_MS = 1_000;
 
 export function createBitgetAdapter(http: BitgetPublicClient, ws: BitgetWebSocketPort,
-  options: { nowMs?: () => number } = {}): BitgetAdapter {
+  options: { nowMs?: () => number; followTicker?: (ticker: string) => boolean } = {}): BitgetAdapter {
   const nowMs = options.nowMs ?? Date.now;
   const evidence = new Map<string, BitgetTickerEvidence>();
   let discovered: readonly Instrument[] = [];
@@ -42,9 +42,15 @@ export function createBitgetAdapter(http: BitgetPublicClient, ws: BitgetWebSocke
     async discover(signal) {
       const instruments: Instrument[] = [];
       for (const category of BITGET_CATEGORIES) instruments.push(...mapBitgetInstruments(await http.market("instruments", category, signal)));
-      discovered = instruments;
+      // Only a stock another venue also lists can form a cross-venue pair; the rest is not followed at all.
+      const follow = options.followTicker;
+      const followed = follow ? instruments.filter(instrument => {
+        const ticker = bitgetEquityTicker(instrument);
+        return ticker !== undefined && follow(ticker);
+      }) : instruments;
+      discovered = followed;
       realityTickers.clear();
-      return instruments;
+      return followed;
     },
     async probe(signal) {
       const instruments = await adapter.discover(signal);
