@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Redis } from "ioredis";
@@ -53,7 +53,9 @@ async function main() {
   }));
 
   const seed = SeedConfigSchema.parse(JSON.parse(await readFile(process.env.RANGE_MAPPING_CONFIG ?? "config/instrument-mappings.json", "utf8")));
-  stops.push(await bus.subscribe("instrument.registry.v1", "reviewed-mapping-seeder", createReviewedMappingSeeder(seed,
+  // In-memory registry views replay the whole registry topic on every start (fresh groups), like the worker's registry.
+  const run = randomUUID();
+  stops.push(await bus.subscribe("instrument.registry.v1", `reviewed-mapping-seeder-${run}`, createReviewedMappingSeeder(seed,
     (underlyingId, event) => bus.publish("instrument.registry.v1", underlyingId, event))));
 
   const instrumentUnderlyings = new Map<string, string>();
@@ -65,7 +67,7 @@ async function main() {
       version: event.receivedTimestamp, expiresAt: event.sourceTimestamp + event.freshnessBudgetMs, underlyingId: id, value: event,
     });
   };
-  stops.push(await bus.subscribe("instrument.registry.v1", "current-instrument-index", async event => {
+  stops.push(await bus.subscribe("instrument.registry.v1", `current-instrument-index-${run}`, async event => {
     if (event.kind !== "upsert") return;
     instrumentUnderlyings.set(event.instrument.instrumentId, event.instrument.underlyingId);
     for (const item of pending.get(event.instrument.instrumentId) ?? []) {

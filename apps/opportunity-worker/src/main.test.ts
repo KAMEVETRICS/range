@@ -67,6 +67,24 @@ async function publishEligibleInputs(bus: InMemoryEventBus) {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunity worker", () => {
+  it("rebuilds its registry from the whole registry topic when it restarts", async () => {
+    const bus = new InMemoryEventBus();
+    for (const [id, venue] of [["ins_a", "venue_a"], ["ins_b", "venue_b"]] as const) {
+      await bus.publish("instrument.registry.v1", id, { kind: "upsert", instrument: instrument(id, venue) } as never);
+    }
+    const first = await startOpportunityWorker(bus, new InstrumentRegistry(), policy);
+    await first.flush();
+    await first.stop();
+
+    const registry = new InstrumentRegistry();
+    const restarted = await startOpportunityWorker(bus, registry, policy);
+    await restarted.flush();
+
+    expect(registry.identityOf("ins_a")).toEqual({ venue: "venue_a", underlyingId: "equity:TSLA" });
+    expect(registry.identityOf("ins_b")).toEqual({ venue: "venue_b", underlyingId: "equity:TSLA" });
+    await restarted.stop();
+  });
+
   it("advances every underlying affected by a venue health event in one authority call", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();

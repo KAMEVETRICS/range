@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { EventBus } from "@range/event-bus";
 import { isCurrentAtRevision, type ObservationEnvelope, type Opportunity, type VenueHealth } from "@range/domain";
 import { InstrumentRegistry } from "@range/instruments";
@@ -372,7 +373,9 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     }
   })));
-  unsubscribe.push(await bus.subscribe("instrument.registry.v1", "opportunity-worker-registry", event => acceptInput(async () => {
+  // The in-memory registry is rebuilt on every start: a fresh group replays the whole registry topic, where a
+  // committed group would resume after instruments that only the previous process had consumed.
+  unsubscribe.push(await bus.subscribe("instrument.registry.v1", `opportunity-worker-registry-${randomUUID()}`, event => acceptInput(async () => {
     if (event.kind === "upsert") {
       // Registry validation failures are deterministic for this event; retrying
       // the same record would block every later record in its Redpanda partition.
