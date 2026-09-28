@@ -48,6 +48,21 @@ services:
         limits: { cpus: "1.5", memory: 1536M }
         reservations: { memory: 512M }
 
+  # Redpanda is a transport buffer, not history: high-volume topics keep 6 hours in 1-hour segments (retention
+  # drops whole segments). Registry, health and other low-volume topics keep broker defaults; workers replay the
+  # registry from the start. Unbounded retention filled the shared disk on 2026-09-28.
+  redpanda-retention:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
+    restart: "no"
+    depends_on: { redpanda: { condition: service_healthy } }
+    entrypoint: [/bin/bash, -c]
+    command:
+      - |
+        set -e
+        topics="market.observation.v1 book.state.v1 market.raw.v1 funding.observation.v1 opportunity.v1"
+        for topic in $$topics; do rpk topic create "$$topic" -X brokers=redpanda:9092 >/dev/null 2>&1 || true; done
+        rpk topic alter-config $$topics --set retention.ms=21600000 --set segment.ms=3600000 -X brokers=redpanda:9092
+
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped

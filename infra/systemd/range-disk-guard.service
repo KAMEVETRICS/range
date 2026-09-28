@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop Range data producers when the root disk is nearly full
+
+[Service]
+Type=oneshot
+ExecStart=/srv/range/infra/disk-guard.sh

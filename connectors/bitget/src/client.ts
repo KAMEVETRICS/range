@@ -64,17 +64,17 @@ function snapshotChannel(data: string): string | undefined {
 
 /** Full books5 snapshots avoid incremental-book reconstruction and resync ambiguity. */
 export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => new WebSocket(url),
-  options: { tickerIntervalMs?: number; nowMs?: () => number } = {}): BitgetWebSocketPort {
-  const tickerIntervalMs = options.tickerIntervalMs ?? 0;
+  options: { tickerIntervalMs?: number; bookIntervalMs?: number; nowMs?: () => number } = {}): BitgetWebSocketPort {
+  const intervals: Record<string, number> = { ticker: options.tickerIntervalMs ?? 0, books5: options.bookIntervalMs ?? 0 };
   const nowMs = options.nowMs ?? Date.now;
-  const intervalOf = (channel: string) => channel.split(":")[1] === "ticker" ? tickerIntervalMs : 0;
+  const intervalOf = (channel: string) => intervals[channel.split(":")[1] ?? ""] ?? 0;
   return {
     async *stream(subscriptions, signal) {
       if (signal.aborted || !subscriptions.length) return;
       if (subscriptions.length > 3_960) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
       // Full snapshots supersede their predecessors, so a slow consumer receives each channel's newest state.
-      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones. Ticker channels
-      // (prices, funding) are also delivered at most once per tickerIntervalMs; order books are never held back.
+      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones. Ticker and books5
+      // channels are also delivered at most once per tickerIntervalMs / bookIntervalMs (uncapped when 0).
       const pending = new Map<string, string>();
       const deliveredAt = new Map<string, number>();
       let dueTimer: ReturnType<typeof setTimeout> | undefined;

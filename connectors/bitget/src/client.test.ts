@@ -149,3 +149,34 @@ it("caps each ticker channel to one delivery per interval, keeping its newest, w
   controller.abort();
   expect(await iterator.next()).toEqual({ value: undefined, done: true });
 });
+
+it("caps order-book channels too when a book interval is set, keeping each channel's newest book", async () => {
+  vi.useFakeTimers();
+  let clock = 0;
+  const advance = async (ms: number) => { clock += ms; await vi.advanceTimersByTimeAsync(ms); };
+  const controller = new AbortController();
+  const sockets: SocketDouble[] = [];
+  const transport = createBitgetPublicWebSocket(() => {
+    const socket = new SocketDouble("none");
+    sockets.push(socket);
+    return socket as unknown as WebSocket;
+  }, { bookIntervalMs: 5_000, nowMs: () => clock });
+  const iterator = transport.stream([{ instType:"usdt-futures", topic:"books5", symbol:"A" }], controller.signal)[Symbol.asyncIterator]();
+  const first = iterator.next();
+  const socket = sockets[0]!;
+  socket.emit("open");
+  socket.message(snapshotFrame("books5", "A", 1));
+  expect((await first).value).toBe(snapshotFrame("books5", "A", 1));
+
+  let second: unknown;
+  void iterator.next().then(result => { second = result.value; });
+  socket.message(snapshotFrame("books5", "A", 2));
+  await advance(2_000);
+  socket.message(snapshotFrame("books5", "A", 3));
+  await advance(2_999);
+  expect(second).toBeUndefined();
+  await advance(1);
+  expect(second).toBe(snapshotFrame("books5", "A", 3));
+  controller.abort();
+  expect(await iterator.next()).toEqual({ value: undefined, done: true });
+});

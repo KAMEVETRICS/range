@@ -44,3 +44,12 @@ Do not add `--volumes`; named Redpanda, Redis, Postgres, and MinIO volumes are r
 ## Incident evidence
 
 Capture timestamps, affected underlying/venues, trace/event/opportunity/evidence IDs, health transitions, mapping/calculation versions, and sanitized metrics. Never capture raw authorization/cookie/API-key/signature/passphrase/secret fields or `.env` contents.
+
+## Disk capacity
+
+Range shares the VPS root disk with other services. On 2026-09-28 unbounded retention filled it, crashed Redpanda and stalled system logging, so two guards now apply:
+
+- `redpanda-retention` (one-shot Compose service) keeps 6 hours of `market.observation.v1`, `book.state.v1`, `market.raw.v1`, `funding.observation.v1` and `opportunity.v1`, in 1-hour segments. It runs on every `docker compose up`.
+- `range-disk-guard.timer` runs `infra/disk-guard.sh` every minute. At 85% root-disk use (`RANGE_DISK_GUARD_PERCENT`) it stops the Range connectors and the opportunity worker and logs `range-disk-guard` to syslog. Stopped containers stay stopped.
+
+Install or update the guard with `install -m 0644 infra/systemd/range-disk-guard.* /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now range-disk-guard.timer`, and test it with `RANGE_DISK_GUARD_DRY_RUN=1 RANGE_DISK_GUARD_PERCENT=1 infra/disk-guard.sh`. After it trips: find what grew (`docker system df`, volume sizes, retention settings), free space without deleting data you have not decided to delete, then restart the producers with `docker compose up -d`.
