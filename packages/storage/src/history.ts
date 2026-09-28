@@ -1,4 +1,4 @@
-import { hashCanonical } from "@range/evidence";
+import { canonicalJson, hashCanonical } from "@range/evidence";
 import { parseEvent, type Topic, type TopicPayload } from "@range/event-bus";
 import type { RevisionAuthority } from "../../../apps/opportunity-worker/src/revision-authority.js";
 
@@ -52,6 +52,22 @@ export class PostgresRevisionAuthority implements RevisionAuthority {
   }
 }
 
+/** Connectors derive an observation's eventId from its venue data, so a venue can resend it (e.g. an unchanged book
+ * after a reconnect) with new receipt context: receive time and receive-time flags. Only venue data must match. */
+function isRepeatedObservation(stored: unknown, incoming: StoredEvent): boolean {
+  const record = (typeof stored === "string" ? JSON.parse(stored) : stored) as StoredEvent | undefined;
+  if (!record || record.topic !== incoming.topic || record.key !== incoming.key) return false;
+  const venueData = (payload: unknown) => {
+    if (!payload || typeof payload !== "object" || !("rawPayloadRefOrHash" in payload) || !("sourceTimestamp" in payload)) return undefined;
+    const observation = payload as Record<string, unknown>;
+    return canonicalJson({ eventId: observation.eventId, venue: observation.venue, instrumentId: observation.instrumentId,
+      transport: observation.transport, sourceTimestamp: observation.sourceTimestamp, sequence: observation.sequence ?? null,
+      rawPayloadRefOrHash: observation.rawPayloadRefOrHash, payload: observation.payload });
+  };
+  const before = venueData(record.payload);
+  return before !== undefined && before === venueData(incoming.payload);
+}
+
 export class HistoryStore {
   constructor(private readonly pool: SqlPool) {}
 
@@ -87,8 +103,13 @@ export class HistoryStore {
       await client.query(`INSERT INTO event_log(ordinal, event_id, topic, underlying_id, accepted_at_ms, archive_id, calculation_version, content_hash, record)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, [ordinal, event.eventId, event.topic, event.underlyingId ?? null,
         event.acceptedAtMs, event.archiveId, event.calculationVersion ?? null, contentHash, JSON.stringify(event)]);
-      const existing = await client.query("SELECT content_hash FROM event_log WHERE event_id = $1", [event.eventId]);
-      if (existing.rows[0]?.content_hash !== contentHash) throw new Error("Event is immutable");
+      const existing = await client.query("SELECT content_hash, record FROM event_log WHERE event_id = $1", [event.eventId]);
+      if (existing.rows[0]?.content_hash !== contentHash) {
+        if (!isRepeatedObservation(existing.rows[0]?.record, event)) throw new Error("Event is immutable");
+        // The same venue observation received again: the first receipt stays authoritative.
+        await client.query("ROLLBACK");
+        return;
+      }
       await this.materialize(client, event);
       await client.query("COMMIT");
     } catch (error) { await client.query("ROLLBACK"); throw error; }

@@ -167,6 +167,36 @@ describe("Postgres history and revision authority", () => {
     await expect(history.append({ ...event, key: "changed" })).rejects.toThrow(/immutable/i);
     await pool.end();
   });
+
+  it("keeps the first receipt when the same venue observation is received again", async () => {
+    const pool = await database();
+    const history = new HistoryStore(pool);
+    await history.registerArchive({ archiveId: "archive1", uri: "s3://range/immutable.ndjson", contentHash: `sha256:${"a".repeat(64)}` });
+    const receipt = (receivedTimestamp: number, qualityFlags: string[], askPrice = "100.1") => {
+      const payload = parseEvent("book.state.v1", {
+        eventId: "evt_extended_ins_extended_SHOP-USD_order_book_1790345607814_a4c440186cbccd20", schemaVersion: 1,
+        venue: "extended", instrumentId: "ins_extended_SHOP-USD", sequence: 1, sequencePolicy: "contiguous", sequenceReset: true,
+        transport: "websocket", sourceTimestamp: 1_790_345_607_814, receivedTimestamp, freshnessBudgetMs: 5_000, qualityFlags,
+        rawPayloadRefOrHash: "a4c440186cbccd20", eligibility: "reference_only",
+        payload: { kind: "order_book", bids: [{ price: "100", quantity: "5" }], asks: [{ price: askPrice, quantity: "5" }], capacityUsd: "0" },
+      });
+      return { eventId: payload.eventId, topic: "book.state.v1" as const, key: payload.instrumentId,
+        acceptedAtMs: receivedTimestamp, archiveId: "archive1", payload };
+    };
+    const logState = async () => (await pool.query("SELECT count(*)::int AS rows, max(ordinal)::int AS ordinal FROM event_log")).rows;
+    const first = receipt(1_790_555_871_482, ["rfq_real_book"]);
+    await history.append(first);
+    const before = await logState();
+
+    // A reconnect resends the unchanged book: same venue data, a later receive time and a receive-time flag.
+    await history.append(receipt(1_790_557_888_480, ["rfq_real_book", "market_off_hours"]));
+
+    expect(await logState()).toEqual(before);
+    const stored = (await pool.query("SELECT record FROM event_log WHERE event_id = $1", [first.eventId])).rows[0].record;
+    expect((typeof stored === "string" ? JSON.parse(stored) : stored).acceptedAtMs).toBe(first.acceptedAtMs);
+    await expect(history.append(receipt(1_790_557_888_480, ["rfq_real_book"], "100.2"))).rejects.toThrow(/immutable/i);
+    await pool.end();
+  });
 });
 
 describe("production worker bootstrap", () => {
