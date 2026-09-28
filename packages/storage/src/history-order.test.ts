@@ -62,8 +62,9 @@ class ConcurrentAppendPool implements SqlPool {
             this.firstInserted.resolve();
             await this.releaseFirst.promise;
           }
-          return { rows: [] };
+          return { rows: [{ event_id: pending.record.eventId }] };
         }
+        if (sql.startsWith("SELECT event_id, content_hash, record FROM event_log")) return { rows: [] };
         if (sql.startsWith("SELECT content_hash, record FROM event_log")) return { rows: [{ content_hash: pending?.contentHash }] };
         if (sql.startsWith("INSERT INTO audit_events")) return { rows: [] };
         if (sql === "COMMIT") {

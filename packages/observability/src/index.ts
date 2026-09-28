@@ -96,5 +96,13 @@ export function instrumentEventBus(bus: EventBus, telemetry: RangeTelemetry): Ev
         await handler(event);
       }));
     },
+    async subscribeBatch<T extends Topic>(topic: T, groupId: string, handler: (events: TopicPayload[T][]) => Promise<void>,
+      maxBatchSize?: number) {
+      return bus.subscribeBatch(topic, groupId, async events => telemetry.tracer.span(`event.consume ${topic}`,
+        events.length ? correlation(events[0]!) : {}, async span => {
+          span.setAttribute("topic", topic); span.setAttribute("group_id", groupId); span.setAttribute("batch_size", events.length);
+          await handler(events);
+        }), maxBatchSize);
+    },
   };
 }

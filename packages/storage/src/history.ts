@@ -85,32 +85,63 @@ export class HistoryStore {
   }
 
   async append(event: StoredEvent): Promise<void> {
-    parseEvent(event.topic, event.payload);
-    if (!event.eventId || !Number.isSafeInteger(event.acceptedAtMs) || event.acceptedAtMs < 0) throw new Error("Invalid event metadata");
-    if ((event.topic === "opportunity.v1" || event.topic === "evidence.bundle.v1") && !event.calculationVersion) {
-      throw new Error("Calculation version is required");
+    await this.appendMany([event]);
+  }
+
+  /** Appends events in order in one transaction, allocating their ordinals as one block. An event already in the
+   * log is skipped when identical or when it is the same venue observation received again; any other conflict
+   * rejects the whole batch. */
+  async appendMany(events: readonly StoredEvent[]): Promise<void> {
+    if (!events.length) return;
+    for (const event of events) {
+      parseEvent(event.topic, event.payload);
+      if (!event.eventId || !Number.isSafeInteger(event.acceptedAtMs) || event.acceptedAtMs < 0) throw new Error("Invalid event metadata");
+      if ((event.topic === "opportunity.v1" || event.topic === "evidence.bundle.v1") && !event.calculationVersion) {
+        throw new Error("Calculation version is required");
+      }
     }
-    const contentHash = hashCanonical(event);
+    const hashes = events.map(event => hashCanonical(event));
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // The singleton UPDATE holds a row lock through COMMIT/ROLLBACK. A
-      // second appender cannot allocate a later ordinal and commit first.
-      // This uses the pool's ordinary READ COMMITTED isolation level.
-      const cursor = await client.query("UPDATE event_log_cursor SET last_ordinal = last_ordinal + 1 WHERE singleton = true RETURNING last_ordinal");
-      const ordinal = Number(cursor.rows[0]?.last_ordinal);
-      if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw new Error("Invalid event-log cursor");
-      await client.query(`INSERT INTO event_log(ordinal, event_id, topic, underlying_id, accepted_at_ms, archive_id, calculation_version, content_hash, record)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, [ordinal, event.eventId, event.topic, event.underlyingId ?? null,
-        event.acceptedAtMs, event.archiveId, event.calculationVersion ?? null, contentHash, JSON.stringify(event)]);
-      const existing = await client.query("SELECT content_hash, record FROM event_log WHERE event_id = $1", [event.eventId]);
-      if (existing.rows[0]?.content_hash !== contentHash) {
-        if (!isRepeatedObservation(existing.rows[0]?.record, event)) throw new Error("Event is immutable");
-        // The same venue observation received again: the first receipt stays authoritative.
-        await client.query("ROLLBACK");
-        return;
+      const ids = [...new Set(events.map(event => event.eventId))];
+      const existing = await client.query(`SELECT event_id, content_hash, record FROM event_log WHERE event_id IN (${
+        ids.map((_, index) => `$${index + 1}`).join(", ")})`, ids);
+      const known = new Map<string, { contentHash: unknown; record: unknown }>(existing.rows.map(row =>
+        [String(row.event_id), { contentHash: row.content_hash, record: row.record }]));
+      const fresh: Array<{ event: StoredEvent; contentHash: string }> = [];
+      events.forEach((event, index) => {
+        const stored = known.get(event.eventId);
+        if (!stored) {
+          known.set(event.eventId, { contentHash: hashes[index], record: event });
+          fresh.push({ event, contentHash: hashes[index]! });
+        } else if (stored.contentHash !== hashes[index] && !isRepeatedObservation(stored.record, event)) {
+          throw new Error("Event is immutable");
+        }
+        // Otherwise identical, or the same venue observation received again: the first receipt stays authoritative.
+      });
+      if (fresh.length) {
+        // The singleton UPDATE holds a row lock through COMMIT/ROLLBACK. A second appender cannot allocate
+        // later ordinals and commit first. This uses the pool's ordinary READ COMMITTED isolation level.
+        const cursor = await client.query("UPDATE event_log_cursor SET last_ordinal = last_ordinal + $1 WHERE singleton = true RETURNING last_ordinal",
+          [fresh.length]);
+        const last = Number(cursor.rows[0]?.last_ordinal);
+        if (!Number.isSafeInteger(last) || last < fresh.length) throw new Error("Invalid event-log cursor");
+        const inserted = await client.query(`INSERT INTO event_log(ordinal, event_id, topic, underlying_id, accepted_at_ms, archive_id, calculation_version, content_hash, record)
+          VALUES ${fresh.map((_, row) => `(${Array.from({ length: 9 }, (_, column) => `$${row * 9 + column + 1}`).join(",")})`).join(", ")}
+          ON CONFLICT DO NOTHING RETURNING event_id`,
+          fresh.flatMap(({ event, contentHash }, row) => [last - fresh.length + 1 + row, event.eventId, event.topic,
+            event.underlyingId ?? null, event.acceptedAtMs, event.archiveId, event.calculationVersion ?? null, contentHash, JSON.stringify(event)]));
+        const written = new Set(inserted.rows.map(row => String(row.event_id)));
+        for (const { event, contentHash } of fresh) {
+          if (written.has(event.eventId)) { await this.materialize(client, event); continue; }
+          // A concurrent appender committed this eventId after the check above; accept only an equivalent record.
+          const raced = await client.query("SELECT content_hash, record FROM event_log WHERE event_id = $1", [event.eventId]);
+          if (raced.rows[0]?.content_hash !== contentHash && !isRepeatedObservation(raced.rows[0]?.record, event)) {
+            throw new Error("Event is immutable");
+          }
+        }
       }
-      await this.materialize(client, event);
       await client.query("COMMIT");
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }

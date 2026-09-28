@@ -168,6 +168,25 @@ describe("Postgres history and revision authority", () => {
     await pool.end();
   });
 
+  it("appends a batch in one transaction with consecutive ordinals, skipping duplicates", async () => {
+    const pool = await database();
+    const history = new HistoryStore(pool);
+    await history.registerArchive({ archiveId: "archive1", uri: "s3://range/immutable.ndjson", contentHash: `sha256:${"a".repeat(64)}` });
+    const health = (eventId: string, venue: string) => ({ eventId, topic: "venue.health.v1" as const, key: venue,
+      acceptedAtMs: 1_790_000_000_000, archiveId: "archive1", payload: parseEvent("venue.health.v1", { venue, connectionState: "connected",
+        lastEventAgeMs: 0, clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} }) });
+    const log = async () => (await pool.query("SELECT event_id, ordinal FROM event_log ORDER BY ordinal")).rows
+      .map((row: { event_id: string; ordinal: number | string }) => [row.event_id, Number(row.ordinal)]);
+    await history.append(health("evt_0", "a"));
+
+    await history.appendMany([health("evt_1", "a"), health("evt_0", "a"), health("evt_2", "b"), health("evt_1", "a")]);
+    expect(await log()).toEqual([["evt_0", 1], ["evt_1", 2], ["evt_2", 3]]);
+
+    await expect(history.appendMany([health("evt_3", "a"), { ...health("evt_0", "a"), key: "changed" }])).rejects.toThrow(/immutable/i);
+    expect(await log()).toEqual([["evt_0", 1], ["evt_1", 2], ["evt_2", 3]]);
+    await pool.end();
+  });
+
   it("keeps the first receipt when the same venue observation is received again", async () => {
     const pool = await database();
     const history = new HistoryStore(pool);

@@ -35,15 +35,16 @@ async function main() {
   await history.registerArchive({ archiveId, uri: "redpanda://range/live", contentHash: archiveHash });
   const stops: Array<() => Promise<void>> = [];
 
-  const persist = <T extends Topic>(topic: T, key: string, event: TopicPayload[T]) =>
-    history.append(historyRecord(topic, key, event, { archiveId, calculationVersion }));
-  stops.push(await bus.subscribe("instrument.registry.v1", "history-instruments", event => persist("instrument.registry.v1", "registry", event)));
-  stops.push(await bus.subscribe("book.state.v1", "history-books", event => persist("book.state.v1", event.instrumentId, event)));
-  stops.push(await bus.subscribe("funding.observation.v1", "history-funding", event => persist("funding.observation.v1", event.instrumentId, event)));
-  stops.push(await bus.subscribe("venue.health.v1", "history-health", event => persist("venue.health.v1", event.venue, event)));
-  stops.push(await bus.subscribe("evidence.bundle.v1", "history-evidence", event => persist("evidence.bundle.v1", event.evidenceHash, event)));
-  stops.push(await bus.subscribe("opportunity.v1", "history-opportunities", event => persist("opportunity.v1", event.opportunityId, event)));
-  stops.push(await bus.subscribe("intent.lifecycle.v1", "history-intents", event => persist("intent.lifecycle.v1", event.idempotencyKey, event)));
+  // History writers take batches: one transaction and one ordinal block per batch, not per event.
+  const persist = <T extends Topic>(topic: T, keyOf: (event: TopicPayload[T]) => string) => (events: TopicPayload[T][]) =>
+    history.appendMany(events.map(event => historyRecord(topic, keyOf(event), event, { archiveId, calculationVersion })));
+  stops.push(await bus.subscribeBatch("instrument.registry.v1", "history-instruments", persist("instrument.registry.v1", () => "registry")));
+  stops.push(await bus.subscribeBatch("book.state.v1", "history-books", persist("book.state.v1", event => event.instrumentId)));
+  stops.push(await bus.subscribeBatch("funding.observation.v1", "history-funding", persist("funding.observation.v1", event => event.instrumentId)));
+  stops.push(await bus.subscribeBatch("venue.health.v1", "history-health", persist("venue.health.v1", event => event.venue)));
+  stops.push(await bus.subscribeBatch("evidence.bundle.v1", "history-evidence", persist("evidence.bundle.v1", event => event.evidenceHash)));
+  stops.push(await bus.subscribeBatch("opportunity.v1", "history-opportunities", persist("opportunity.v1", event => event.opportunityId)));
+  stops.push(await bus.subscribeBatch("intent.lifecycle.v1", "history-intents", persist("intent.lifecycle.v1", event => event.idempotencyKey)));
 
   // Canonicalization is intentionally structural only: connector adapters have
   // already validated venue payloads into the shared observation schema.

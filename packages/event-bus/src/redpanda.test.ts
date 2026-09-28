@@ -122,3 +122,57 @@ it("validates before publishing and rejects without sending to the original topi
   expect(broker.producer.send.mock.calls.map(call => call[0].topic)).toEqual(["range.dead-letter.v1"]);
   await transport.close();
 });
+
+const batchMessage = (value: string, offset: string) => ({
+  key: Buffer.from("bitget:RAAPLUSDT"), value: Buffer.from(value), offset, timestamp: "1790000000000", attributes: 0,
+  headers: { "trace-id": Buffer.from("9ca8b23b-0d61-4a91-a2d7-000000000001") },
+});
+const receiveBatch = () => broker.consumer.run.mock.calls[0]![0].eachBatch as (payload: unknown) => Promise<void>;
+function batchOf(messages: ReturnType<typeof batchMessage>[]) {
+  const resolveOffset = vi.fn();
+  return { resolveOffset, payload: { batch: { topic: "market.observation.v1", partition: 0, messages }, resolveOffset,
+    heartbeat: vi.fn(async () => {}), isRunning: () => true, isStale: () => false } };
+}
+
+it("delivers bounded batches and resolves each one only after its handler succeeds", async () => {
+  const transport = bus();
+  const batches: unknown[][] = [];
+  await transport.subscribeBatch("market.observation.v1", "test", async events => { batches.push(events.map(event => event.sequence)); }, 2);
+  expect(broker.consumer.run.mock.calls[0]![0]).toMatchObject({
+    autoCommit: true, autoCommitInterval: 1_000, autoCommitThreshold: 1_000, eachBatchAutoResolve: false });
+  const { payload, resolveOffset } = batchOf([1, 2, 3].map(n => batchMessage(JSON.stringify(observation(n)), String(10 + n))));
+
+  await receiveBatch()(payload);
+
+  expect(batches).toEqual([[1, 2], [3]]);
+  expect(resolveOffset.mock.calls).toEqual([["12"], ["13"]]);
+  expect(broker.consumer.commitOffsets).not.toHaveBeenCalled();
+  await transport.close();
+});
+
+it("leaves a failed batch unresolved so it is redelivered", async () => {
+  const transport = bus();
+  await transport.subscribeBatch("market.observation.v1", "test", async () => { throw new Error("temporary"); });
+  const { payload, resolveOffset } = batchOf([batchMessage(JSON.stringify(observation(1)), "11")]);
+
+  await expect(receiveBatch()(payload)).rejects.toThrow("temporary");
+  expect(resolveOffset).not.toHaveBeenCalled();
+  expect(broker.producer.send).not.toHaveBeenCalled();
+  await transport.close();
+});
+
+it("dead-letters an invalid message between batches without reordering valid events", async () => {
+  const transport = bus();
+  const batches: unknown[][] = [];
+  await transport.subscribeBatch("market.observation.v1", "test", async events => { batches.push(events.map(event => event.sequence)); });
+  const { payload, resolveOffset } = batchOf([batchMessage(JSON.stringify(observation(1)), "11"),
+    batchMessage('{"apiSecret":"NEVER_LOG"}', "12"), batchMessage(JSON.stringify(observation(3)), "13")]);
+
+  await receiveBatch()(payload);
+
+  expect(batches).toEqual([[1], [3]]);
+  expect(resolveOffset.mock.calls).toEqual([["11"], ["12"], ["13"]]);
+  expect(broker.producer.send.mock.calls.map(call => call[0].topic)).toEqual(["range.dead-letter.v1"]);
+  expect(JSON.stringify(broker.producer.send.mock.calls)).not.toContain("NEVER_LOG");
+  await transport.close();
+});

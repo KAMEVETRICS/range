@@ -92,3 +92,13 @@ it("does not recurse when a dead-letter publication itself is invalid", async ()
   const bus = new InMemoryEventBus();
   await expect(bus.publish("range.dead-letter.v1", "key", {} as never)).rejects.toThrow("INVALID_SCHEMA");
 });
+
+it("delivers batch subscriptions in order, replaying from the start for a new group", async () => {
+  const bus = new InMemoryEventBus();
+  await bus.publish("market.observation.v1", "bitget:RAAPLUSDT", observation(1));
+  const batches: (number | string | undefined)[][] = [];
+  await bus.subscribeBatch("market.observation.v1", "batch", async events => { batches.push(events.map(event => event.sequence)); });
+  await bus.publish("market.observation.v1", "bitget:RAAPLUSDT", observation(2));
+  expect(batches.flat()).toEqual([1, 2]);
+  expect(batches.every(batch => batch.length > 0)).toBe(true);
+});

@@ -49,6 +49,11 @@ export class InMemoryEventBus implements EventBus {
     };
   }
 
+  /** Each event is its own batch here; batching only pays off against a real broker. */
+  subscribeBatch<T extends Topic>(topic: T, groupId: string, handler: (events: TopicPayload[T][]) => Promise<void>) {
+    return this.subscribe(topic, groupId, event => handler([event]));
+  }
+
   private drain(topic: Topic, group: Group): Promise<void> {
     const pending = group.pending.then(async () => {
       const log = this.logs.get(topic) ?? [];
