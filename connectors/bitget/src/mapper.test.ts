@@ -34,6 +34,18 @@ it("skips a live listing whose symbol cannot form a Range instrument ID instead 
     ["ins_bitget_SPOT_RAAPLUSDT", "ins_bitget_USDT-FUTURES_AAPLUSDT", "ins_bitget_SPOT_AAPLXUSDT"]);
 });
 
+it("keeps only stock-linked products: no crypto, metal, or commodity perps or RWA spot", () => {
+  const input = fixture("instruments");
+  const perp = input.data[1];
+  input.data.push(
+    { ...perp, symbol: "BTCUSDT", baseCoin: "BTC", symbolType: "crypto", isRwa: "NO" },
+    { ...perp, symbol: "XAUUSDT", baseCoin: "XAU", symbolType: "metal", isRwa: "YES" },
+    { ...perp, symbol: "NOTYPEUSDT", baseCoin: "NOTYPE", symbolType: undefined },
+    { ...input.data[2], symbol: "XAUTUSDT", baseCoin: "XAUT", symbolType: "metal" },
+  );
+  expect(mapBitgetInstruments(input).map(i => i.venueSymbol)).toEqual(["RAAPLUSDT", "AAPLUSDT", "AAPLXUSDT"]);
+});
+
 it("retains REST current funding evidence without inventing a settlement time or canonical funding event", () => {
   const instruments = mapBitgetInstruments(fixture("instruments"));
   const result = mapBitgetTickers(fixture("tickers"), instruments);

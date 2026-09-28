@@ -55,6 +55,8 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
     if (!BITGET_CATEGORIES.includes(row.category as BitgetCategory) || row.status !== "online") return [];
     const spot = row.category === "SPOT";
     if (spot ? row.isRwa !== "YES" && row.isReality !== "yes" : row.type !== "perpetual") return [];
+    // Range covers equities only: perps must be explicitly stock-linked; RWA spot marked metal/commodity/etc. is out.
+    if (spot ? row.symbolType !== undefined && row.symbolType !== "stock" : row.symbolType !== "stock") return [];
     const interval = Number(row.fundInterval) * 3_600_000;
     if (!spot && (!Number.isSafeInteger(interval) || interval <= 0)) return [];
     // Without a launch time, metadata is effective only from when it was observed.
