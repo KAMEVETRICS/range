@@ -21,6 +21,8 @@ export interface ConnectorRuntimeOptions {
   readonly reconnect?: RetryOptions;
   readonly pollIntervalMs?: number;
   readonly sleep?: (delayMs: number) => Promise<void>;
+  /** Unchanged health is republished at least this often while events flow, so a restarted consumer relearns it. */
+  readonly healthHeartbeatMs?: number;
 }
 
 type ConnectionState = VenueHealth["connectionState"];
@@ -41,6 +43,8 @@ export class ConnectorRuntime {
   private readonly errorCounters: Record<string, number> = {};
   private readonly sequences = new Map<string, number>();
   private lastPublishedMaterial = "";
+  private lastHealthPublishedAtMs = Number.NEGATIVE_INFINITY;
+  private readonly healthHeartbeatMs: number;
 
   constructor(private readonly options: ConnectorRuntimeOptions) {
     this.nowMs = options.nowMs ?? Date.now;
@@ -48,6 +52,7 @@ export class ConnectorRuntime {
     this.retry = options.retry ?? {};
     this.reconnect = options.reconnect ?? {};
     this.pollIntervalMs = options.pollIntervalMs ?? 1_000;
+    this.healthHeartbeatMs = options.healthHeartbeatMs ?? 30_000;
     this.lastReceivedAtMs = this.nowMs();
   }
 
@@ -266,8 +271,10 @@ export class ConnectorRuntime {
       errorCounters: health.errorCounters,
       quarantineReason: health.quarantineReason,
     });
-    if (material === this.lastPublishedMaterial) return;
+    const now = this.nowMs();
+    if (material === this.lastPublishedMaterial && now - this.lastHealthPublishedAtMs < this.healthHeartbeatMs) return;
     this.lastPublishedMaterial = material;
+    this.lastHealthPublishedAtMs = now;
     await this.options.eventBus.publish("venue.health.v1", this.options.adapter.venue, health);
   }
 }

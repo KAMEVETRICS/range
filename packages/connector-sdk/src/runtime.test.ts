@@ -239,6 +239,25 @@ it("keeps an in-session gap when another instrument starts its validated sequenc
   expect(runtime.health().sequenceIntegrity).toBe("gap");
 });
 
+it("republishes unchanged health as a heartbeat while events keep flowing", async () => {
+  let now = 10_000;
+  const bus = new InMemoryEventBus();
+  const healthEvents = await published(bus, "venue.health.v1");
+  const adapter = fakeAdapter();
+  adapter.stream = async function* () {
+    yield { ...snapshot(now), eventId: "evt_first", transport: "websocket" };
+    now = 25_000;
+    yield { ...snapshot(now), eventId: "evt_quiet", transport: "websocket" };
+    now = 45_000;
+    yield { ...snapshot(now), eventId: "evt_heartbeat", transport: "websocket" };
+  };
+  const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => now, healthHeartbeatMs: 30_000 });
+
+  await runtime.runUntilDisconnected();
+
+  expect(healthEvents.filter(event => event.connectionState === "connected")).toHaveLength(2);
+});
+
 it("does not infer contiguous semantics for unvalidated numeric full snapshots", async () => {
   const bus = new InMemoryEventBus();
   const adapter = fakeAdapter();
