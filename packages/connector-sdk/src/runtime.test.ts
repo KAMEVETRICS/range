@@ -45,11 +45,11 @@ async function published<T extends Topic>(bus: EventBus, topic: T): Promise<Topi
   return seen;
 }
 
-it("quarantines observations with excessive clock skew before publication", async () => {
+it("quarantines future-dated observations with excessive clock skew before publication", async () => {
   const bus = new InMemoryEventBus();
   const marketEvents = await published(bus, "market.observation.v1");
   const healthEvents = await published(bus, "venue.health.v1");
-  const runtime = new ConnectorRuntime({ adapter: fakeAdapter({ sourceTimestampMs: 1_000 }), eventBus: bus, nowMs: () => 20_000, maxClockSkewMs: 5_000 });
+  const runtime = new ConnectorRuntime({ adapter: fakeAdapter({ sourceTimestampMs: 26_000 }), eventBus: bus, nowMs: () => 20_000, maxClockSkewMs: 5_000 });
 
   await runtime.pollOnce();
 
@@ -57,6 +57,18 @@ it("quarantines observations with excessive clock skew before publication", asyn
   expect(runtime.health().quarantineReason).toBe("CLOCK_SKEW_EXCEEDED");
   expect(marketEvents).toHaveLength(0);
   expect(healthEvents.at(-1)?.connectionState).toBe("quarantined");
+  expect(healthEvents.at(-1)?.clockSkewMs).toBe(6_000);
+});
+
+it("publishes old observations as data age rather than quarantining them as clock skew", async () => {
+  const bus = new InMemoryEventBus();
+  const marketEvents = await published(bus, "market.observation.v1");
+  const runtime = new ConnectorRuntime({ adapter: fakeAdapter({ sourceTimestampMs: 1_000 }), eventBus: bus, nowMs: () => 20_000, maxClockSkewMs: 5_000 });
+
+  await runtime.pollOnce();
+
+  expect(runtime.health()).toMatchObject({ connectionState: "connected", clockSkewMs: 0 });
+  expect(marketEvents).toHaveLength(1);
 });
 
 it("emits degraded venue health when a stream disconnects", async () => {
@@ -323,7 +335,7 @@ it("continues REST polling until cancellation instead of stopping after the clea
 it("publishes a health update when clock skew changes without a connection-state transition", async () => {
   const bus = new InMemoryEventBus();
   const healthEvents = await published(bus, "venue.health.v1");
-  const runtime = new ConnectorRuntime({ adapter: fakeAdapter({ sourceTimestampMs: 9_000 }), eventBus: bus, nowMs: () => 10_000 });
+  const runtime = new ConnectorRuntime({ adapter: fakeAdapter({ sourceTimestampMs: 11_000 }), eventBus: bus, nowMs: () => 10_000 });
 
   await runtime.pollOnce();
 
