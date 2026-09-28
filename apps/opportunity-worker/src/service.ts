@@ -7,26 +7,15 @@ import { RedpandaEventBus, type Topic, type TopicPayload } from "@range/event-bu
 import { InstrumentRegistry, SeedConfigSchema } from "@range/instruments";
 import { createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@range/observability";
 import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersistentOpportunityWorker,
-  type RedisCommands, type SqlPool, type StoredEvent } from "@range/storage";
+  type RedisCommands, type SqlPool } from "@range/storage";
 import { checkWorkerHealth } from "./health.js";
+import { historyRecord } from "./history-record.js";
+import { createReviewedMappingSeeder } from "./mapping-seeder.js";
 
 const calculationVersion = "range.calc.v1";
 const archiveId = "archive_live_redpanda";
 const archiveHash = `sha256:${createHash("sha256").update("redpanda://range/live").digest("hex")}`;
 
-let syntheticEventSequence = 0;
-function eventId<T extends Topic>(topic: T, event: TopicPayload[T], acceptedAtMs: number): string {
-  const candidate = (event as unknown as { eventId?: unknown }).eventId;
-  if (typeof candidate === "string" && candidate.length) return candidate;
-  syntheticEventSequence += 1;
-  return `evt_${createHash("sha256").update(topic).update(JSON.stringify(event)).update(String(acceptedAtMs))
-    .update(String(syntheticEventSequence)).digest("hex")}`;
-}
-
-function underlying(event: unknown): string | undefined {
-  return event && typeof event === "object" && typeof (event as { underlyingId?: unknown }).underlyingId === "string"
-    ? (event as { underlyingId: string }).underlyingId : undefined;
-}
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -46,14 +35,8 @@ async function main() {
   await history.registerArchive({ archiveId, uri: "redpanda://range/live", contentHash: archiveHash });
   const stops: Array<() => Promise<void>> = [];
 
-  const persist = async <T extends Topic>(topic: T, key: string, event: TopicPayload[T]) => {
-    const receivedTimestamp = (event as unknown as { receivedTimestamp?: unknown }).receivedTimestamp;
-    const acceptedAtMs = typeof receivedTimestamp === "number" && Number.isSafeInteger(receivedTimestamp) && receivedTimestamp >= 0
-      ? receivedTimestamp : Date.now();
-    return history.append({ eventId: eventId(topic, event, acceptedAtMs), topic, key, payload: event, acceptedAtMs, archiveId,
-      underlyingId: underlying(event), ...((topic === "opportunity.v1" || topic === "evidence.bundle.v1") ? { calculationVersion } : {}),
-    } as StoredEvent<T>);
-  };
+  const persist = <T extends Topic>(topic: T, key: string, event: TopicPayload[T]) =>
+    history.append(historyRecord(topic, key, event, { archiveId, calculationVersion }));
   stops.push(await bus.subscribe("instrument.registry.v1", "history-instruments", event => persist("instrument.registry.v1", "registry", event)));
   stops.push(await bus.subscribe("book.state.v1", "history-books", event => persist("book.state.v1", event.instrumentId, event)));
   stops.push(await bus.subscribe("funding.observation.v1", "history-funding", event => persist("funding.observation.v1", event.instrumentId, event)));
@@ -70,27 +53,8 @@ async function main() {
   }));
 
   const seed = SeedConfigSchema.parse(JSON.parse(await readFile(process.env.RANGE_MAPPING_CONFIG ?? "config/instrument-mappings.json", "utf8")));
-  const seedRegistry = new InstrumentRegistry();
-  const publishedMappings = new Set<string>();
-  stops.push(await bus.subscribe("instrument.registry.v1", "reviewed-mapping-seeder", async event => {
-    if (event.kind !== "upsert") return;
-    seedRegistry.upsert(event.instrument);
-    for (const declaration of seed.mappings) {
-      const id = `${declaration.underlyingId}@${declaration.mappingVersion}`;
-      if (publishedMappings.has(id)) continue;
-      const members = declaration.members.map(member => seedRegistry.resolveVenueSymbol(member.venue, member.venueSymbol, member.venueFamily));
-      if (members.some(member => !member)) continue;
-      const { liveEvidence: _liveEvidence, ...reviewedDeclaration } = declaration;
-      const mapping = { ...reviewedDeclaration, members: declaration.members.map((expected, index) => {
-        const actual = members[index]!;
-        if (actual.version !== expected.instrumentVersion || actual.metadataHash !== expected.metadataHash) throw new Error("Reviewed mapping does not match live metadata");
-        return { instrumentId: actual.instrument.instrumentId, instrumentVersion: actual.version, metadataHash: actual.metadataHash };
-      }) };
-      seedRegistry.addReviewedMapping(mapping);
-      publishedMappings.add(id);
-      await bus.publish("instrument.registry.v1", declaration.underlyingId, { kind: "mapping", mapping });
-    }
-  }));
+  stops.push(await bus.subscribe("instrument.registry.v1", "reviewed-mapping-seeder", createReviewedMappingSeeder(seed,
+    (underlyingId, event) => bus.publish("instrument.registry.v1", underlyingId, event))));
 
   const instrumentUnderlyings = new Map<string, string>();
   const pending = new Map<string, Array<TopicPayload["book.state.v1"] | TopicPayload["funding.observation.v1"]>>();
