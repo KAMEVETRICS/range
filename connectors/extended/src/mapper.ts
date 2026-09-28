@@ -223,13 +223,19 @@ export function mapExtendedRestBook(input: unknown, instrument: Instrument, obse
   });
 }
 
-const streamLevel = z.object({ p: positive, q: decimal, c: nonnegative }).strict();
+// q is absolute in a snapshot but a signed change in a delta; c is the absolute size. Live snapshots omit c.
+const streamLevel = z.object({ p: positive, q: decimal, c: nonnegative.optional() }).strict();
 const streamFrame = z.object({
   ts: z.number().int().nonnegative(),
   type: z.enum(["SNAPSHOT", "DELTA"]),
-  data: z.object({ m: text, b: z.array(streamLevel), a: z.array(streamLevel) }).strict(),
+  data: z.object({
+    m: text, b: z.array(streamLevel), a: z.array(streamLevel),
+    t: z.enum(["SNAPSHOT", "DELTA"]).optional(),
+    // Undocumented; live full-depth subscriptions send "f". Other depth modes are not reconstructed here.
+    d: z.literal("f").optional(),
+  }).strict(),
   seq: z.number().int().nonnegative().safe(),
-}).strict();
+}).strict().refine(frame => frame.data.t === undefined || frame.data.t === frame.type);
 
 export function extendedFrameMarket(input: unknown): string {
   return safe(() => streamFrame.parse(input).data.m);
@@ -265,8 +271,10 @@ export class ExtendedBookStreamMapper {
       }
       const apply = (target: Map<string, string>, rows: z.infer<typeof streamLevel>[]) => {
         for (const row of rows) {
-          if (row.c === "0") target.delete(row.p);
-          else target.set(row.p, row.c);
+          const size = row.c ?? (frame.type === "SNAPSHOT" ? nonnegative.parse(row.q) : undefined);
+          if (size === undefined) throw new Error();
+          if (/^0(?:\.0+)?$/.test(size)) target.delete(row.p);
+          else target.set(row.p, size);
         }
       };
       apply(this.bids, frame.data.b);

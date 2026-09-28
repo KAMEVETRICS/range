@@ -259,6 +259,44 @@ it("reconstructs a real RFQ stream only across contiguous sequence numbers", asy
   });
 });
 
+it("reconstructs the live RFQ frame shape: data.t/data.d and snapshot levels without c", async () => {
+  const context = setup();
+  const instrument = (await context.adapter.discover(signal()))[0]!;
+  const data = (t: string, b: object[], a: object[], d = "f") => ({ t, m: "TSLA_24_5-USD", b, a, d });
+  context.frames([
+    { ts: observedAtMs, type: "SNAPSHOT", data: data("SNAPSHOT", [{ q: "4.8", p: "339.40" }], [{ q: "1.10", p: "339.60" }]), seq: 1 },
+    { ts: observedAtMs + 100, type: "DELTA", seq: 2,
+      data: data("DELTA", [{ q: "-4.8", p: "339.40", c: "0" }, { q: "2", p: "339.30", c: "2" }], []) },
+  ]);
+  const events = [];
+  for await (const event of context.adapter.stream!([instrument], signal())) events.push(event);
+  expect(events).toHaveLength(2);
+  expect(events[0]).toMatchObject({ payload: { bids: [{ price: "339.40", quantity: "4.8" }], asks: [{ price: "339.60", quantity: "1.10" }] } });
+  expect(events[1]).toMatchObject({ sequence: 2, payload: { bids: [{ price: "339.30", quantity: "2" }], asks: [{ price: "339.60", quantity: "1.10" }] } });
+});
+
+it("rejects live frames whose data.t contradicts the frame type, an unknown data.d, or a delta level without c", async () => {
+  const snapshot = (data: object) => ({ ts: observedAtMs, type: "SNAPSHOT", seq: 1, data: { m: "TSLA_24_5-USD", b: [], a: [], ...data } });
+  for (const frame of [
+    snapshot({ t: "DELTA", d: "f" }),
+    snapshot({ t: "SNAPSHOT", d: "1" }),
+  ]) {
+    const context = setup();
+    const instrument = (await context.adapter.discover(signal()))[0]!;
+    context.frames([frame]);
+    await expect((async () => { for await (const _ of context.adapter.stream!([instrument], signal())) { /* drain */ } })())
+      .rejects.toMatchObject({ code: "ADAPTER_FAILURE" });
+  }
+  const context = setup();
+  const instrument = (await context.adapter.discover(signal()))[0]!;
+  context.frames([snapshot({ t: "SNAPSHOT", d: "f" }),
+    { ts: observedAtMs + 1, type: "DELTA", seq: 2, data: { t: "DELTA", d: "f", m: "TSLA_24_5-USD", b: [{ q: "1", p: "339.40" }], a: [] } }]);
+  const seen = [];
+  await expect((async () => { for await (const event of context.adapter.stream!([instrument], signal())) seen.push(event); })())
+    .rejects.toMatchObject({ code: "ADAPTER_FAILURE" });
+  expect(seen).toHaveLength(1);
+});
+
 it("does not declare standard Extended books contiguous without RFQ contract evidence", async () => {
   const source = fixture("markets") as { status: "OK"; data: Record<string, unknown>[] };
   const standard = { ...source.data[0]!, isRfq: false };
