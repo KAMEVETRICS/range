@@ -176,7 +176,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     assertAuthority();
     const generation = revisionOf(underlyingId);
     const at = now();
-    const instruments = [...books.keys()].filter(id => registry.identityOf(id)?.underlyingId === underlyingId)
+    // Only members of a current reviewed mapping are paired. Any other pair can never be actionable
+    // (UNKNOWN_INSTRUMENT_EQUIVALENCE); publishing those rejections swamped the worker and its history writers.
+    const reviewed = new Set<string>(registry.resolveEquivalentInstruments(underlyingId).map(item => item.instrument.instrumentId));
+    const instruments = [...books.keys()]
+      .filter(id => reviewed.has(id) && registry.identityOf(id)?.underlyingId === underlyingId)
       .flatMap(id => { const current = registry.getCurrent(id)?.instrument; return current ? [current] : []; });
     for (let left = 0; left < instruments.length; left++) for (let right = left + 1; right < instruments.length; right++) {
       const a = instruments[left]!;

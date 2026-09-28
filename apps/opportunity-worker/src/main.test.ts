@@ -613,7 +613,7 @@ describe("opportunity worker", () => {
       event.status === "expired" && event.stateRevision > stale.stateRevision)).toBe(true);
     await worker.stop();
   });
-  it("publishes an informative rejected candidate without reviewed mapping", async () => {
+  it("does not evaluate or publish a cross-venue pair without a reviewed mapping", async () => {
     const bus = new InMemoryEventBus();
     const registry = new InstrumentRegistry();
     registry.upsert(instrument("ins_a", "venue_a"));
@@ -629,8 +629,8 @@ describe("opportunity worker", () => {
     await bus.publish("book.state.v1", "ins_b", { ...book("ins_b", "venue_b", "100.3", "evt_book_b"),
       payload: { kind: "order_book", bids: [{ price: "125", quantity: "20" }], asks: [{ price: "126", quantity: "20" }], capacityUsd: "2000" } } as never);
     await worker.flush();
-    expect(published.some(item => (item as { status?: string }).status === "actionable")).toBe(false);
-    expect(published.some(item => (item as { rejectionReasons?: string[] }).rejectionReasons?.includes("UNKNOWN_INSTRUMENT_EQUIVALENCE"))).toBe(true);
+    // It can never be actionable (UNKNOWN_INSTRUMENT_EQUIVALENCE), so it is not published at all.
+    expect(published).toEqual([]);
     await worker.stop();
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseEvent } from "@range/event-bus";
+import { InstrumentRegistry } from "@range/instruments";
 import { ReplayRunner, type ReplayEvent } from "./replay.js";
 import type { WorkerPolicy } from "../../../apps/opportunity-worker/src/main.js";
 
@@ -8,6 +9,32 @@ export const testPolicy: WorkerPolicy = {
   feesBpsByVenue: { a: "0", b: "0" }, slippageBpsByVenue: { a: "0", b: "0" },
   financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0",
 };
+/** Adds a reviewed mapping per underlying, pinned to the fixture's own instrument versions, after the last upsert. */
+export function withReviewedMappings(events: ReplayEvent[]): ReplayEvent[] {
+  const registry = new InstrumentRegistry();
+  const members = new Map<string, string[]>();
+  let lastUpsert = -1;
+  events.forEach((event, index) => {
+    if (event.kind !== "input" || event.topic !== "instrument.registry.v1" || event.payload.kind !== "upsert") return;
+    const instrument = event.payload.instrument;
+    registry.upsert(instrument);
+    members.set(instrument.underlyingId, [...(members.get(instrument.underlyingId) ?? []), instrument.instrumentId]);
+    lastUpsert = index;
+  });
+  const mappings = [...members].map(([underlyingId, ids]): ReplayEvent => ({
+    kind: "input", atMs: events[lastUpsert]!.atMs, topic: "instrument.registry.v1", key: underlyingId,
+    payload: parseEvent("instrument.registry.v1", { kind: "mapping", mapping: {
+      underlyingId, mappingVersion: 1, compatibleExposure: "one share", reviewer: "replay fixture",
+      reviewedAt: "2026-09-20T00:00:00.000Z",
+      members: ids.map(instrumentId => ({ instrumentId, instrumentVersion: registry.getCurrent(instrumentId)!.version,
+        metadataHash: registry.getCurrent(instrumentId)!.metadataHash })),
+      proof: { contractMultiplier: "fixture", settlementAsset: "fixture", collateralAsset: "fixture",
+        tradingSchedule: "fixture", economicExposure: "fixture" },
+    } }),
+  }));
+  return [...events.slice(0, lastUpsert + 1), ...mappings, ...events.slice(lastUpsert + 1)];
+}
+
 export function replayFixture(): ReplayEvent[] {
   const at = 1_790_000_000_000;
   const events: ReplayEvent[] = [];
@@ -33,7 +60,7 @@ export function replayFixture(): ReplayEvent[] {
     }) });
   }
   events.push({ kind: "checkpoint", atMs: at });
-  return events;
+  return withReviewedMappings(events);
 }
 
 describe("deterministic replay", () => {
@@ -43,7 +70,9 @@ describe("deterministic replay", () => {
     expect(second.opportunities).toEqual(first.opportunities);
     expect(second.evidence.map(item => item.evidenceHash)).toEqual(first.evidence.map(item => item.evidenceHash));
     expect(first.evidence.length).toBe(2);
-    expect(first.opportunities.every(item => item.status === "rejected" && item.rejectionReasons.includes("UNKNOWN_INSTRUMENT_EQUIVALENCE"))).toBe(true);
+    // The reviewed pair is evaluated on its merits, not rejected as an unknown equivalence.
+    expect(first.opportunities).toHaveLength(4);
+    expect(first.opportunities.some(item => item.rejectionReasons.includes("UNKNOWN_INSTRUMENT_EQUIVALENCE"))).toBe(false);
   });
 
   it("reports missing, additional and changed evidence hashes at recorded checkpoints", async () => {
@@ -66,7 +95,9 @@ describe("deterministic replay", () => {
   it("keeps each underlying's debounce at its own due time", async () => {
     const at = 1_790_000_000_000;
     const original = replayFixture().filter(event => event.kind === "input");
-    const other = original.map(event => {
+    const isMapping = (event: ReplayEvent) => event.kind === "input" && event.topic === "instrument.registry.v1" &&
+      event.payload.kind === "mapping";
+    const other = withReviewedMappings(original.filter(event => !isMapping(event)).map(event => {
       const clone = JSON.parse(JSON.stringify(event).replaceAll("equity:DEMO", "equity:OTHER")
         .replaceAll("ins_a", "ins_other_a").replaceAll("ins_b", "ins_other_b")) as ReplayEvent;
       clone.atMs = at + 10;
@@ -79,7 +110,7 @@ describe("deterministic replay", () => {
         payload.receivedTimestamp += 10;
       }
       return clone;
-    });
+    }));
     const checkpoint: ReplayEvent = { kind: "checkpoint", atMs: at + 100 };
     const alone = await new ReplayRunner(testPolicy).run([...other, checkpoint], "calc.v1");
     const together = await new ReplayRunner(testPolicy).run([...original, ...other, checkpoint], "calc.v1");
