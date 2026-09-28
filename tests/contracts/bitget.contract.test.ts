@@ -24,7 +24,7 @@ function setup(capture: (headers: unknown) => void = () => {}, clock = { nowMs: 
   let frames: unknown[] = [];
   const subscriptions: unknown[] = [];
   const ws: BitgetWebSocketPort = { async *stream(args) { subscriptions.push(...args); yield* frames; } };
-  const adapter = createBitgetAdapter(client, ws);
+  const adapter = createBitgetAdapter(client, ws, { nowMs: clock.nowMs });
   return { adapter, client, requests, delays, subscriptions, limit: () => { limited = true; }, frames: (values: unknown[]) => { frames = values; } };
 }
 
@@ -98,4 +98,22 @@ it("paces concurrent public requests, honors exhausted quota and redacts failure
   const count = c.requests.length;
   await expect(c.client.market("tickers", "SPOT", blocked.signal)).rejects.toMatchObject({code:"ABORTED"});
   expect(c.requests).toHaveLength(count);
+});
+
+it("serves Reality snapshots from one bulk ticker request per freshness window", async () => {
+  let now = 1_000;
+  const context = setup(() => {}, { nowMs: () => now });
+  const instruments = await context.adapter.discover(signal());
+  const reality = instruments.find(i => i.venueSymbol === "RAAPLUSDT")!;
+  const tickerRequests = () => context.requests.filter(r => r.url.pathname.endsWith("tickers"));
+
+  const first = await context.adapter.snapshot(reality, signal());
+  await context.adapter.snapshot(reality, signal());
+  expect(first).toMatchObject({ instrumentId: reality.instrumentId, payload: { kind: "index_price", price: "200.10" } });
+  expect(tickerRequests()).toHaveLength(1);
+  expect(tickerRequests()[0]!.url.searchParams.has("symbol")).toBe(false);
+
+  now += 1_001;
+  await context.adapter.snapshot(reality, signal());
+  expect(tickerRequests()).toHaveLength(2);
 });
