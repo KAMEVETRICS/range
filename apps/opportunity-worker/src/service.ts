@@ -46,6 +46,19 @@ async function main() {
   stops.push(await bus.subscribeBatch("opportunity.v1", "history-opportunities", persist("opportunity.v1", event => event.opportunityId)));
   stops.push(await bus.subscribeBatch("intent.lifecycle.v1", "history-intents", persist("intent.lifecycle.v1", event => event.idempotencyKey)));
 
+  // Book and funding history older than RANGE_HISTORY_RETENTION_HOURS is deleted every five minutes; 0 keeps it all.
+  // Each pass is bounded, so a backlog drains over several passes rather than in one long run.
+  const retentionHours = Number(process.env.RANGE_HISTORY_RETENTION_HOURS ?? 72);
+  if (!Number.isFinite(retentionHours) || retentionHours < 0) throw new Error("RANGE_HISTORY_RETENTION_HOURS must be zero or more");
+  const stopPruning = new AbortController();
+  let pruning: Promise<void> | undefined;
+  const prune = () => pruning ??= history.pruneObservations(Math.floor(Date.now() - retentionHours * 3_600_000),
+    { maxBatches: 100, signal: stopPruning.signal })
+    .then(deleted => { if (deleted) telemetry.logger.info("history pruned", { deleted, retentionHours }); },
+      error => telemetry.logger.error("history pruning failed", { error }))
+    .finally(() => { pruning = undefined; });
+  const pruneTimer = retentionHours > 0 ? setInterval(prune, 300_000) : undefined;
+
   // Canonicalization is intentionally structural only: connector adapters have
   // already validated venue payloads into the shared observation schema.
   stops.push(await bus.subscribe("market.observation.v1", "canonical-state-router", async event => {
@@ -110,7 +123,8 @@ async function main() {
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     subscriptionsReady = false;
-    await service.stop(); for (const stop of stops.reverse()) await stop(); await transport.close();
+    clearInterval(pruneTimer); stopPruning.abort();
+    await service.stop(); for (const stop of stops.reverse()) await stop(); await transport.close(); await pruning;
     await new Promise<void>((resolve, reject) => healthServer.close(error => error ? reject(error) : resolve()));
     redis.disconnect(); await sql.end();
   })();

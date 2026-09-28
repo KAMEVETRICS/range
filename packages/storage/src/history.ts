@@ -147,6 +147,47 @@ export class HistoryStore {
     finally { client.release(); }
   }
 
+  /** Deletes book and funding history accepted before `beforeMs`, oldest first, with its observation rows. An event
+   * that evidence cites is kept, so evidence stays verifiable. Each batch of up to `batchSize` events is one
+   * transaction, and a call stops after `maxBatches` batches per topic, or between batches once `signal` aborts; the
+   * next call continues. The deletes rely on the event_id indexes from migration 0002. Returns the number of events
+   * deleted. */
+  async pruneObservations(beforeMs: number,
+    options: { batchSize?: number; maxBatches?: number; signal?: AbortSignal } = {}): Promise<number> {
+    const { batchSize = 2_000, maxBatches = Number.MAX_SAFE_INTEGER, signal } = options;
+    if (!Number.isSafeInteger(beforeMs) || beforeMs < 0) throw new Error("Invalid retention cutoff");
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10_000 || !Number.isSafeInteger(maxBatches) || maxBatches < 1) {
+      throw new Error("Invalid retention batch bound");
+    }
+    let deleted = 0;
+    for (const topic of ["book.state.v1", "funding.observation.v1"] satisfies Topic[]) {
+      for (let batch = 0; batch < maxBatches && !signal?.aborted; batch++) {
+        const client = await this.pool.connect();
+        let count: number;
+        try {
+          await client.query("BEGIN");
+          // One topic per query, so the (topic, accepted_at_ms) index yields the oldest rows without a sort. The
+          // LEFT JOIN ... IS NULL form is planned as an anti-join, like NOT EXISTS.
+          const doomed = (await client.query(`SELECT e.event_id FROM event_log e
+            LEFT JOIN evidence_sources s ON s.source_event_id = e.event_id
+            WHERE e.topic = $1 AND e.accepted_at_ms < $2 AND s.source_event_id IS NULL
+            ORDER BY e.accepted_at_ms LIMIT $3`, [topic, beforeMs, batchSize])).rows.map(row => String(row.event_id));
+          if (doomed.length) {
+            const list = doomed.map((_, index) => `$${index + 1}`).join(", ");
+            await client.query(`DELETE FROM observations WHERE event_id IN (${list})`, doomed);
+            await client.query(`DELETE FROM event_log WHERE event_id IN (${list})`, doomed);
+          }
+          await client.query("COMMIT");
+          count = doomed.length;
+        } catch (error) { await client.query("ROLLBACK"); throw error; }
+        finally { client.release(); }
+        deleted += count;
+        if (count < batchSize) break;
+      }
+    }
+    return deleted;
+  }
+
   private async materialize(sql: SqlClient, event: StoredEvent): Promise<void> {
     const payload = event.payload;
     const json = JSON.stringify(payload);

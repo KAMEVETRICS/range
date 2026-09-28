@@ -86,6 +86,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../packages/storage/src/migrations/0001_initial.sql:/docker-entrypoint-initdb.d/010-range.sql:ro
+      - ../packages/storage/src/migrations/0002_history_retention.sql:/docker-entrypoint-initdb.d/020-range-retention.sql:ro
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U range -d range && psql -U range -d range -tAc \"SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'\" | grep -q ."]
       interval: 5s
@@ -164,6 +165,7 @@ services:
       RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","freshnessBudgetMs":2000},{"venue":"extended","freshnessBudgetMs":5000},{"venue":"ondo_perps","freshnessBudgetMs":5000}]'
       RANGE_FEES_BPS_JSON: '{}'
       RANGE_SLIPPAGE_BPS_JSON: '{}'
+      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes: [../config:/app/config:ro]

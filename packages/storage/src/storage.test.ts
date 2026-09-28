@@ -20,7 +20,9 @@ export async function database() {
   });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
-  await pool.query(await readFile(new URL("./migrations/0001_initial.sql", import.meta.url), "utf8"));
+  for (const migration of ["0001_initial.sql", "0002_history_retention.sql"]) {
+    await pool.query(await readFile(new URL(`./migrations/${migration}`, import.meta.url), "utf8"));
+  }
   return pool;
 }
 
@@ -214,6 +216,93 @@ describe("Postgres history and revision authority", () => {
     const stored = (await pool.query("SELECT record FROM event_log WHERE event_id = $1", [first.eventId])).rows[0].record;
     expect((typeof stored === "string" ? JSON.parse(stored) : stored).acceptedAtMs).toBe(first.acceptedAtMs);
     await expect(history.append(receipt(1_790_557_888_480, ["rfq_real_book"], "100.2"))).rejects.toThrow(/immutable/i);
+    await pool.end();
+  });
+});
+
+describe("history retention", () => {
+  const hour = 3_600_000;
+  const now = 1_790_600_000_000;
+  const book = (eventId: string, acceptedAtMs: number) => {
+    const payload = parseEvent("book.state.v1", { eventId, schemaVersion: 1, venue: "extended", instrumentId: "ins_extended_SHOP-USD",
+      transport: "websocket", sourceTimestamp: acceptedAtMs - 50, receivedTimestamp: acceptedAtMs, freshnessBudgetMs: 5_000,
+      qualityFlags: [], rawPayloadRefOrHash: eventId, eligibility: "reference_only",
+      payload: { kind: "order_book", bids: [{ price: "100", quantity: "5" }], asks: [{ price: "100.1", quantity: "5" }], capacityUsd: "0" } });
+    return { eventId, topic: "book.state.v1" as const, key: payload.instrumentId, acceptedAtMs, archiveId: "archive1", payload };
+  };
+  const funding = (eventId: string, acceptedAtMs: number) => {
+    const payload = parseEvent("funding.observation.v1", { eventId, schemaVersion: 1, venue: "extended", instrumentId: "ins_extended_SHOP-USD",
+      transport: "rest", sourceTimestamp: acceptedAtMs - 50, receivedTimestamp: acceptedAtMs, freshnessBudgetMs: 60_000,
+      qualityFlags: [], rawPayloadRefOrHash: eventId, eligibility: "reference_only",
+      payload: { kind: "funding", rateType: "current", rate: "0.0001", positiveRatePayer: "long", intervalMs: hour, nextSettlementMs: acceptedAtMs + hour } });
+    return { eventId, topic: "funding.observation.v1" as const, key: payload.instrumentId, acceptedAtMs, archiveId: "archive1", payload };
+  };
+  const health = (eventId: string, acceptedAtMs: number) => ({ eventId, topic: "venue.health.v1" as const, key: "extended", acceptedAtMs,
+    archiveId: "archive1", payload: parseEvent("venue.health.v1", { venue: "extended", connectionState: "connected", lastEventAgeMs: 0,
+      clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} }) });
+  const evidence = (sourceEventIds: string[], acceptedAtMs: number) => {
+    const payload = parseEvent("evidence.bundle.v1", { evidenceHash: `sha256:${"b".repeat(64)}`, calculationVersion: "calc.v1", sourceEventIds,
+      canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: [] });
+    return { eventId: "evt_evidence", topic: "evidence.bundle.v1" as const, key: payload.evidenceHash, acceptedAtMs,
+      archiveId: "archive1", calculationVersion: "calc.v1", payload };
+  };
+  async function store() {
+    const pool = await database();
+    const history = new HistoryStore(pool);
+    await history.registerArchive({ archiveId: "archive1", uri: "s3://range/immutable.ndjson", contentHash: `sha256:${"a".repeat(64)}` });
+    await history.registerCalculation("calc.v1");
+    const ids = async (table: "event_log" | "observations") => (await pool.query(`SELECT event_id FROM ${table} ORDER BY event_id`)).rows
+      .map((row: { event_id: string }) => row.event_id);
+    return { pool, history, ids };
+  }
+
+  it("deletes book and funding history accepted before the cutoff, keeping evidence sources and other topics", async () => {
+    const { pool, history, ids } = await store();
+    await history.appendMany([book("evt_book_old", now - 10 * hour), book("evt_book_cited", now - 10 * hour),
+      funding("evt_funding_old", now - 9 * hour), health("evt_health_old", now - 10 * hour), book("evt_book_new", now - hour)]);
+    await history.append(evidence(["evt_book_cited"], now - 10 * hour));
+    const ordinals = async () => (await pool.query("SELECT event_id, ordinal FROM event_log ORDER BY ordinal")).rows
+      .map((row: { event_id: string; ordinal: number | string }) => [row.event_id, Number(row.ordinal)]);
+
+    expect(await history.pruneObservations(now - 5 * hour)).toBe(2);
+
+    expect(await ids("event_log")).toEqual(["evt_book_cited", "evt_book_new", "evt_evidence", "evt_health_old"]);
+    expect(await ids("observations")).toEqual(["evt_book_cited", "evt_book_new"]);
+    expect(await ordinals()).toEqual([["evt_book_cited", 2], ["evt_health_old", 4], ["evt_book_new", 5], ["evt_evidence", 6]]);
+    await history.append(book("evt_book_later", now));
+    expect((await ordinals()).at(-1)).toEqual(["evt_book_later", 7]);
+    expect(await history.pruneObservations(now - 5 * hour)).toBe(0);
+    await pool.end();
+  });
+
+  it("deletes oldest first in bounded batches, one transaction each", async () => {
+    const { pool, history, ids } = await store();
+    await history.appendMany([5, 4, 3, 2, 1].map(age => book(`evt_book_${age}h`, now - age * hour)));
+
+    expect(await history.pruneObservations(now, { batchSize: 2, maxBatches: 1 })).toBe(2);
+    expect(await ids("event_log")).toEqual(["evt_book_1h", "evt_book_2h", "evt_book_3h"]);
+
+    const connect = vi.spyOn(pool, "connect");
+    expect(await history.pruneObservations(now, { batchSize: 2 })).toBe(3);
+    expect(connect).toHaveBeenCalledTimes(3); // two book batches, then one empty funding batch
+    expect(await ids("event_log")).toEqual([]);
+    expect(await ids("observations")).toEqual([]);
+    await pool.end();
+  });
+
+  it("starts no batch once its signal aborts", async () => {
+    const { pool, history, ids } = await store();
+    await history.append(book("evt_book_old", now - hour));
+    expect(await history.pruneObservations(now, { signal: AbortSignal.abort() })).toBe(0);
+    expect(await ids("event_log")).toEqual(["evt_book_old"]);
+    await pool.end();
+  });
+
+  it("rejects an invalid cutoff or batch bound", async () => {
+    const { pool, history } = await store();
+    await expect(history.pruneObservations(Number.NaN)).rejects.toThrow(/cutoff/i);
+    await expect(history.pruneObservations(now, { batchSize: 0 })).rejects.toThrow(/batch/i);
+    await expect(history.pruneObservations(now, { maxBatches: 1.5 })).rejects.toThrow(/batch/i);
     await pool.end();
   });
 });
