@@ -80,6 +80,12 @@ export class InstrumentRegistry {
     return { status: "versioned", version, metadataHash, withdrawnInstrumentIds: [id] };
   }
 
+  /** Venue and underlying never change for an instrument ID (upsert rejects it), so hot paths read them uncopied. */
+  identityOf(instrumentId: string): Pick<Instrument, "venue" | "underlyingId"> | undefined {
+    const instrument = this.versions.get(instrumentId)?.at(-1)?.instrument;
+    return instrument && { venue: instrument.venue, underlyingId: instrument.underlyingId };
+  }
+
   getCurrent(instrumentId: string): InstrumentVersion | undefined {
     const result = this.versions.get(instrumentId)?.at(-1);
     return result ? clone(result) : undefined;

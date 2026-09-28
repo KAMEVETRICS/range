@@ -67,6 +67,30 @@ async function publishEligibleInputs(bus: InMemoryEventBus) {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunity worker", () => {
+  it("evaluates and routes health without copying every unrelated instrument that has a book", async () => {
+    const bus = new InMemoryEventBus();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "unrelated-books", async event => { seen.push(event); });
+    const registry = reviewedRegistry();
+    for (let index = 0; index < 50; index++) {
+      registry.upsert({ ...instrument(`ins_other_${index}`, "venue_other"), underlyingId: `equity:OTHER${index}` });
+    }
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    for (let index = 0; index < 50; index++) {
+      await bus.publish("book.state.v1", `ins_other_${index}`,
+        book(`ins_other_${index}`, "venue_other", "100", `evt_other_${index}`) as never);
+    }
+    await worker.flush();
+    const copies = vi.spyOn(registry, "getCurrent");
+
+    await publishEligibleInputs(bus);
+    await worker.flush();
+
+    expect(seen.some(event => event.status === "actionable")).toBe(true);
+    expect(copies.mock.calls.length).toBeLessThan(50);
+    await worker.stop();
+  });
+
   it("preserves the numeric high-water through a malformed sequence invalidation", async () => {
     const bus = new InMemoryEventBus();
     const seen: Opportunity[] = [];

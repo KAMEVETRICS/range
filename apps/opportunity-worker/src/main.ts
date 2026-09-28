@@ -158,11 +158,12 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     assertAuthority();
     const generation = revisionOf(underlyingId);
     const at = now();
-    const instrumentIds = [...books.keys()].filter(id => registry.getCurrent(id)?.instrument.underlyingId === underlyingId);
-    for (let left = 0; left < instrumentIds.length; left++) for (let right = left + 1; right < instrumentIds.length; right++) {
-      const a = registry.getCurrent(instrumentIds[left]!)?.instrument;
-      const b = registry.getCurrent(instrumentIds[right]!)?.instrument;
-      if (!a || !b || a.venue === b.venue) continue;
+    const instruments = [...books.keys()].filter(id => registry.identityOf(id)?.underlyingId === underlyingId)
+      .flatMap(id => { const current = registry.getCurrent(id)?.instrument; return current ? [current] : []; });
+    for (let left = 0; left < instruments.length; left++) for (let right = left + 1; right < instruments.length; right++) {
+      const a = instruments[left]!;
+      const b = instruments[right]!;
+      if (a.venue === b.venue) continue;
       const pair = [a, b] as const;
       const strategies: Strategy[] = a.productType === "perpetual" && b.productType === "perpetual"
         ? ["perp_spread", "funding_differential"]
@@ -283,7 +284,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
              event.receivedTimestamp < current.receivedTimestamp)) return;
       if (!reset && current.contiguous && contiguous && current.sequence !== undefined && sequence !== undefined &&
           sequence > current.sequence + 1n) {
-        const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+        const underlying = registry.identityOf(event.instrumentId)?.underlyingId;
         const revision = underlying ? await bump(underlying) : undefined;
         if (revision !== undefined) expireBook(event.instrumentId, revision, "BOOK_SEQUENCE_GAP");
         books.delete(event.instrumentId);
@@ -293,7 +294,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         return;
       }
     }
-    const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+    const underlying = registry.identityOf(event.instrumentId)?.underlyingId;
     const revision = underlying ? await bump(underlying) : undefined;
     if (revision !== undefined) expireBook(event.instrumentId, revision);
     bookCursors.set(event.instrumentId, { eventId: event.eventId,
@@ -321,7 +322,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       } else { observations.push(event); accepted = true; }
     }
     if (!accepted) return;
-    const underlying = registry.getCurrent(event.instrumentId)?.instrument.underlyingId;
+    const underlying = registry.identityOf(event.instrumentId)?.underlyingId;
     const revision = underlying ? await bump(underlying) : undefined;
     if (revision !== undefined) expireBook(event.instrumentId, revision);
     if (observations.length > 10_000) observations.shift();
@@ -332,19 +333,19 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     health.set(event.venue, event);
     const affected = new Set<string>();
     for (const id of books.keys()) {
-      const instrument = registry.getCurrent(id)?.instrument;
-      if (instrument?.venue === event.venue) affected.add(instrument.underlyingId);
+      const identity = registry.identityOf(id);
+      if (identity?.venue === event.venue) affected.add(identity.underlyingId);
     }
     for (const lifecycle of active.values()) {
       const current = lifecycle.current(now());
-      if (current.legs.some(leg => registry.getCurrent(leg.instrumentId)?.instrument.venue === event.venue)) {
+      if (current.legs.some(leg => registry.identityOf(leg.instrumentId)?.venue === event.venue)) {
         affected.add(current.underlyingId);
       }
     }
     for (const underlying of affected) { await bump(underlying); schedule(underlying); }
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
-      if (before.status !== "actionable" || !before.legs.some(leg => registry.getCurrent(leg.instrumentId)?.instrument.venue === event.venue)) continue;
+      if (before.status !== "actionable" || !before.legs.some(leg => registry.identityOf(leg.instrumentId)?.venue === event.venue)) continue;
       const after = lifecycle.onVenueHealth(event);
       if (after.status === "expired") {
         expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);

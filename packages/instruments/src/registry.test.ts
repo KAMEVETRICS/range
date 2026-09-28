@@ -163,3 +163,14 @@ describe("InstrumentRegistry", () => {
     expect(received).toMatchObject([{ reason: "CAPABILITY_WITHDRAWN", withdrawnVersion: 1, replacementVersion: 2 }]);
   });
 });
+
+it("reads an instrument's immutable venue and underlying without copying its version", () => {
+  const registry = new InstrumentRegistry();
+  registry.upsert(first);
+  const copies = vi.spyOn(globalThis, "structuredClone");
+  try {
+    expect(registry.identityOf(first.instrumentId)).toEqual({ venue: "bitget", underlyingId: "venue-local:AAPL" });
+    expect(registry.identityOf("ins_unknown")).toBeUndefined();
+    expect(copies).not.toHaveBeenCalled();
+  } finally { copies.mockRestore(); }
+});
