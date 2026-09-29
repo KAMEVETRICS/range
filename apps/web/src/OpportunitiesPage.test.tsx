@@ -83,6 +83,7 @@ function apiWith(items: Opportunity[], detail = items[0], warnings: string[] = [
       },
     }),
     listVenues: vi.fn().mockResolvedValue(venues),
+    marketOverview: vi.fn(),
     subscribe: vi.fn(() => () => undefined),
     intentPreviewCapability: { available: false as const, reason: "Intent preview requires a server-side intent:create scope; no privileged token is exposed to this browser." },
   };
@@ -91,7 +92,8 @@ function apiWith(items: Opportunity[], detail = items[0], warnings: string[] = [
 
 afterEach(cleanup);
 
-describe("Range opportunities dashboard", () => {
+// The first render pays jsdom and React start-up, which on a busy host has exceeded the default 5 s.
+describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
   it("shows stale age and disables intent creation", async () => {
     render(<OpportunitiesPage api={apiWith([staleOpportunity])} initialUnderlying="equity:NVDA" />);
 
@@ -205,7 +207,7 @@ describe("Range opportunities dashboard", () => {
     vi.mocked(api.scanOpportunities).mockResolvedValueOnce(opportunities([current, incoming]));
 
     await streamHandler?.({ kind: "opportunity", message: "New opportunity published.", detail: {
-      ...opportunities([incoming]), result: { opportunity: incoming, rejection_history: [] },
+      ...opportunities([incoming]), result: { opportunity: incoming, rejection_history: [], quote_timestamps: [] },
     } });
 
     expect(await screen.findByText("44.00 bps")).toBeVisible();
