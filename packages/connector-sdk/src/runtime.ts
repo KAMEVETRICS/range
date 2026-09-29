@@ -242,7 +242,13 @@ export class ConnectorRuntime {
   }
 
   private trackSequence(event: RawVenueEvent): boolean {
-    if (event.sequencePolicy !== "contiguous" || typeof event.sequence !== "number") return false;
+    if (event.sequencePolicy !== "contiguous") {
+      // A book without contiguous sequencing is a full snapshot, complete by construction. A retained gap still
+      // needs the contiguous feed's own validated snapshot.
+      if (event.payload.kind === "order_book" && this.sequenceIntegrity === "unknown") this.sequenceIntegrity = "consistent";
+      return false;
+    }
+    if (typeof event.sequence !== "number") return false;
     const prior = this.sequences.get(event.instrumentId);
     if (prior === undefined) {
       // Only a session's first validated snapshot clears a gap retained across reconnect.

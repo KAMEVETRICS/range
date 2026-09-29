@@ -221,6 +221,32 @@ it("retains gap integrity through reconnect until a validated epoch snapshot arr
   await recovered;
 });
 
+it("counts a feed without contiguous sequencing as consistent once it handles a full book snapshot", async () => {
+  const book = { kind: "order_book" as const, bids: [{ price: "199", quantity: "1" }], asks: [{ price: "201", quantity: "1" }],
+    capacityUsd: "0" };
+  const integrityAfter = async (events: ReturnType<typeof snapshot>[], before?: "gap") => {
+    const bus = new InMemoryEventBus();
+    const adapter = fakeAdapter();
+    adapter.stream = async function* () {
+      if (before === "gap") throw new ConnectorDiagnosticError("SEQUENCE_GAP");
+      yield* events;
+    };
+    const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+    if (before === "gap") {
+      await runtime.runUntilDisconnected();
+      adapter.stream = async function* () { yield* events; };
+    }
+    await runtime.runUntilDisconnected();
+    const health = await published(bus, "venue.health.v1");
+    return [runtime.health().sequenceIntegrity, health.at(-1)?.sequenceIntegrity];
+  };
+  // Other events say nothing about a book; a full snapshot is complete by construction.
+  expect(await integrityAfter([{ ...snapshot(), transport: "websocket" }])).toEqual(["unknown", "unknown"]);
+  expect(await integrityAfter([{ ...snapshot(), transport: "websocket", payload: book }])).toEqual(["consistent", "consistent"]);
+  // A gap still needs the contiguous feed's own validated snapshot.
+  expect(await integrityAfter([{ ...snapshot(), transport: "websocket", payload: book }], "gap")).toEqual(["gap", "gap"]);
+});
+
 it("keeps an in-session gap when another instrument starts its validated sequence", async () => {
   const bus = new InMemoryEventBus();
   const adapter = fakeAdapter();
