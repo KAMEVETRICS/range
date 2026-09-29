@@ -2,6 +2,7 @@ import type { EventBus } from "@range/event-bus";
 import { ObservationEnvelopeSchema, VenueHealthSchema } from "@range/domain";
 import type { VenueHealth } from "@range/domain";
 import { clockSkewMs, isEpochMilliseconds } from "./clock.js";
+import { withPeriodic } from "./periodic.js";
 import {
   backoffDelayMs,
   ConnectorDiagnosticError,
@@ -102,7 +103,11 @@ export class ConnectorRuntime {
     if (!instruments.length || signal.aborted) return undefined;
     if (!this.options.adapter.stream) return persistent ? this.pollUntilAborted(instruments, signal) : undefined;
     try {
-      for await (const event of this.options.adapter.stream(instruments, signal)) {
+      const stream = this.options.adapter.stream(instruments, signal);
+      const events = this.options.adapter.supplement
+        ? withPeriodic(stream, pollSignal => this.supplement(instruments, pollSignal), this.supplementIntervalMs(), signal)
+        : stream;
+      for await (const event of events) {
         if (signal.aborted) break;
         await this.handleEvent(event);
       }
@@ -118,9 +123,14 @@ export class ConnectorRuntime {
   }
 
   private async pollUntilAborted(instruments: DiscoveredInstrument[], signal: AbortSignal): Promise<ConnectorDiagnosticError | undefined> {
+    let supplementDueAtMs = Number.NEGATIVE_INFINITY;
     while (!signal.aborted) {
       try {
         await this.snapshotAll(instruments, signal);
+        if (this.options.adapter.supplement && this.nowMs() >= supplementDueAtMs) {
+          supplementDueAtMs = this.nowMs() + this.supplementIntervalMs();
+          for (const event of await this.supplement(instruments, signal)) await this.handleEvent(event);
+        }
         if (signal.aborted) return undefined;
         await waitForRetry(this.pollIntervalMs, { signal, sleep: this.options.sleep });
       } catch (error) {
@@ -130,6 +140,21 @@ export class ConnectorRuntime {
       }
     }
     return undefined;
+  }
+
+  private supplementIntervalMs(): number {
+    return this.options.adapter.supplementIntervalMs ?? 60_000;
+  }
+
+  /** A failed supplement is counted and skipped: the stream or snapshot polling it complements carries on. */
+  private async supplement(instruments: DiscoveredInstrument[], signal: AbortSignal): Promise<RawVenueEvent[]> {
+    try { return await this.options.adapter.supplement!(instruments, signal); }
+    catch (error) {
+      if (signal.aborted) return [];
+      const key = `SUPPLEMENT_${toConnectorDiagnostic(error).code}`;
+      this.errorCounters[key] = (this.errorCounters[key] ?? 0) + 1;
+      return [];
+    }
   }
 
   private async prepareSession(signal: AbortSignal): Promise<DiscoveredInstrument[]> {

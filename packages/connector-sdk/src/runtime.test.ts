@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryEventBus, type EventBus, type Topic, type TopicPayload } from "@range/event-bus";
 import { InstrumentSchema, type Instrument } from "@range/domain";
 import {
@@ -245,6 +245,71 @@ it("counts a feed without contiguous sequencing as consistent once it handles a 
   expect(await integrityAfter([{ ...snapshot(), transport: "websocket", payload: book }])).toEqual(["consistent", "consistent"]);
   // A gap still needs the contiguous feed's own validated snapshot.
   expect(await integrityAfter([{ ...snapshot(), transport: "websocket", payload: book }], "gap")).toEqual(["gap", "gap"]);
+});
+
+describe("periodic supplements", () => {
+  const book = { kind: "order_book" as const, bids: [{ price: "199", quantity: "1" }], asks: [{ price: "201", quantity: "1" }],
+    capacityUsd: "0" };
+  const funding = (eventId: string) => ({ ...snapshot(), eventId, payload: { kind: "funding" as const, rateType: "predicted" as const,
+    rate: "0.0001", positiveRatePayer: "long" as const, intervalMs: 3_600_000, nextSettlementMs: 13_600_000 } });
+  const gatedStream = () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const stream = async function* () {
+      yield { ...snapshot(), eventId: "evt_book", transport: "websocket" as const, payload: book };
+      await gate;
+    };
+    return { stream, release: () => release() };
+  };
+
+  it("merges an adapter's supplements into its stream, fetching at once", async () => {
+    const bus = new InMemoryEventBus();
+    const observations = await published(bus, "market.observation.v1");
+    const adapter = fakeAdapter();
+    const { stream, release } = gatedStream();
+    adapter.stream = stream;
+    adapter.supplement = vi.fn(async () => [funding("evt_funding")]);
+    const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+
+    const running = runtime.runUntilDisconnected();
+    await vi.waitFor(() => expect(observations.map(item => item.eventId)).toEqual(expect.arrayContaining(["evt_book", "evt_funding"])));
+    expect(adapter.supplement).toHaveBeenCalledTimes(1);
+    release();
+    await running;
+  });
+
+  it("supplements REST polling once per supplement interval", async () => {
+    const bus = new InMemoryEventBus();
+    const controller = new AbortController();
+    let now = 10_000, waits = 0;
+    const adapter = fakeAdapter();
+    adapter.supplementIntervalMs = 60_000;
+    adapter.supplement = vi.fn(async () => [funding(`evt_funding_${now}`)]);
+    const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => now, pollIntervalMs: 30_000,
+      sleep: async delayMs => { now += delayMs; if (++waits === 4) controller.abort(); } });
+
+    await runtime.start(controller.signal);
+
+    // Polls at 10 s, 40 s, 70 s and 100 s; supplements at 10 s and 70 s.
+    expect(adapter.supplement).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts a failed supplement without interrupting the stream", async () => {
+    const bus = new InMemoryEventBus();
+    const observations = await published(bus, "market.observation.v1");
+    const adapter = fakeAdapter();
+    const { stream, release } = gatedStream();
+    adapter.stream = stream;
+    adapter.supplement = async () => { throw new ConnectorDiagnosticError("RATE_LIMITED", 1_000); };
+    const runtime = new ConnectorRuntime({ adapter, eventBus: bus, nowMs: () => 10_000 });
+
+    const running = runtime.runUntilDisconnected();
+    await vi.waitFor(() => expect(runtime.health().errorCounters).toEqual({ SUPPLEMENT_RATE_LIMITED: 1 }));
+    await vi.waitFor(() => expect(observations.map(item => item.eventId)).toContain("evt_book"));
+    expect(runtime.health()).toMatchObject({ connectionState: "connected", rateLimit: { state: "healthy" } });
+    release();
+    await running;
+  });
 });
 
 it("keeps an in-session gap when another instrument starts its validated sequence", async () => {

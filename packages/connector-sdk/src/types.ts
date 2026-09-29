@@ -52,6 +52,13 @@ export interface ConnectorAdapter {
     instruments: DiscoveredInstrument[],
     signal: AbortSignal,
   ): AsyncIterable<RawVenueEvent>;
+  /**
+   * Periodic REST data that complements the stream or snapshot polling, such as funding rates. The runtime fetches
+   * it when a session starts and then every supplementIntervalMs (default 60 s); a failed fetch is counted in
+   * health as SUPPLEMENT_<code> and tried again at the next interval.
+   */
+  supplement?(instruments: DiscoveredInstrument[], signal: AbortSignal): Promise<RawVenueEvent[]>;
+  supplementIntervalMs?: number;
 }
 
 export type ConnectorHealth = VenueHealth;
