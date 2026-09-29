@@ -13,6 +13,10 @@ pnpm tsx scripts/verify-demo.ts
 
 The verifier is intentionally fail-closed. On the checked-in empty mapping seed it must report a failed live-mapping invariant and dependent actionable-flow failures. Do not override or hand-edit proof output to obtain eight passes.
 
+## Public dashboard
+
+On the VPS the dashboard is served at `https://range.datatides.xyz` by the host's Caddy, which also serves other sites; its site block lives in `/etc/caddy/Caddyfile`, outside this repository. Caddy asks for a login (user `range`, password in `/srv/range-secrets/dashboard-login`, root-only) and forwards to the dashboard container on `127.0.0.1:4173`, whose nginx adds the read-only dashboard token for API calls, so the browser never holds it. Anyone past the login can read everything the dashboard shows. To change the password, write the new one to that file, replace the hash from `caddy hash-password` in the site block, run `caddy validate --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`; a reload does not interrupt the other sites.
+
 ## Correctness alerts
 
 Prioritize these signals over process availability: `range_connector_lag_ms`, `range_book_sequence_gaps_total`, `range_clock_skew_ms`, `range_stale_rejections_total`, `range_opportunity_age_ms`, `range_intent_expiry_total`, `range_gateway_latency_ms`, `range_event_lag_ms`, and `range_replay_drift_total`.
