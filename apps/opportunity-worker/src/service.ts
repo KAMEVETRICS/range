@@ -10,6 +10,7 @@ import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersis
   type RedisCommands, type SqlPool } from "@range/storage";
 import { checkWorkerHealth } from "./health.js";
 import { historyRecord } from "./history-record.js";
+import { MarketBoard } from "./market-board.js";
 import { createReviewedMappingSeeder } from "./mapping-seeder.js";
 
 const calculationVersion = "range.calc.v1";
@@ -85,16 +86,33 @@ async function main() {
       version: event.receivedTimestamp, expiresAt: event.sourceTimestamp + event.freshnessBudgetMs, underlyingId: id, value: event,
     });
   };
+  // The market board keeps each instrument's latest top of book and funding for display (the markets overview); the
+  // current-state entries above expire with their freshness budgets, which suits trading reads but not a table.
+  const board = new MarketBoard();
+  let boardVersion = 0;
+  const boardTimer = setInterval(() => {
+    const at = Date.now();
+    boardVersion = Math.max(at, boardVersion + 1);
+    current.put("market-board", { version: boardVersion, expiresAt: at + 30_000, value: board.snapshot(at) })
+      .catch(error => telemetry.logger.error("market board publish failed", { error }));
+  }, 2_000);
   stops.push(await bus.subscribe("instrument.registry.v1", `current-instrument-index-${run}`, async event => {
     if (event.kind !== "upsert") return;
+    board.upsertInstrument(event.instrument);
     instrumentUnderlyings.set(event.instrument.instrumentId, event.instrument.underlyingId);
     for (const item of pending.get(event.instrument.instrumentId) ?? []) {
       await storeObservation(item.payload.kind === "order_book" ? "book.state.v1" : "funding.observation.v1", item as never);
     }
     pending.delete(event.instrument.instrumentId);
   }, { deleteGroupOnStop: true }));
-  stops.push(await bus.subscribe("book.state.v1", "current-books", event => storeObservation("book.state.v1", event)));
-  stops.push(await bus.subscribe("funding.observation.v1", "current-funding", event => storeObservation("funding.observation.v1", event)));
+  stops.push(await bus.subscribe("book.state.v1", "current-books", event => {
+    board.applyBook(event);
+    return storeObservation("book.state.v1", event);
+  }));
+  stops.push(await bus.subscribe("funding.observation.v1", "current-funding", event => {
+    board.applyFunding(event);
+    return storeObservation("funding.observation.v1", event);
+  }));
   // Connectors republish unchanged health at least every 30 s while their venue sends events, so a record lives for
   // three of those intervals: a venue reads as missing only once its feed or connector has stopped. Readers judge
   // freshness from asOfMs; a venue's freshness budget (2-5 s) is far shorter than the heartbeat.
@@ -128,7 +146,7 @@ async function main() {
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     subscriptionsReady = false;
-    clearInterval(pruneTimer); stopPruning.abort();
+    clearInterval(pruneTimer); clearInterval(boardTimer); stopPruning.abort();
     await service.stop(); for (const stop of stops.reverse()) await stop(); await transport.close(); await pruning;
     await new Promise<void>((resolve, reject) => healthServer.close(error => error ? reject(error) : resolve()));
     redis.disconnect(); await sql.end();
