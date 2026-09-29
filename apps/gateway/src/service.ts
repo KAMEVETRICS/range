@@ -16,7 +16,7 @@ async function main() {
   const manifestInput = JSON.parse(process.env.RANGE_VENUE_MANIFEST_JSON ?? "[]");
   const manifest = VenueViewSchema.pick({ venue: true, capabilities: true, freshnessBudgetMs: true }).array().min(1).parse(manifestInput);
   const sql = new pg.Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 5_000 }) as unknown as SqlPool & { end(): Promise<void> };
-  const redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { disconnect(): void };
+  const redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { connect(): Promise<void>; disconnect(): void };
   const current = new CurrentStateStore(redis, new PostgresRevisionAuthority(sql));
   const history = new HistoryStore(sql);
   const telemetry = createTelemetry({ service: "gateway", secrets: [token, dashboardToken, config.apiTokenPepper],
@@ -38,10 +38,14 @@ async function main() {
   app.get("/metrics", async (_request, reply) => reply.type("text/plain; version=0.0.4").send(telemetry.metrics.prometheus()));
   const close = async () => { await app.close(); redis.disconnect(); await sql.end(); };
   process.once("SIGINT", () => { void close(); }); process.once("SIGTERM", () => { void close(); });
+  // Without an offline queue, a command sent while the connection is still opening fails, so the first requests
+  // after a start would fail; connect before serving.
+  await redis.connect();
   await app.listen({ host: "0.0.0.0", port: Number(process.env.PORT ?? 8080) });
 }
 
 main().catch(error => {
-  // Startup errors are deliberately summarized; configuration values and database URLs are never serialized.
-  console.error(`Range gateway startup failed: ${error instanceof Error ? error.name : "unknown error"}`); process.exitCode = 1;
+  // Startup errors are deliberately summarized; configuration values and database URLs are never serialized. Exit
+  // rather than set exitCode: open Redis and Postgres connections would keep a failed process alive.
+  console.error(`Range gateway startup failed: ${error instanceof Error ? error.name : "unknown error"}`); process.exit(1);
 });

@@ -23,7 +23,7 @@ async function main() {
   const brokers = (process.env.REDPANDA_BROKERS ?? "").split(",").map(value => value.trim()).filter(Boolean);
   if (!databaseUrl || !redisUrl || !brokers.length) throw new Error("DATABASE_URL, REDIS_URL, and REDPANDA_BROKERS are required");
   const sql = new pg.Pool({ connectionString: databaseUrl, max: 10, connectionTimeoutMillis: 5_000 }) as unknown as SqlPool & { end(): Promise<void> };
-  const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { disconnect(): void; ping(): Promise<string> };
+  const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { connect(): Promise<void>; disconnect(): void; ping(): Promise<string> };
   const telemetry = createTelemetry({ service: "opportunity-worker",
     traceSink: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(process.env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const transport = new RedpandaEventBus({ clientId: "range-opportunity-worker", brokers });
@@ -67,11 +67,15 @@ async function main() {
   }));
 
   const seed = SeedConfigSchema.parse(JSON.parse(await readFile(process.env.RANGE_MAPPING_CONFIG ?? "config/instrument-mappings.json", "utf8")));
-  // In-memory registry views replay the whole registry topic on every start (fresh groups), like the worker's registry.
+  // In-memory registry views replay the whole registry topic on every start (fresh groups, deleted on stop), like the
+  // worker's registry.
   const run = randomUUID();
   stops.push(await bus.subscribe("instrument.registry.v1", `reviewed-mapping-seeder-${run}`, createReviewedMappingSeeder(seed,
-    (underlyingId, event) => bus.publish("instrument.registry.v1", underlyingId, event))));
+    (underlyingId, event) => bus.publish("instrument.registry.v1", underlyingId, event)), { deleteGroupOnStop: true }));
 
+  // Without an offline queue, a command sent while the connection is still opening fails, so connect before the
+  // current-state consumers start writing rather than on their first write.
+  await redis.connect();
   const instrumentUnderlyings = new Map<string, string>();
   const pending = new Map<string, Array<TopicPayload["book.state.v1"] | TopicPayload["funding.observation.v1"]>>();
   const storeObservation = async (topic: "book.state.v1" | "funding.observation.v1", event: TopicPayload[typeof topic]) => {
@@ -88,7 +92,7 @@ async function main() {
       await storeObservation(item.payload.kind === "order_book" ? "book.state.v1" : "funding.observation.v1", item as never);
     }
     pending.delete(event.instrument.instrumentId);
-  }));
+  }, { deleteGroupOnStop: true }));
   stops.push(await bus.subscribe("book.state.v1", "current-books", event => storeObservation("book.state.v1", event)));
   stops.push(await bus.subscribe("funding.observation.v1", "current-funding", event => storeObservation("funding.observation.v1", event)));
   const budgets = new Map<string, number>((JSON.parse(process.env.RANGE_VENUE_MANIFEST_JSON ?? "[]") as Array<{ venue: string; freshnessBudgetMs: number }>)
@@ -132,5 +136,7 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`Range worker startup failed: ${error instanceof Error ? error.name : "unknown error"}`); process.exitCode = 1;
+  // Exit rather than set exitCode: open Redis, Postgres and broker connections would keep a failed process alive,
+  // and Docker restarts only a process that exits.
+  console.error(`Range worker startup failed: ${error instanceof Error ? error.name : "unknown error"}`); process.exit(1);
 });
