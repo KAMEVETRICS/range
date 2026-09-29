@@ -2,8 +2,9 @@ import { z } from "zod";
 import { Decimal } from "decimal.js";
 import { FundingProjectionSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, type Opportunity } from "@range/domain";
 import { normalizeFunding, projectFunding } from "@range/market-state";
-import { FundingCompareQuerySchema, InstrumentQuerySchema, MarketQuerySchema, OpportunityParamsSchema, PageQuerySchema, ScanQuerySchema, VenueViewSchema,
-  type ApplicationQueries, type EventPageItem, type RequestContext } from "./queries.js";
+import { FundingCompareQuerySchema, InstrumentQuerySchema, MarketOverviewQuerySchema, MarketQuerySchema, OpportunityParamsSchema, PageQuerySchema,
+  ScanQuerySchema, VenueViewSchema, type ApplicationQueries, type EventPageItem, type RequestContext } from "./queries.js";
+import { buildMarketOverview, MarketOverviewRowSchema, type MarketOverviewRow } from "./market-overview.js";
 
 // Deliberately omit free-form connector metadata and private raw-payload locators.
 export const PublicInstrumentSchema = z.union([InstrumentSchema.options[0].omit({ metadata: true }), InstrumentSchema.options[1].omit({ metadata: true })]);
@@ -36,6 +37,8 @@ export const responseSchemas = {
     quote_timestamps: z.array(QuoteTimestampSchema).max(1000) }).strict() }),
   invalidation: EnvelopeSchema.extend({ result: z.object({ opportunity_id: z.string(), current: z.literal(false) }).strict() }),
   health: EnvelopeSchema.extend({ result: VenueViewSchema }),
+  marketOverview: EnvelopeSchema.extend({ result: z.object({ board_as_of_ms: z.number().int().nullable(),
+    matching: z.literal("ticker_unreviewed"), rows: z.array(MarketOverviewRowSchema).max(2000) }).strict() }),
   error: EnvelopeSchema.extend({ result: z.object({ code: z.string() }).strict() }),
 };
 export class ApplicationError extends Error {
@@ -44,12 +47,31 @@ export class ApplicationError extends Error {
 
 export class RangeApplication {
   constructor(readonly queries: ApplicationQueries, private readonly now: () => number = Date.now) {}
+  private overview?: { readAtMs: number; asOfMs: number | null; rows: MarketOverviewRow[] };
   envelope(context: RequestContext, result: unknown, sourceMs = this.now(), evidence: string[] = [], warnings: string[] = [], status: Envelope["status"] = "ok"): Envelope {
     if (!Number.isFinite(sourceMs) || sourceMs > this.now()) throw new ApplicationError(503, "INVALID_SOURCE_TIME");
     return EnvelopeSchema.parse({ status, as_of: new Date(sourceMs).toISOString(), freshness: { oldest_input_ms: Math.max(0, this.now() - sourceMs) },
       result, evidence: [...new Set(evidence)].map(event_id => ({ event_id })), warnings: [...new Set(warnings)], trace_id: context.traceId });
   }
   error(context: RequestContext, code: string) { return this.envelope(context, { code }, this.now(), [], [], "rejected"); }
+  /**
+   * Latest prices and funding per stock across venues, matched by ticker without a reviewed mapping: display only,
+   * never an opportunity. The worker republishes the board every 2 s; one read serves every caller for a second, and
+   * rows are rebuilt only for a new board, with ages measured at the board's own time.
+   */
+  async getMarketOverview(input: unknown, context: RequestContext) {
+    MarketOverviewQuerySchema.parse(input);
+    const now = this.now();
+    if (!this.overview || now - this.overview.readAtMs >= 1_000) {
+      const board = await this.queries.getMarketBoard(context);
+      const rows = !board ? [] : board.asOfMs === this.overview?.asOfMs ? this.overview.rows : buildMarketOverview(board, board.asOfMs);
+      this.overview = { readAtMs: now, asOfMs: board?.asOfMs ?? null, rows };
+    }
+    const { asOfMs, rows } = this.overview;
+    const warnings = asOfMs === null ? ["market board unavailable"] : now - asOfMs > 30_000 ? ["market board stale"] : [];
+    return responseSchemas.marketOverview.parse(this.envelope(context, { board_as_of_ms: asOfMs, matching: "ticker_unreviewed", rows },
+      Math.min(now, asOfMs ?? now), [], warnings, warnings.length ? "partial" : "ok"));
+  }
   async listVenues(input: unknown, context: RequestContext) {
     const query = PageQuerySchema.parse(input);
     const venues = await this.queries.listVenues(context);

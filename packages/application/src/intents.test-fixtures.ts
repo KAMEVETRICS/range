@@ -49,7 +49,7 @@ export async function intentFixture(strategy = "perp_spread") {
     async findInstruments() { return instruments; }, async getMarketSnapshot() { return observations; }, async scanOpportunities() { return [opportunity]; },
     async inspectOpportunity(_context, id) { return id === opportunity.opportunityId && revision === opportunity.stateRevision ? opportunity : undefined; },
     async getEvidence() { return evidence; }, async getSourceTimestamps(_context, ids) { return ids.flatMap(id => observationTimestamps.get(id) ?? []); },
-    async getOpportunityHistory() { return []; }, async getAcceptedRevision() { return revision; }, async readEvents() { return []; }, async latestEventOrdinal() { return 0; },
+    async getOpportunityHistory() { return []; }, async getAcceptedRevision() { return revision; }, async readEvents() { return []; }, async latestEventOrdinal() { return 0; }, async getMarketBoard() { return undefined; },
   };
   const { Pool } = newDb().adapters.createPg();
   const sql = new Pool();

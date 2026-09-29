@@ -33,7 +33,8 @@ export class ClientAuth {
     return result;
   }
   limit(client: ClientRecord, operation: string) {
-    const limit = operation === "scanOpportunities" ? 10 : 60;
+    // The market overview is served from a board cached for a second, so dashboards may refresh it often.
+    const limit = operation === "scanOpportunities" ? 10 : operation === "getMarketOverview" ? 600 : 60;
     const key = `${client.id}:${operation}`;
     let budget = this.budgets.get(key);
     if (!budget || this.now() - budget.start >= 60_000) { budget = { count: 0, start: this.now() }; this.budgets.set(key, budget); }

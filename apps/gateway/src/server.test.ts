@@ -56,6 +56,7 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
     async getAcceptedRevision(context) { check(context); return revision; },
     async readEvents(context) { check(context); return []; },
     async latestEventOrdinal(context) { check(context); return 0; },
+    async getMarketBoard(context) { check(context); return undefined; },
   };
   const application = new RangeApplication(queries, () => clock);
   const app = buildServer({ application, pepper, clients: [{ id: "reader", tokenHash: hashClientToken(token, pepper), scopes }],
@@ -99,6 +100,50 @@ describe("REST application boundary", () => {
     expect(response.statusCode).toBe(503);
     expect(response.json().result.code).toBe("INVALID_SOURCE_TIME");
     expect(response.body).not.toContain('"status":"actionable"');
+  });
+
+  describe("market overview", () => {
+    const listing = (instrumentId: string, venue: string, underlyingId: string, bid: string, ask: string) => ({
+      instrumentId, venue, venueSymbol: instrumentId, underlyingId, productType: "perpetual",
+      book: { bid: { price: bid, quantity: "1" }, ask: { price: ask, quantity: "1" }, sourceTimestamp: now - 2_000,
+        receivedTimestamp: now - 1_990, freshnessBudgetMs: 5_000, eligibility: "reference_only", qualityFlags: [] },
+    });
+    const board = { asOfMs: now - 1_000, entries: [
+      listing("ins_bitget_aapl", "bitget", "bitget:AAPL", "229.9", "230.1"),
+      listing("ins_extended_aapl", "extended", "equity:AAPL", "231.9", "232.1"),
+    ] };
+
+    it("serves rows matched by ticker, marked as unreviewed", async () => {
+      const f = await fixture();
+      f.queries.getMarketBoard = async () => board as never;
+      const response = await f.app.inject({ method: "GET", url: "/v1/markets/overview", headers: auth });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body).toMatchObject({ status: "ok", warnings: [], result: { board_as_of_ms: now - 1_000, matching: "ticker_unreviewed" } });
+      expect(body.result.rows.map((row: { ticker: string }) => row.ticker)).toEqual(["AAPL"]);
+      expect(body.result.rows[0].price_gap_pct).toBeCloseTo((232 - 230) / 230 * 100, 10);
+    });
+
+    it("reports a missing board as partial rather than failing", async () => {
+      const { app } = await fixture();
+      const body = (await app.inject({ method: "GET", url: "/v1/markets/overview", headers: auth })).json();
+      expect(body).toMatchObject({ status: "partial", warnings: ["market board unavailable"],
+        result: { board_as_of_ms: null, rows: [] } });
+    });
+
+    it("rejects query parameters it does not define", async () => {
+      const { app } = await fixture();
+      expect((await app.inject({ method: "GET", url: "/v1/markets/overview?venue=bitget", headers: auth })).statusCode).toBe(400);
+    });
+
+    it("allows a dashboard's refreshes beyond the default 60 requests a minute", async () => {
+      const { app } = await fixture();
+      const codes = new Set<number>();
+      for (let request = 0; request < 61; request++) {
+        codes.add((await app.inject({ method: "GET", url: "/v1/markets/overview", headers: auth })).statusCode);
+      }
+      expect([...codes]).toEqual([200]);
+    });
   });
 
   it("names a degraded venue in partial market responses", async () => {
@@ -372,7 +417,7 @@ describe("OpenAPI contracts", () => {
     const f = await fixture();
     const urls: Record<string, string> = { "/v1/venues": "/v1/venues", "/v1/instruments": "/v1/instruments",
       "/v1/markets/snapshot": "/v1/markets/snapshot?underlying=equity:TSLA", "/v1/funding/compare": "/v1/funding/compare?underlying=equity:TSLA&notional_usd=100&holding_horizon_ms=3600000", "/v1/opportunities": "/v1/opportunities?underlying=equity:TSLA",
-      "/v1/opportunities/{id}": "/v1/opportunities/opp_1" };
+      "/v1/opportunities/{id}": "/v1/opportunities/opp_1", "/v1/markets/overview": "/v1/markets/overview" };
     for (const [path, url] of Object.entries(urls)) {
       const response = await f.app.inject({ method: "GET", url, headers: auth });
       expect(response.statusCode).toBe(200);
@@ -399,6 +444,6 @@ describe("OpenAPI contracts", () => {
     }
     const json = JSON.stringify(document);
     expect(json).not.toMatch(/privateKey|apiSecret|rawPayloadRefOrHash|signedTransaction/);
-    expect(Object.keys(document.paths)).toHaveLength(9);
+    expect(Object.keys(document.paths)).toHaveLength(10);
   }, 15_000);
 });

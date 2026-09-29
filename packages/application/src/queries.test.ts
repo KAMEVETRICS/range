@@ -26,6 +26,22 @@ describe("storage query adapter", () => {
     expect(JSON.stringify(await adapter.getSourceTimestamps(context, ["evt_book"]))).not.toContain("payload");
   });
 
+  it("reads the market board the worker publishes, validating it, and reports none when absent", async () => {
+    const board = { asOfMs: 1_790_000_000_000, entries: [{ instrumentId: "ins_ext_aapl", venue: "extended", venueSymbol: "AAPL-USD",
+      underlyingId: "equity:AAPL", productType: "perpetual" }] };
+    const get = vi.fn(async (key: string) => key === "market-board" ? { version: 1, expiresAt: 2, value: board } : undefined);
+    const adapter = new StorageQueries(
+      { get: get as never, query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
+      { query: vi.fn(async () => ({ rows: [] })) }, [],
+    );
+    expect(await adapter.getMarketBoard(context)).toEqual(board);
+    get.mockResolvedValueOnce({ version: 1, expiresAt: 2, value: { ...board, entries: [{ instrumentId: "" }] } } as never);
+    await expect(adapter.getMarketBoard(context)).rejects.toThrow();
+    get.mockResolvedValueOnce(undefined);
+    expect(await adapter.getMarketBoard(context)).toBeUndefined();
+  });
+
   it("rejects timestamp batches above the storage query limit before issuing SQL", async () => {
     const query = vi.fn(async () => ({ rows: [] }));
     const adapter = new StorageQueries(

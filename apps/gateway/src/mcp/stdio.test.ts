@@ -111,7 +111,7 @@ describe("local stdio executable", () => {
       listVenues: async () => { entered(); await blocked; return []; }, findInstruments: async () => [], getMarketSnapshot: async () => [],
       scanOpportunities: async () => [], inspectOpportunity: async () => undefined, getEvidence: async () => undefined,
       getSourceTimestamps: async () => [], getOpportunityHistory: async () => [], getAcceptedRevision: async () => undefined,
-      readEvents: async () => [], latestEventOrdinal: async () => 0,
+      readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined,
     };
     const input = new PassThrough(), output = new PassThrough();
     const client: ClientRecord = { id: "local_reader", scopes: ["market:read"], tokenHash: "0".repeat(64) };
@@ -148,7 +148,7 @@ describe("local stdio executable", () => {
       listVenues: async () => [], findInstruments: async () => [], getMarketSnapshot: async () => [],
       scanOpportunities: async () => [], inspectOpportunity: async () => undefined, getEvidence: async () => undefined,
       getSourceTimestamps: async () => [], getOpportunityHistory: async () => [], getAcceptedRevision: async () => undefined,
-      readEvents: async () => [], latestEventOrdinal: async () => 0,
+      readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined,
     };
     const input = new PassThrough(), output = new PassThrough();
     const client: ClientRecord = { id: "local_reader", scopes: ["market:read"], tokenHash: "0".repeat(64) };

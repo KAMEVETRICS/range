@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { EvidenceBundleSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, PositiveDecimalStringSchema,
-  type EvidenceBundle, type Instrument, type ObservationEnvelope, type Opportunity } from "@range/domain";
+import { EvidenceBundleSchema, InstrumentSchema, MarketBoardSnapshotSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema,
+  PositiveDecimalStringSchema, type EvidenceBundle, type Instrument, type MarketBoardSnapshot, type ObservationEnvelope,
+  type Opportunity } from "@range/domain";
 import type { CurrentStateStore, HistoryStore, SqlClient, StoredEvent } from "@range/storage";
 
 export const VenueFilterSchema = z.enum(["bitget", "ondo_stocks", "ondo_perps", "hyperliquid_hip3", "bybit", "qfex", "lighter", "extended", "aster", "variational", "pacifica", "nado"]);
@@ -13,6 +14,7 @@ export const FundingCompareQuerySchema = MarketQuerySchema.extend({
   notional_usd: PositiveDecimalStringSchema.and(z.string().max(128)),
   holding_horizon_ms: z.coerce.number().int().min(1).max(86_400_000),
 }).strict();
+export const MarketOverviewQuerySchema = z.object({}).strict();
 export const ScanQuerySchema = PageQuerySchema.extend({ underlying: UnderlyingFilterSchema,
   strategy: z.enum(["perp_spread", "spot_perp_basis", "funding_differential"]).optional(), venue: VenueFilterSchema.optional(),
   min_edge_bps: z.string().max(32).regex(/^-?(0|[1-9]\d*)(\.\d+)?$/).optional(),
@@ -44,6 +46,8 @@ export interface ApplicationQueries {
   getAcceptedRevision(context: RequestContext, underlying: string): Promise<number | undefined>;
   readEvents(context: RequestContext, afterOrdinal: number, limit: number): Promise<EventPageItem[]>;
   latestEventOrdinal(context: RequestContext): Promise<number>;
+  /** The display board the opportunity worker publishes: latest top of book and funding per instrument. */
+  getMarketBoard(context: RequestContext): Promise<MarketBoardSnapshot | undefined>;
 }
 
 /** Storage-backed adapter; venue configuration is a public capability manifest,
@@ -126,6 +130,11 @@ export class StorageQueries implements ApplicationQueries {
   async readEvents(context: RequestContext, afterOrdinal: number, limit: number) {
     this.audit(context, "storage.events");
     return this.history.readPage({ afterOrdinal, limit });
+  }
+  async getMarketBoard(context: RequestContext) {
+    this.audit(context, "storage.market-board");
+    const state = await this.current.get("market-board");
+    return state ? MarketBoardSnapshotSchema.parse(state.value) : undefined;
   }
   async latestEventOrdinal(context: RequestContext) {
     this.audit(context, "storage.event-cursor");
