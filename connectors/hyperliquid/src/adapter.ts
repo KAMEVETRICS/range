@@ -3,6 +3,7 @@ import type { Instrument } from "@range/domain";
 import { HyperliquidPublicClient, type HyperliquidWebSocketPort } from "./client.js";
 import {
   mapFundingHistory,
+  mapHyperliquidFunding,
   mapHyperliquidBook,
   mapHyperliquidMessage,
   mapMetaAndContexts,
@@ -80,6 +81,22 @@ export function createHyperliquidAdapter(
       );
       funding.set(instrument.venueSymbol, history);
       return history;
+    },
+
+    // Funding comes from each dex's asset contexts: one request per dex with followed instruments, once a minute.
+    supplementIntervalMs: 60_000,
+    async supplement(instruments, signal) {
+      const byDex = new Map<string, Instrument[]>();
+      for (const instrument of instruments) {
+        const dex = instrument.venueSymbol.split(":")[0]!;
+        byDex.set(dex, [...(byDex.get(dex) ?? []), instrument]);
+      }
+      const events = [];
+      for (const [dex, members] of byDex) {
+        const multipliers = new Map(dexes.find(item => item.name === dex)?.assetToFundingMultiplier ?? []);
+        events.push(...mapHyperliquidFunding(await http.metaAndAssetCtxs(dex, signal), dex, members, nowMs(), multipliers));
+      }
+      return events;
     },
 
     async snapshot(instrument, signal) {

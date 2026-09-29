@@ -4,6 +4,7 @@ import type { ExtendedHttpPort, ExtendedStreamRequest, ExtendedWebSocketPort } f
 import {
   ExtendedBookStreamMapper,
   extendedFrameMarket,
+  mapExtendedFunding,
   mapExtendedMarkets,
   mapExtendedRestBook,
   type ExtendedMarketEvidence,
@@ -50,6 +51,11 @@ export function createExtendedAdapter(
         available: true,
         capabilities: [...new Set(instruments.flatMap(instrument => instrument.capabilities))],
       };
+    },
+    // Funding comes from the market list, one request for every market, once a minute.
+    supplementIntervalMs: 60_000,
+    async supplement(instruments, signal) {
+      return mapExtendedFunding(await http.markets(credential, signal), instruments, nowMs());
     },
     async snapshot(instrument, signal) {
       return mapExtendedRestBook(

@@ -213,6 +213,46 @@ function rawEvent(
 const restLevel = z.object({ price: positive, qty: nonnegative }).strict();
 const restBook = z.object({ market: text, bid: z.array(restLevel), ask: z.array(restLevel) }).strict();
 
+const fundingMarketRow = z.object({
+  name: text,
+  marketStats: z.object({ fundingRate: decimal, nextFundingRate: z.number().int().safe() }).passthrough(),
+}).passthrough();
+
+/**
+ * Funding for followed markets from the market list: the rate for Extended's hourly interval, and its next settlement
+ * time (`nextFundingRate` is an epoch-ms timestamp despite its name). The list has no source timestamp, so receipt
+ * time stands in. Reference only: it never feeds actionable results. A row that does not parse is skipped.
+ */
+export function mapExtendedFunding(input: unknown, instruments: readonly Instrument[], receivedAtMs: number): RawVenueEvent[] {
+  return safe(() => {
+    if (!isEpochMilliseconds(receivedAtMs)) throw new Error();
+    const rows = new Map<string, z.infer<typeof fundingMarketRow>>();
+    for (const item of z.array(z.unknown()).parse(response.parse(input).data)) {
+      const row = fundingMarketRow.safeParse(item);
+      if (row.success) rows.set(row.data.name, row.data);
+    }
+    return instruments.flatMap((instrument): RawVenueEvent[] => {
+      const row = rows.get(instrument.venueSymbol);
+      const intervalMs = "fundingInterval" in instrument ? instrument.fundingInterval : undefined;
+      if (!row || !intervalMs || row.marketStats.nextFundingRate <= receivedAtMs) return [];
+      const raw = { market: row.name, fundingRate: row.marketStats.fundingRate, nextFundingRate: row.marketStats.nextFundingRate };
+      const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
+      return [{
+        eventId: `evt_extended_${instrument.instrumentId}_funding_${receivedAtMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
+        instrumentId: instrument.instrumentId,
+        sourceTimestampMs: receivedAtMs,
+        transport: "rest",
+        freshnessBudgetMs: 120_000,
+        qualityFlags: ["client_receipt_timestamp"],
+        rawPayloadRefOrHash,
+        eligibility: "reference_only",
+        payload: CanonicalObservationPayloadSchema.parse({ kind: "funding", rateType: "predicted", rate: row.marketStats.fundingRate,
+          positiveRatePayer: "long", intervalMs, nextSettlementMs: row.marketStats.nextFundingRate }),
+      }];
+    });
+  });
+}
+
 export function mapExtendedRestBook(input: unknown, instrument: Instrument, observedAtMs: number): RawVenueEvent {
   return safe(() => {
     if (!isEpochMilliseconds(observedAtMs)) throw new Error();

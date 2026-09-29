@@ -1,10 +1,11 @@
-import type { ConnectorAdapter } from "../../../packages/connector-sdk/src/index.js";
+import type { ConnectorAdapter, RawVenueEvent } from "../../../packages/connector-sdk/src/index.js";
 import type { Instrument } from "../../../packages/domain/src/index.js";
 import type { OndoPerpsHttpPort } from "./client.js";
 import {
   mapContracts,
   mapFundingEvidence,
   mapMarketCatalog,
+  mapOndoFunding,
   mapOndoPerpsDepth,
   mapOndoPerpsMarket,
   type OndoFundingEvidence,
@@ -57,6 +58,18 @@ export function createOndoPerpsAdapter(http: OndoPerpsHttpPort, nowMs: () => num
       if (!instruments.length) return { available: false, capabilities: [] };
       await adapter.snapshot(instruments[0]!, signal);
       return { available: true, capabilities: ["perpetual", "orderbook_reference_only"] };
+    },
+    // Funding needs one request per market against a 2 requests/s client budget shared with book polling, so it is
+    // fetched every five minutes; funding settles hourly or slower.
+    supplementIntervalMs: 300_000,
+    async supplement(instruments, signal) {
+      const events: RawVenueEvent[] = [];
+      for (const instrument of instruments) {
+        if (signal.aborted) break;
+        const event = mapOndoFunding(await http.fundingRates(instrument.venueSymbol, signal), instrument, nowMs());
+        if (event) events.push(event);
+      }
+      return events;
     },
     async snapshot(instrument, signal) {
       return mapOndoPerpsDepth(await http.depth(instrument.venueSymbol, signal), instrument);

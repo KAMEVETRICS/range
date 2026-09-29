@@ -141,6 +141,34 @@ export function mapFundingEvidence(
   });
 }
 
+/**
+ * Funding for one followed market: the estimated rate for the current interval and the venue's stated end of it. The
+ * response has no source timestamp, so receipt time stands in, and the interval length comes from recent settlements;
+ * both are flagged. Reference only: it never feeds actionable results. Nothing is returned once the interval has ended.
+ */
+export function mapOndoFunding(input: unknown, instrument: Instrument, receivedAtMs: number): RawVenueEvent | undefined {
+  return safe(() => {
+    const row = envelope(fundingRow).parse(input).result;
+    const intervalMs = "fundingInterval" in instrument ? instrument.fundingInterval : undefined;
+    if (row.market !== instrument.venueSymbol || !intervalMs) throw new Error();
+    const nextSettlementMs = Date.parse(row.intervalEnds);
+    if (nextSettlementMs <= receivedAtMs) return undefined;
+    const hash = createHash("sha256").update(JSON.stringify({ market: row.market, rate: row.rate, intervalEnds: row.intervalEnds })).digest("hex");
+    return {
+      eventId: `evt_ondo_perps_${instrument.instrumentId}_funding_${receivedAtMs}_${hash.slice(0, 16)}`,
+      instrumentId: instrument.instrumentId,
+      sourceTimestampMs: receivedAtMs,
+      transport: "rest",
+      freshnessBudgetMs: 600_000,
+      qualityFlags: ["client_receipt_timestamp", "interval_from_history"],
+      rawPayloadRefOrHash: hash,
+      eligibility: "reference_only",
+      payload: CanonicalObservationPayloadSchema.parse({ kind: "funding", rateType: "predicted", rate: row.rate,
+        positiveRatePayer: "long", intervalMs, nextSettlementMs }),
+    };
+  });
+}
+
 export function mapOndoPerpsDepth(input: unknown, instrument: Instrument): RawVenueEvent {
   return safe(() => {
     const row = envelope(bookRow).parse(input).result;

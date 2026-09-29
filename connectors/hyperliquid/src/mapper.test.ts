@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
   mapFundingHistory,
+  mapHyperliquidFunding,
   mapHyperliquidBook,
   mapHyperliquidMessage,
   mapMetaAndContexts,
@@ -104,4 +105,26 @@ it("preserves realized funding timestamps and rejects malformed websocket frames
   });
   expect(() => mapHyperliquidMessage({ channel: "l2Book", data: { secret: "fixture-secret" } }, [instrument]))
     .toThrow("Connector");
+});
+
+it("maps the current hourly funding of followed HIP-3 markets as reference-only data", () => {
+  const { instruments } = mapMetaAndContexts(fixture("meta-and-contexts"), "xyz", fixture("perp-categories"), observedAtMs);
+  const nextHourMs = 1770534000000;
+
+  const events = mapHyperliquidFunding(fixture("meta-and-contexts"), "xyz", instruments, observedAtMs, new Map([["TSLA", "1.0"]]));
+
+  expect(events).toEqual([expect.objectContaining({
+    instrumentId: "ins_hyperliquid_hip3_xyz:TSLA", sourceTimestampMs: observedAtMs, transport: "rest",
+    freshnessBudgetMs: 120_000, eligibility: "reference_only",
+    qualityFlags: ["client_receipt_timestamp", "hourly_settlement_assumed"],
+    payload: { kind: "funding", rateType: "predicted", rate: "0.000012500000000001", positiveRatePayer: "long",
+      intervalMs: 3_600_000, nextSettlementMs: nextHourMs },
+  })]);
+  expect(events[0]!.eventId).toMatch(new RegExp(`^evt_hyperliquid_ins_hyperliquid_hip3_xyz:TSLA_funding_${observedAtMs}_[0-9a-f]{16}$`));
+});
+
+it("flags funding whose dex declares a multiplier other than 1 as unverified", () => {
+  const { instruments } = mapMetaAndContexts(fixture("meta-and-contexts"), "xyz", fixture("perp-categories"), observedAtMs);
+  const [event] = mapHyperliquidFunding(fixture("meta-and-contexts"), "xyz", instruments, observedAtMs, new Map([["TSLA", "2.0"]]));
+  expect(event!.qualityFlags).toEqual(["client_receipt_timestamp", "hourly_settlement_assumed", "funding_multiplier_unverified"]);
 });

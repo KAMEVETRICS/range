@@ -239,3 +239,17 @@ it.skipIf(process.env.RUN_LIVE_HYPERLIQUID_PROBE !== "1")(
   },
   70_000,
 );
+
+it("supplements followed markets with one context request per dex, every minute", async () => {
+  const context = setup();
+  const instruments = await context.adapter.discover(signal());
+  expect(context.adapter.supplementIntervalMs).toBe(60_000);
+  context.requests.length = 0;
+
+  const events = await context.adapter.supplement!(instruments, signal());
+
+  expect(context.requests.map(request => request.body)).toEqual([{ type: "metaAndAssetCtxs", dex: "xyz" }]);
+  expect(events.map(event => [event.instrumentId, event.payload.kind, event.eligibility])).toEqual([
+    ["ins_hyperliquid_hip3_xyz:TSLA", "funding", "reference_only"],
+  ]);
+});

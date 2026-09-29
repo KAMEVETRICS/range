@@ -72,6 +72,34 @@ describe("Ondo Perps public connector", () => {
     })]);
   });
 
+  it("supplements polling with reference-only funding every five minutes, one request per market", async () => {
+    const requested: string[] = [];
+    const adapter = createOndoPerpsAdapter({ ...fixtureHttp(), fundingRates: async market => { requested.push(market); return funding; } },
+      () => nowMs);
+    const instruments = await adapter.discover(signal());
+    requested.length = 0;
+    expect(adapter.supplementIntervalMs).toBe(300_000);
+
+    const events = await adapter.supplement!(instruments, signal());
+
+    expect(requested).toEqual(["AAPL-USD.P"]);
+    expect(events).toEqual([expect.objectContaining({
+      instrumentId: instruments[0]!.instrumentId, sourceTimestampMs: nowMs, transport: "rest", freshnessBudgetMs: 600_000,
+      eligibility: "reference_only", qualityFlags: ["client_receipt_timestamp", "interval_from_history"],
+      payload: { kind: "funding", rateType: "predicted", rate: "0.0000125", positiveRatePayer: "long",
+        intervalMs: 14_400_000, nextSettlementMs: Date.parse("2025-03-05T16:00:00Z") },
+    })]);
+    expect(events[0]!.eventId).toMatch(new RegExp(`^evt_ondo_perps_${instruments[0]!.instrumentId}_funding_${nowMs}_[0-9a-f]{16}$`));
+  });
+
+  it("skips funding whose interval has already ended", async () => {
+    let clock = nowMs;
+    const adapter = createOndoPerpsAdapter(fixtureHttp(), () => clock);
+    const instruments = await adapter.discover(signal());
+    clock = Date.parse("2025-03-05T16:00:00Z");
+    expect(await adapter.supplement!(instruments, signal())).toEqual([]);
+  });
+
   it("does not infer a funding interval from irregular history", async () => {
     const adapter = createOndoPerpsAdapter({ ...fixtureHttp(), fundingHistory: async () => ({ success: true, result: [
       history.result[0], { ...history.result[1], time: "2025-03-05T09:30:00Z" }, history.result[2],

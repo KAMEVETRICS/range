@@ -196,6 +196,53 @@ export function mapMetaAndContexts(
   });
 }
 
+const HOUR_MS = 3_600_000;
+
+/**
+ * The current hourly funding of followed instruments on one HIP-3 dex, from its asset contexts. Hyperliquid settles
+ * funding every hour, but the API states no settlement time, so the next full hour stands in; a dex-declared funding
+ * multiplier other than 1 is unverified. Contexts carry no timestamp, so receipt time stands in. All three are
+ * flagged, and the data is reference only: it never feeds actionable results.
+ */
+export function mapHyperliquidFunding(
+  input: unknown,
+  dex: string,
+  instruments: readonly Instrument[],
+  receivedAtMs: number,
+  fundingMultipliers: ReadonlyMap<string, string> = new Map(),
+): RawVenueEvent[] {
+  return safe(() => {
+    const [meta, contexts] = metaAndContexts.parse(input);
+    if (contexts.length !== meta.universe.length || !Number.isSafeInteger(receivedAtMs) || receivedAtMs < 1_000_000_000_000) {
+      throw new Error();
+    }
+    const bySymbol = new Map(meta.universe.map((row, index) => [row.name, contexts[index]!]));
+    const nextSettlementMs = (Math.floor(receivedAtMs / HOUR_MS) + 1) * HOUR_MS;
+    return instruments.flatMap((instrument): RawVenueEvent[] => {
+      const ctx = bySymbol.get(instrument.venueSymbol);
+      const asset = stripDexPrefix(instrument.venueSymbol, dex);
+      if (!ctx || !asset) return [];
+      const multiplier = fundingMultipliers.get(asset);
+      const qualityFlags = ["client_receipt_timestamp", "hourly_settlement_assumed"];
+      if (multiplier !== undefined && Number(multiplier) !== 1) qualityFlags.push("funding_multiplier_unverified");
+      const raw = { coin: instrument.venueSymbol, funding: ctx.funding };
+      const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
+      return [{
+        eventId: `evt_hyperliquid_${instrument.instrumentId}_funding_${receivedAtMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
+        instrumentId: instrument.instrumentId,
+        sourceTimestampMs: receivedAtMs,
+        transport: "rest",
+        freshnessBudgetMs: 120_000,
+        qualityFlags,
+        rawPayloadRefOrHash,
+        eligibility: "reference_only",
+        payload: CanonicalObservationPayloadSchema.parse({ kind: "funding", rateType: "predicted", rate: ctx.funding,
+          positiveRatePayer: "long", intervalMs: HOUR_MS, nextSettlementMs }),
+      }];
+    });
+  });
+}
+
 const bookLevel = z.object({ px: positive, sz: nonnegative, n: z.number().int().nonnegative() });
 const book = z.object({
   coin: text,

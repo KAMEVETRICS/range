@@ -149,6 +149,30 @@ it("does not advertise funding or open-interest capabilities without canonical e
   expect(JSON.stringify(snapshot.payload)).not.toMatch(/funding|openInterest|nextSettlement/i);
 });
 
+it("supplements followed markets with reference-only funding from the market list every minute", async () => {
+  const context = setup();
+  const instruments = await context.adapter.discover(signal());
+  expect(context.adapter.supplementIntervalMs).toBe(60_000);
+
+  const events = await context.adapter.supplement!(instruments, signal());
+
+  expect(events).toEqual([expect.objectContaining({
+    instrumentId: instruments[0]!.instrumentId, sourceTimestampMs: observedAtMs, transport: "rest",
+    freshnessBudgetMs: 120_000, eligibility: "reference_only", qualityFlags: ["client_receipt_timestamp"],
+    payload: { kind: "funding", rateType: "predicted", rate: "-0.000031", positiveRatePayer: "long",
+      intervalMs: 3_600_000, nextSettlementMs: 1770534000000 },
+  })]);
+  expect(events[0]!.eventId).toMatch(new RegExp(`^evt_extended_${instruments[0]!.instrumentId}_funding_${observedAtMs}_[0-9a-f]{16}$`));
+});
+
+it("skips funding whose next settlement is not in the future", async () => {
+  const markets = fixture("markets");
+  const context = setup(undefined, markets);
+  const instruments = await context.adapter.discover(signal());
+  for (const row of markets.data) row.marketStats.nextFundingRate = observedAtMs;
+  expect(await context.adapter.supplement!(instruments, signal())).toEqual([]);
+});
+
 it("publishes only the order-book capability implemented by the runtime path", async () => {
   const context = setup();
   const bus = new InMemoryEventBus();
