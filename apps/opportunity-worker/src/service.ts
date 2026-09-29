@@ -95,13 +95,14 @@ async function main() {
   }, { deleteGroupOnStop: true }));
   stops.push(await bus.subscribe("book.state.v1", "current-books", event => storeObservation("book.state.v1", event)));
   stops.push(await bus.subscribe("funding.observation.v1", "current-funding", event => storeObservation("funding.observation.v1", event)));
-  const budgets = new Map<string, number>((JSON.parse(process.env.RANGE_VENUE_MANIFEST_JSON ?? "[]") as Array<{ venue: string; freshnessBudgetMs: number }>)
-    .map(item => [item.venue, item.freshnessBudgetMs]));
+  // Connectors republish unchanged health at least every 30 s while their venue sends events, so a record lives for
+  // three of those intervals: a venue reads as missing only once its feed or connector has stopped. Readers judge
+  // freshness from asOfMs; a venue's freshness budget (2-5 s) is far shorter than the heartbeat.
+  const healthTtlMs = 90_000;
   const healthVersions = new Map<string, number>();
   stops.push(await bus.subscribe("venue.health.v1", "current-health", async event => {
     const at = Date.now(); const version = Math.max(at, (healthVersions.get(event.venue) ?? 0) + 1); healthVersions.set(event.venue, version);
-    await current.put(`health:${event.venue}`, { version,
-      expiresAt: at + (budgets.get(event.venue) ?? 5_000), value: { health: event, asOfMs: at } });
+    await current.put(`health:${event.venue}`, { version, expiresAt: at + healthTtlMs, value: { health: event, asOfMs: at } });
   }));
 
   const registry = new InstrumentRegistry();

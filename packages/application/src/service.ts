@@ -16,6 +16,9 @@ export type Envelope = z.infer<typeof EnvelopeSchema>;
 const page = (items: z.ZodType) => z.object({ items: z.array(items).max(100), next_offset: z.number().int().nullable() }).strict();
 const HistorySummarySchema = z.object({ state_revision: z.number().int(), status: z.string(), rejection_reasons: z.array(z.string()) }).strict();
 const MAX_EVIDENCE_SOURCE_IDS = 1000;
+/** Connectors republish unchanged venue health at least every 30 s while the venue sends events, so a health record
+ * older than two of those intervals means its feed has stopped. Observations keep their own freshness budgets. */
+const HEALTH_STALE_AFTER_MS = 60_000;
 const QuoteTimestampSchema = z.object({ event_id: z.string().regex(/^evt_[A-Za-z0-9_.:-]+$/), source_timestamp_ms: z.number().int().nonnegative(),
   received_timestamp_ms: z.number().int().nonnegative() }).strict().refine(value => value.received_timestamp_ms >= value.source_timestamp_ms);
 const FundingOutcomeSchema = z.union([FundingProjectionSchema,
@@ -68,7 +71,7 @@ export class RangeApplication {
       const warnings: string[] = [];
       if (venue.health.connectionState !== "connected" || venue.health.sequenceIntegrity !== "consistent" ||
         venue.health.rateLimit.state !== "healthy") warnings.push(`${venue.venue}: venue degraded`);
-      if (venue.asOfMs === null || venue.asOfMs > this.now() || this.now() - venue.asOfMs > venue.freshnessBudgetMs ||
+      if (venue.asOfMs === null || venue.asOfMs > this.now() || this.now() - venue.asOfMs > HEALTH_STALE_AFTER_MS ||
         venue.health.lastEventAgeMs > venue.freshnessBudgetMs) warnings.push(`${venue.venue}: venue stale`);
       return warnings;
     });

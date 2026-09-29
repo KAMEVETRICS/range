@@ -143,7 +143,8 @@ describe("REST application boundary", () => {
   it("names stale venue and excluded observation inputs in scan diagnostics", async () => {
     const f = await fixture();
     const venue = (await f.queries.listVenues({ traceId: "rng_trace_test", clientId: "reader" }))[0]!;
-    f.queries.listVenues = async () => [{ ...venue, health: VenueHealthSchema.parse({ ...venue.health!, connectionState: "connected" }), asOfMs: now - 2000 }];
+    // Connectors republish health at least every 30 s while their venue sends events; a record past 60 s is stale.
+    f.queries.listVenues = async () => [{ ...venue, health: VenueHealthSchema.parse({ ...venue.health!, connectionState: "connected" }), asOfMs: now - 60_001 }];
     f.queries.getMarketSnapshot = async () => [ObservationEnvelopeSchema.parse({ eventId: "evt_stale", schemaVersion: 1,
       venue: "extended", instrumentId: "ins_bitget_tsla", sourceTimestamp: now - 2000, receivedTimestamp: now - 1900,
       transport: "websocket", freshnessBudgetMs: 1000, qualityFlags: [], rawPayloadRefOrHash: "private-locator",
@@ -151,9 +152,18 @@ describe("REST application boundary", () => {
     f.queries.scanOpportunities = async () => [];
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
     expect(body.status).toBe("partial");
-    expect(body.freshness.oldest_input_ms).toBe(2000);
+    expect(body.freshness.oldest_input_ms).toBe(60_001);
     expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue stale", "extended: stale or reference input excluded", "extended: market data missing"]));
     expect(JSON.stringify(body)).not.toContain("private-locator");
+  });
+
+  it("does not call a venue stale between its health heartbeats", async () => {
+    const f = await fixture();
+    const venue = (await f.queries.listVenues({ traceId: "rng_trace_test", clientId: "reader" }))[0]!;
+    f.queries.listVenues = async () => [{ ...venue, health: VenueHealthSchema.parse({ ...venue.health!, connectionState: "connected" }), asOfMs: now - 20_000 }];
+    const body = (await f.app.inject({ method: "GET", url: "/v1/venues", headers: auth })).json();
+    expect(body.warnings).toEqual([]);
+    expect(body.status).toBe("ok");
   });
 
   it("drops an earlier scan item when the accepted revision advances during a later item read", async () => {

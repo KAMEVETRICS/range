@@ -175,7 +175,6 @@ services:
       REDIS_URL: redis://redis:6379
       REDPANDA_BROKERS: redpanda:9092
       RANGE_MAPPING_CONFIG: /app/config/instrument-mappings.json
-      RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","freshnessBudgetMs":2000},{"venue":"extended","freshnessBudgetMs":5000},{"venue":"ondo_perps","freshnessBudgetMs":5000}]'
       RANGE_FEES_BPS_JSON: '{}'
       RANGE_SLIPPAGE_BPS_JSON: '{}'
       RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-24}
