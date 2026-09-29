@@ -83,6 +83,46 @@ export type OpportunityDetailEnvelope = Envelope<{
 }>;
 export type VenueEnvelope = Envelope<{ items: VenueView[]; next_offset: number | null }>;
 
+export interface MarketFunding {
+  rate: string;
+  rate_type: string;
+  interval_ms: number;
+  next_settlement_ms: number;
+  age_ms: number;
+  live: boolean;
+  rate_1h_pct: number;
+  rate_8h_pct: number;
+  apr_pct: number;
+  eligibility: Eligibility;
+  flags: string[];
+}
+
+export interface MarketCell {
+  venue: string;
+  market: "perp" | "spot";
+  instrument_id: string;
+  venue_symbol: string;
+  bid: string | null;
+  ask: string | null;
+  mid: string | null;
+  book_age_ms: number | null;
+  book_live: boolean;
+  funding: MarketFunding | null;
+}
+
+export interface MarketRow {
+  ticker: string;
+  cells: MarketCell[];
+  price_gap_pct: number | null;
+  cheapest_instrument_id: string | null;
+  richest_instrument_id: string | null;
+  funding_gap_8h_pct: number | null;
+  lowest_funding_instrument_id: string | null;
+  highest_funding_instrument_id: string | null;
+}
+
+export type MarketOverviewEnvelope = Envelope<{ board_as_of_ms: number | null; matching: "ticker_unreviewed"; rows: MarketRow[] }>;
+
 export interface OpportunityFilters {
   underlying: string;
   strategy?: string;
@@ -101,6 +141,7 @@ export interface DashboardApi {
   scanOpportunities(filters: OpportunityFilters): Promise<OpportunityEnvelope>;
   inspectOpportunity(id: string): Promise<OpportunityDetailEnvelope>;
   listVenues(): Promise<VenueEnvelope>;
+  marketOverview(): Promise<MarketOverviewEnvelope>;
   subscribe(underlying: string, handler: (event: DashboardStreamEvent) => void | Promise<void>): () => void;
   intentPreviewCapability: { available: false; reason: string };
 }
@@ -131,6 +172,7 @@ export function createDashboardApi(options: { baseUrl?: string; readToken?: stri
     },
     inspectOpportunity: (id) => request<OpportunityDetailEnvelope>(`/v1/opportunities/${encodeURIComponent(id)}`),
     listVenues: () => request<VenueEnvelope>("/v1/venues?limit=100&offset=0"),
+    marketOverview: () => request<MarketOverviewEnvelope>("/v1/markets/overview"),
     subscribe: (underlying, handler) => subscribeToRangeStream({ url: `${baseUrl}/v1/stream?underlying=${encodeURIComponent(underlying)}`, headers: headers(), handler }),
     intentPreviewCapability: {
       available: false,
