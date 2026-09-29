@@ -20,6 +20,7 @@ export async function database() {
   });
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
+  // 0003 only sets autovacuum storage parameters, which pg-mem cannot parse and has no use for.
   for (const migration of ["0001_initial.sql", "0002_history_retention.sql"]) {
     await pool.query(await readFile(new URL(`./migrations/${migration}`, import.meta.url), "utf8"));
   }
