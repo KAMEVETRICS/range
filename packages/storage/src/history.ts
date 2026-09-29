@@ -196,8 +196,11 @@ export class HistoryStore {
       await sql.query(`INSERT INTO instruments(instrument_id, metadata_version, underlying_id, event_id, payload)
         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [instrument.instrumentId, instrument.metadataVersion, instrument.underlyingId, event.eventId, JSON.stringify(instrument)]);
     } else if ("sourceTimestamp" in payload && "instrumentId" in payload) {
+      // event_log.record already holds the whole observation. This time-series row keeps only what its readers use,
+      // the receive time, so a book is stored once.
       await sql.query(`INSERT INTO observations(source_time, event_id, instrument_id, venue, payload)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [new Date(payload.sourceTimestamp), event.eventId, payload.instrumentId, payload.venue, json]);
+        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [new Date(payload.sourceTimestamp), event.eventId, payload.instrumentId, payload.venue,
+        JSON.stringify({ receivedTimestamp: payload.receivedTimestamp })]);
     } else if (event.topic === "evidence.bundle.v1" && "sourceEventIds" in payload) {
       if (payload.calculationVersion !== event.calculationVersion) throw new Error("Evidence calculation version mismatch");
       await sql.query(`INSERT INTO evidence(evidence_hash, calculation_version, archive_id, event_id, payload)

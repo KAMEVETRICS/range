@@ -48,7 +48,7 @@ async function main() {
 
   // Book and funding history older than RANGE_HISTORY_RETENTION_HOURS is deleted every five minutes; 0 keeps it all.
   // Each pass is bounded, so a backlog drains over several passes rather than in one long run.
-  const retentionHours = Number(process.env.RANGE_HISTORY_RETENTION_HOURS ?? 72);
+  const retentionHours = Number(process.env.RANGE_HISTORY_RETENTION_HOURS ?? 24);
   if (!Number.isFinite(retentionHours) || retentionHours < 0) throw new Error("RANGE_HISTORY_RETENTION_HOURS must be zero or more");
   const stopPruning = new AbortController();
   let pruning: Promise<void> | undefined;

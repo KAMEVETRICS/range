@@ -298,6 +298,18 @@ describe("history retention", () => {
     await pool.end();
   });
 
+  it("stores an observation once: its time-series row keeps only the receive time", async () => {
+    const { pool, history } = await store();
+    const event = book("evt_book_once", now);
+    await history.append(event);
+    const row = (await pool.query("SELECT source_time, instrument_id, venue, payload FROM observations WHERE event_id = $1", [event.eventId])).rows[0];
+    expect(typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload).toEqual({ receivedTimestamp: now });
+    expect([new Date(row.source_time).getTime(), row.instrument_id, row.venue]).toEqual([now - 50, "ins_extended_SHOP-USD", "extended"]);
+    const record = (await pool.query("SELECT record FROM event_log WHERE event_id = $1", [event.eventId])).rows[0].record;
+    expect((typeof record === "string" ? JSON.parse(record) : record).payload).toEqual(event.payload);
+    await pool.end();
+  });
+
   it("rejects an invalid cutoff or batch bound", async () => {
     const { pool, history } = await store();
     await expect(history.pruneObservations(Number.NaN)).rejects.toThrow(/cutoff/i);

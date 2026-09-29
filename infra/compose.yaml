@@ -165,7 +165,7 @@ services:
       RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","freshnessBudgetMs":2000},{"venue":"extended","freshnessBudgetMs":5000},{"venue":"ondo_perps","freshnessBudgetMs":5000}]'
       RANGE_FEES_BPS_JSON: '{}'
       RANGE_SLIPPAGE_BPS_JSON: '{}'
-      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
+      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-24}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes: [../config:/app/config:ro]
