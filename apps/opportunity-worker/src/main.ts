@@ -378,7 +378,8 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     }
   })));
   // The in-memory registry is rebuilt on every start: a fresh group replays the whole registry topic, where a
-  // committed group would resume after instruments that only the previous process had consumed.
+  // committed group would resume after instruments that only the previous process had consumed. The group is
+  // deleted when the worker stops.
   unsubscribe.push(await bus.subscribe("instrument.registry.v1", `opportunity-worker-registry-${randomUUID()}`, event => acceptInput(async () => {
     if (event.kind === "upsert") {
       // Registry validation failures are deterministic for this event; retrying
@@ -403,7 +404,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       expireMapping(event.mapping.underlyingId, revision);
       schedule(event.mapping.underlyingId);
     }
-  })));
+  }), { deleteGroupOnStop: true }));
   return {
     currentRevision(underlyingId) { assertAuthority(); return revisionOf(underlyingId); },
     isCurrent(opportunity) {

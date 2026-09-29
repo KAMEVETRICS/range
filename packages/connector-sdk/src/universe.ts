@@ -30,7 +30,7 @@ export async function watchOtherVenueTickers(bus: EventBus, venue: string,
       tickers.add(event.instrument.underlyingId.slice("equity:".length).toUpperCase());
     }
     rearm();
-  });
+  }, { deleteGroupOnStop: true });
   rearm();
   return {
     tickers, ready,

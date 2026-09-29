@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Kafka, type ConsumerRunConfig, type KafkaConfig, type KafkaMessage, type Producer } from "kafkajs";
-import type { EventBus } from "./event-bus.js";
+import type { EventBus, SubscribeOptions } from "./event-bus.js";
 import type { Topic, TopicPayload } from "./topics.js";
 import { deadLetter, decodeEvent, encodeEvent, InvalidEventError, payloadBytes } from "./validation.js";
 
@@ -34,8 +34,9 @@ export class RedpandaEventBus implements EventBus {
     await this.producer.send({ topic, acks: -1, messages: [{ key, value, headers: { "trace-id": randomUUID() } }] });
   }
 
-  subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>) {
-    return this.consume(topic, groupId, {
+  subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>,
+    options: SubscribeOptions = {}) {
+    return this.consume(topic, groupId, options, {
       eachMessage: async ({ message }) => {
         const decoded = this.decode(topic, message);
         if ("deadLetter" in decoded) { await decoded.deadLetter(); return; }
@@ -48,7 +49,7 @@ export class RedpandaEventBus implements EventBus {
 
   subscribeBatch<T extends Topic>(topic: T, groupId: string, handler: (events: TopicPayload[T][]) => Promise<void>,
     maxBatchSize = 500) {
-    return this.consume(topic, groupId, {
+    return this.consume(topic, groupId, {}, {
       // Offsets are resolved per delivered chunk below, never for a whole fetched batch up front.
       eachBatchAutoResolve: false,
       eachBatch: async ({ batch, resolveOffset, heartbeat, isRunning, isStale }) => {
@@ -88,12 +89,15 @@ export class RedpandaEventBus implements EventBus {
     }
   }
 
-  private async consume(topic: Topic, groupId: string,
+  private async consume(topic: Topic, groupId: string, options: SubscribeOptions,
     handlers: Pick<ConsumerRunConfig, "eachMessage" | "eachBatch" | "eachBatchAutoResolve">): Promise<() => Promise<void>> {
     this.assertOpen();
     const consumer = this.kafka.consumer({ groupId });
     let stopping: Promise<void> | undefined;
-    const stop = () => stopping ??= consumer.disconnect().finally(() => { this.subscriptions.delete(stop); });
+    // The group can be deleted only after its member has left.
+    const stop = () => stopping ??= consumer.disconnect()
+      .then(() => options.deleteGroupOnStop ? this.deleteGroup(groupId) : undefined)
+      .finally(() => { this.subscriptions.delete(stop); });
     this.subscriptions.add(stop);
     try {
       await consumer.connect();
@@ -108,6 +112,16 @@ export class RedpandaEventBus implements EventBus {
       throw error;
     }
     return stop;
+  }
+
+  /** Best effort: a group this fails to delete expires with the broker's offset retention. */
+  private async deleteGroup(groupId: string): Promise<void> {
+    const admin = this.kafka.admin();
+    try {
+      await admin.connect();
+      await admin.deleteGroups([groupId]);
+    } catch { /* left to offset retention */ }
+    finally { await admin.disconnect().catch(() => {}); }
   }
 
   async close(): Promise<void> {

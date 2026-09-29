@@ -9,6 +9,17 @@ function health(connectionState: "connected" | "degraded" | "reconnecting") {
     capabilityChanges: [], errorCounters: {} });
 }
 
+it("passes subscription options through to the wrapped bus", async () => {
+  const bus = instrumentEventBus(new InMemoryEventBus(), createTelemetry({ service: "test" }));
+  await bus.publish("venue.health.v1", "venue_a", health("connected"));
+  const seen: string[] = [];
+  const stop = await bus.subscribe("venue.health.v1", "fresh", async event => { seen.push(event.connectionState); },
+    { deleteGroupOnStop: true });
+  await stop();
+  await bus.subscribe("venue.health.v1", "fresh", async event => { seen.push(event.connectionState); });
+  expect(seen).toEqual(["connected", "connected"]);
+});
+
 it("counts only a recovery after a previously connected venue disconnects", async () => {
   const telemetry = createTelemetry({ service: "test" });
   const bus = instrumentEventBus(new InMemoryEventBus(), telemetry);

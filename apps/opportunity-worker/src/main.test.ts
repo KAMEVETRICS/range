@@ -85,6 +85,15 @@ describe("opportunity worker", () => {
     await restarted.stop();
   });
 
+  it("replays the registry under a fresh group that is deleted when the worker stops", async () => {
+    const bus = new InMemoryEventBus();
+    const subscribe = vi.spyOn(bus, "subscribe");
+    const worker = await startOpportunityWorker(bus, new InstrumentRegistry(), policy);
+    await worker.stop();
+    expect(subscribe).toHaveBeenCalledWith("instrument.registry.v1", expect.stringMatching(/^opportunity-worker-registry-[0-9a-f-]{36}$/),
+      expect.any(Function), { deleteGroupOnStop: true });
+  });
+
   it("advances every underlying affected by a venue health event in one authority call", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();

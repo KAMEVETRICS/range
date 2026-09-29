@@ -44,6 +44,17 @@ it("replays a new group and resumes a stopped group after its successful offset"
   expect(replay).toEqual([1, 2]);
 });
 
+it("forgets a group deleted on stop, so reusing its ID replays from the start", async () => {
+  const bus = new InMemoryEventBus();
+  await bus.publish("market.observation.v1", "key", observation(1));
+  const seen: (number | string | undefined)[] = [];
+  const stop = await bus.subscribe("market.observation.v1", "fresh", async event => { seen.push(event.sequence); },
+    { deleteGroupOnStop: true });
+  await stop();
+  await bus.subscribe("market.observation.v1", "fresh", async event => { seen.push(event.sequence); });
+  expect(seen).toEqual([1, 1]);
+});
+
 it("does not advance a failed handler past its event", async () => {
   const bus = new InMemoryEventBus();
   let fail = true;

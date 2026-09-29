@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { EventBus } from "./event-bus.js";
+import type { EventBus, SubscribeOptions } from "./event-bus.js";
 import type { Topic, TopicPayload } from "./topics.js";
 import { deadLetter, decodeEvent, encodeEvent, InvalidEventError, payloadBytes } from "./validation.js";
 
@@ -34,7 +34,8 @@ export class InMemoryEventBus implements EventBus {
     await Promise.all([...this.groups.get(topic)?.values() ?? []].map(group => this.drain(topic, group)));
   }
 
-  async subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>) {
+  async subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>,
+    options: SubscribeOptions = {}) {
     const groups = this.groups.get(topic) ?? new Map<string, Group>();
     this.groups.set(topic, groups);
     const group = groups.get(groupId) ?? { offset: 0, handlers: new Set(), pending: Promise.resolve() };
@@ -46,6 +47,7 @@ export class InMemoryEventBus implements EventBus {
     return async () => {
       group.handlers.delete(consume);
       await group.pending;
+      if (options.deleteGroupOnStop && !group.handlers.size && groups.get(groupId) === group) groups.delete(groupId);
     };
   }
 

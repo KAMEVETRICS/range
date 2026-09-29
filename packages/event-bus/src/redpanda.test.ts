@@ -9,17 +9,19 @@ import { RedpandaEventBus } from "./redpanda.js";
 const broker = vi.hoisted(() => ({
   producer: { connect: vi.fn(), disconnect: vi.fn(), send: vi.fn() },
   consumer: { connect: vi.fn(), disconnect: vi.fn(), subscribe: vi.fn(), run: vi.fn(), commitOffsets: vi.fn() },
+  admin: { connect: vi.fn(), disconnect: vi.fn(), deleteGroups: vi.fn() },
   producerOptions: vi.fn(), consumerOptions: vi.fn(),
 }));
 vi.mock("kafkajs", () => ({
   Kafka: class {
     producer(options: unknown) { broker.producerOptions(options); return broker.producer; }
     consumer(options: unknown) { broker.consumerOptions(options); return broker.consumer; }
+    admin() { return broker.admin; }
   },
 }));
 beforeEach(() => {
   vi.resetAllMocks();
-  for (const method of [...Object.values(broker.producer), ...Object.values(broker.consumer)]) {
+  for (const method of [...Object.values(broker.producer), ...Object.values(broker.consumer), ...Object.values(broker.admin)]) {
     method.mockResolvedValue(undefined);
   }
 });
@@ -66,6 +68,31 @@ it("batches commits through KafkaJS and resolves a message only after its handle
   await stop();
   expect(broker.consumer.disconnect).toHaveBeenCalledTimes(1);
   await transport.close();
+});
+
+it("deletes a subscription's own consumer group after it stops, and keeps other groups", async () => {
+  const transport = bus();
+  const stopFresh = await transport.subscribe("instrument.registry.v1", "registry-replay-1", async () => {}, { deleteGroupOnStop: true });
+  const stopShared = await transport.subscribe("instrument.registry.v1", "history-instruments", async () => {});
+  await stopShared();
+  expect(broker.admin.deleteGroups).not.toHaveBeenCalled();
+  await stopFresh();
+  expect(broker.admin.deleteGroups).toHaveBeenCalledTimes(1);
+  expect(broker.admin.deleteGroups).toHaveBeenCalledWith(["registry-replay-1"]);
+  // A group can be deleted only once its member has left.
+  expect(broker.consumer.disconnect.mock.invocationCallOrder[1]).toBeLessThan(broker.admin.deleteGroups.mock.invocationCallOrder[0]!);
+  expect(broker.admin.disconnect).toHaveBeenCalledTimes(1);
+  await transport.close();
+  expect(broker.admin.deleteGroups).toHaveBeenCalledTimes(1);
+});
+
+it("deletes such a group when the bus closes, and still stops if the delete fails", async () => {
+  const transport = bus();
+  broker.admin.deleteGroups.mockRejectedValue(new Error("broker down"));
+  await transport.subscribe("instrument.registry.v1", "registry-replay-2", async () => {}, { deleteGroupOnStop: true });
+  await expect(transport.close()).resolves.toBeUndefined();
+  expect(broker.admin.deleteGroups).toHaveBeenCalledWith(["registry-replay-2"]);
+  expect(broker.admin.disconnect).toHaveBeenCalledTimes(1);
 });
 
 it("does not commit or dead-letter transient handler failures", async () => {

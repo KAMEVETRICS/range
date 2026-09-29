@@ -23,6 +23,7 @@ it("learns the equity tickers other venues list by replaying the registry, then 
   await list("bitget", "RNVDAUSDT", "bitget:rNVDA");
   await list("extended", "BTC-USD", "crypto:BTC");
 
+  const subscribe = vi.spyOn(bus, "subscribe");
   const universe = await watchOtherVenueTickers(bus, "bitget", { quietMs: 2_000, maxWaitMs: 30_000 });
   let ready = false;
   void universe.ready.then(() => { ready = true; });
@@ -35,6 +36,9 @@ it("learns the equity tickers other venues list by replaying the registry, then 
   await list("ondo_perps", "NVDA", "equity:NVDA");
   expect(universe.tickers.has("NVDA")).toBe(true);
   await universe.stop();
+  // The replay group is used by this watcher alone, so stopping it deletes the group.
+  expect(subscribe).toHaveBeenCalledWith("instrument.registry.v1", expect.stringMatching(/^bitget-other-venue-tickers-[0-9a-f-]{36}$/),
+    expect.any(Function), { deleteGroupOnStop: true });
 });
 
 it("is ready by the maximum wait even while registry updates keep arriving", async () => {

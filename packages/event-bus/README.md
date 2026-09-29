@@ -15,7 +15,10 @@ await bus.close();
 ```
 
 Use one stable venue/instrument key for a feed. New groups replay from the
-beginning; existing groups resume committed offsets. Redpanda delivery is at
+beginning; existing groups resume committed offsets. A consumer that replays a
+topic under a fresh group on every start should pass `{ deleteGroupOnStop: true }`,
+so each stop deletes its group; a group left by a crash expires with Redpanda's
+offset retention (`group_offset_retention_sec`, 7 days). Redpanda delivery is at
 least once, with commits after successful handling. A crash between a side effect
 and its commit can redeliver an event; handlers must be idempotent. Handler errors
 are retried by KafkaJS and do not enter the dead-letter topic. KafkaJS consumers

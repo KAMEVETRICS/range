@@ -118,3 +118,33 @@ it("delivers ordered bounded batches and resumes a restarted batch group after c
     finally { await container.stop(); }
   }
 }, 180_000);
+
+it("deletes a subscription's own group once it stops and keeps other groups", async () => {
+  const container = await new RedpandaContainer("docker.redpanda.com/redpandadata/redpanda:v26.2.3")
+    .withStartupTimeout(120_000).start();
+  const config = { clientId: "range-contract", brokers: [container.getBootstrapServers()], logLevel: logLevel.NOTHING };
+  const admin = new Kafka(config).admin();
+  const bus = new RedpandaEventBus(config);
+  try {
+    await admin.connect();
+    await admin.createTopics({ topics: [
+      { topic: "market.observation.v1", numPartitions: 1, replicationFactor: 1 },
+      { topic: "range.dead-letter.v1", numPartitions: 1, replicationFactor: 1 },
+    ] });
+    await bus.publish("market.observation.v1", "bitget:RAAPLUSDT", observation(1));
+    const fresh: (number | string | undefined)[] = [];
+    const kept: (number | string | undefined)[] = [];
+    const stopFresh = await bus.subscribe("market.observation.v1", "fresh-replay", async event => { fresh.push(event.sequence); },
+      { deleteGroupOnStop: true });
+    const stopKept = await bus.subscribe("market.observation.v1", "kept", async event => { kept.push(event.sequence); });
+    await vi.waitFor(() => expect([fresh, kept]).toEqual([[1], [1]]), { timeout: 30_000 });
+    const groups = async () => (await admin.listGroups()).groups.map(group => group.groupId).sort();
+    expect(await groups()).toEqual(["fresh-replay", "kept"]);
+    await stopKept();
+    await stopFresh();
+    expect(await groups()).toEqual(["kept"]);
+  } finally {
+    try { await Promise.allSettled([bus.close(), admin.disconnect()]); }
+    finally { await container.stop(); }
+  }
+}, 180_000);
