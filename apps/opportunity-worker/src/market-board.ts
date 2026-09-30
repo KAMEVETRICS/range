@@ -17,6 +17,16 @@ function isNewer(event: Observation, held: { sourceTimestamp: number; receivedTi
     (event.sourceTimestamp === held.sourceTimestamp && event.receivedTimestamp > held.receivedTimestamp);
 }
 
+/**
+ * Each instrument's newest event in a batch, in first-seen order. Latest-value readers (the board, current-state
+ * records) would overwrite the older ones anyway, so a batch costs one write per instrument.
+ */
+export function newestPerInstrument<T extends Observation>(events: readonly T[]): T[] {
+  const newest = new Map<string, T>();
+  for (const event of events) if (isNewer(event, newest.get(event.instrumentId))) newest.set(event.instrumentId, event);
+  return [...newest.values()];
+}
+
 function best(levels: readonly Level[], side: "bid" | "ask"): Level | undefined {
   let top: Level | undefined;
   for (const level of levels) {

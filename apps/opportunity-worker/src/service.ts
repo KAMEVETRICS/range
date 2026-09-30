@@ -10,7 +10,7 @@ import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersis
   type RedisCommands, type SqlPool } from "@range/storage";
 import { checkWorkerHealth } from "./health.js";
 import { historyRecord, keptInHistory } from "./history-record.js";
-import { MarketBoard } from "./market-board.js";
+import { MarketBoard, newestPerInstrument } from "./market-board.js";
 import { createReviewedMappingSeeder } from "./mapping-seeder.js";
 
 const calculationVersion = "range.calc.v1";
@@ -112,13 +112,17 @@ async function main() {
     }
     pending.delete(event.instrument.instrumentId);
   }, { deleteGroupOnStop: true }));
-  stops.push(await bus.subscribe("book.state.v1", "current-books", event => {
-    board.applyBook(event);
-    return storeObservation("book.state.v1", event);
+  // Batched: only each instrument's newest event is applied and stored, in parallel. One awaited Redis write per event
+  // fell minutes behind whenever a burst arrived (after a worker restart, about 40,000 books).
+  stops.push(await bus.subscribeBatch("book.state.v1", "current-books", async events => {
+    const newest = newestPerInstrument(events);
+    for (const event of newest) board.applyBook(event);
+    await Promise.all(newest.map(event => storeObservation("book.state.v1", event)));
   }));
-  stops.push(await bus.subscribe("funding.observation.v1", "current-funding", event => {
-    board.applyFunding(event);
-    return storeObservation("funding.observation.v1", event);
+  stops.push(await bus.subscribeBatch("funding.observation.v1", "current-funding", async events => {
+    const newest = newestPerInstrument(events);
+    for (const event of newest) board.applyFunding(event);
+    await Promise.all(newest.map(event => storeObservation("funding.observation.v1", event)));
   }));
   // Connectors republish unchanged health at least every 30 s while their venue sends events, so a record lives for
   // three of those intervals: a venue reads as missing only once its feed or connector has stopped. Readers judge

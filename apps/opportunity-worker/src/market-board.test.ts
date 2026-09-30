@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import { InstrumentSchema, ObservationEnvelopeSchema } from "@range/domain";
 import { MarketBoardSnapshotSchema } from "@range/domain";
-import { MarketBoard } from "./market-board.js";
+import type { TopicPayload } from "@range/event-bus";
+import { MarketBoard, newestPerInstrument } from "./market-board.js";
 
 const NOW = 1_790_000_000_000;
 
@@ -73,4 +74,15 @@ it("takes an instrument's newer metadata version and ignores an older one", () =
   board.upsertInstrument(instrument("ins_ext_AAPL", "extended", "AAPL_24_5-USD", "equity:AAPL", 2));
   board.upsertInstrument(instrument("ins_ext_AAPL", "extended", "AAPL-OLD", "equity:AAPL", 1));
   expect(board.snapshot(NOW).entries[0]!.venueSymbol).toBe("AAPL_24_5-USD");
+});
+
+it("keeps each instrument's newest event from a batch, in first-seen order", () => {
+  const book = (instrumentId: string, sourceTimestamp: number, receivedTimestamp = sourceTimestamp + 5) => ObservationEnvelopeSchema.parse({
+    eventId: `evt_${instrumentId}_${sourceTimestamp}_${receivedTimestamp}`, schemaVersion: 1, venue: "venue_a", instrumentId,
+    transport: "websocket", sourceTimestamp, receivedTimestamp, freshnessBudgetMs: 5_000, qualityFlags: [], rawPayloadRefOrHash: "sha256:raw",
+    eligibility: "live", payload: { kind: "order_book", bids: [{ price: "1", quantity: "1" }], asks: [{ price: "2", quantity: "1" }], capacityUsd: "1" },
+  }) as unknown as TopicPayload["book.state.v1"];
+  const events = [book("ins_a", NOW), book("ins_b", NOW), book("ins_a", NOW + 10), book("ins_a", NOW + 5), book("ins_b", NOW, NOW + 50)];
+  expect(newestPerInstrument(events).map(event => [event.instrumentId, event.sourceTimestamp, event.receivedTimestamp]))
+    .toEqual([["ins_a", NOW + 10, NOW + 15], ["ins_b", NOW, NOW + 50]]);
 });
