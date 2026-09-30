@@ -21,11 +21,15 @@ x-range-service: &range-service
       limits: { cpus: "1.0", memory: 768M }
       reservations: { memory: 128M }
 
+# Each probe starts a node process in its container, so fifteen services probing every 10 s cost the shared host real
+# CPU. They probe every 30 s, and every 2 s while starting so a deploy still sees them healthy within seconds; four
+# misses in a row (2 minutes, as twelve 10 s misses were) mark one unhealthy.
 x-node-healthcheck: &node-healthcheck
-  interval: 10s
+  interval: 30s
   timeout: 3s
-  retries: 12
-  start_period: 20s
+  retries: 4
+  start_period: 60s
+  start_interval: 2s
 
 x-bulk-connector-resources: &bulk-connector-resources
   resources:
@@ -254,7 +258,7 @@ services:
       # A pair is priced as held for one hour: trade.xyz publishes only its next hourly funding rate and nothing is
       # extrapolated, so a longer hold could never be covered; a window with no settlement is zero funding.
       RANGE_HOLDING_HORIZON_MS: "3600000"
-      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-24}
+      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes: [../config:/app/config:ro]
@@ -296,7 +300,7 @@ services:
     environment: { RANGE_DASHBOARD_READ_TOKEN: "${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN}" }
     ports: ["127.0.0.1:4173:8080"]
     depends_on: { gateway: { condition: service_healthy } }
-    healthcheck: { test: [CMD, wget, -qO-, http://127.0.0.1:8080/healthz], interval: 10s, timeout: 3s, retries: 5 }
+    healthcheck: { test: [CMD, wget, -qO-, http://127.0.0.1:8080/healthz], interval: 30s, timeout: 3s, retries: 4, start_period: 60s, start_interval: 2s }
     deploy:
       resources:
         limits: { cpus: "0.25", memory: 128M }
