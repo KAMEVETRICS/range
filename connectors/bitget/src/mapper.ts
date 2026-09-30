@@ -51,6 +51,7 @@ export function bitgetCategory(instrument: Instrument): BitgetCategory {
 export const REVIEWED_STOCK_PERPS: ReadonlySet<string> = new Set([
   "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "MSFTUSDT", "METAUSDT", "AMZNUSDT", "GOOGLUSDT", "COINUSDT", "MSTRUSDT", "HOODUSDT",
 ]);
+const REVIEW_EFFECTIVE_FROM_MS = Date.parse("2026-09-30T00:00:00.000Z");
 export function isReviewedStockPerp(instrument: Instrument): boolean {
   return instrument.capabilities.includes("reviewed_stock_perp");
 }
@@ -81,9 +82,12 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
     const interval = Number(row.fundInterval) * 3_600_000;
     if (!spot && (!Number.isSafeInteger(interval) || interval <= 0)) return [];
     // Without a launch time, metadata is effective only from when it was observed.
-    const effectiveFromMs = row.launchTime ?? body.requestTime;
-    if (effectiveFromMs === undefined) return [];
+    const observedFromMs = row.launchTime ?? body.requestTime;
+    if (observedFromMs === undefined) return [];
     const reviewed = row.category === "USDT-FUTURES" && !spot && REVIEWED_STOCK_PERPS.has(row.symbol);
+    // The registry refuses a metadata change at an unchanged effective time, and a launch time never moves, so reviewed
+    // metadata takes effect from the review date.
+    const effectiveFromMs = reviewed ? Math.max(observedFromMs, REVIEW_EFFECTIVE_FROM_MS) : observedFromMs;
     const capabilities = [spot ? "spot" : "perpetual", ...(reviewed
       ? ["reviewed_stock_perp", "trading_schedule=continuous_venue_stated"] : ["underlying_unverified", "trading_schedule_unverified"])];
     if (row.launchTime === undefined && !reviewed) capabilities.push("launch_time_unknown");

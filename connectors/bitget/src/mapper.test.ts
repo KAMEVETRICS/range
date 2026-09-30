@@ -33,6 +33,12 @@ it("marks reviewed stock perpetuals verified, and makes only their books executa
   const reviewed = mapBitgetInstruments(input).find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_AAPLUSDT")!;
   expect(reviewed.capabilities).toEqual(expect.arrayContaining(["reviewed_stock_perp", "trading_schedule=continuous_venue_stated"]));
   expect(reviewed.capabilities.filter(capability => /unverified|unknown/.test(capability))).toEqual([]);
+  // The registry refuses a metadata change at an unchanged effective time, so reviewed metadata takes effect from the
+  // review date rather than the listing's older launch time.
+  expect(reviewed.effectiveFrom).toBe("2026-09-30T00:00:00.000Z");
+  input.data[1].launchTime = "1750000000000";
+  expect(mapBitgetInstruments(input).find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_AAPLUSDT")!.effectiveFrom)
+    .toBe("2026-09-30T00:00:00.000Z");
   expect(mapBitgetBook(fixture("orderbook"), reviewed)).toMatchObject({ eligibility: "live", qualityFlags: [] });
 
   Object.assign(input.data[1], { symbol: "RDDTUSDT", baseCoin: "RDDT" });
