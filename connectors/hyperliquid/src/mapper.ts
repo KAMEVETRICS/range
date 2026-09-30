@@ -233,8 +233,12 @@ export function mapHyperliquidFunding(
       const asset = stripDexPrefix(instrument.venueSymbol, dex);
       if (!ctx || !asset) return [];
       const multiplier = fundingMultipliers.get(asset);
-      const qualityFlags = ["client_receipt_timestamp", "hourly_settlement_assumed"];
-      if (multiplier !== undefined && Number(multiplier) !== 1) qualityFlags.push("funding_multiplier_unverified");
+      // Reviewed markets' funding is executable (funding review of 2026-09-30): Hyperliquid settles hourly on the hour,
+      // and the published rate matched the settled one, the dex multiplier included. Receipt time stands in for the
+      // missing source time. Other markets keep those points flagged.
+      const reviewed = instrument.capabilities.includes("reviewed_equity_perp");
+      const qualityFlags = reviewed ? [] : ["client_receipt_timestamp", "hourly_settlement_assumed"];
+      if (!reviewed && multiplier !== undefined && Number(multiplier) !== 1) qualityFlags.push("funding_multiplier_unverified");
       const raw = { coin: instrument.venueSymbol, funding: ctx.funding };
       const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
       return [{
@@ -245,7 +249,7 @@ export function mapHyperliquidFunding(
         freshnessBudgetMs: 120_000,
         qualityFlags,
         rawPayloadRefOrHash,
-        eligibility: "reference_only",
+        eligibility: reviewed ? "live" : "reference_only",
         payload: CanonicalObservationPayloadSchema.parse({ kind: "funding", rateType: "predicted", rate: ctx.funding,
           positiveRatePayer: "long", intervalMs: HOUR_MS, nextSettlementMs }),
       }];

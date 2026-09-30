@@ -82,8 +82,11 @@ it("emits canonical WS funding only when an explicit settlement time is present"
   const result = mapBitgetMessage(fixture("ticker-ws"), instruments);
   const funding = result.events.find(e => e.payload.kind === "funding");
   expect(funding?.sourceTimestampMs).toBe(1770531248000);
-  expect(funding?.payload).toEqual({kind:"funding",rateType:"current",rate:"-0.00001234",intervalMs:28800000,nextSettlementMs:1770560000000});
+  expect(funding?.payload).toEqual({kind:"funding",rateType:"current",rate:"-0.00001234",positiveRatePayer:"long",intervalMs:28800000,nextSettlementMs:1770560000000});
   expect(funding?.transport).toBe("websocket");
+  // AAPLUSDT is reviewed, so its funding is executable, unflagged, and keeps for 60 s; its index stays reference-only.
+  expect(funding).toMatchObject({ eligibility: "live", qualityFlags: [], freshnessBudgetMs: 60_000 });
+  expect(result.events.find(e => e.payload.kind === "index_price")).toMatchObject({ eligibility: "reference_only" });
 });
 
 it("parses actual V3 a/b depth, retains precision, and sizes capacity from the visible levels only", () => {

@@ -250,6 +250,7 @@ it("supplements followed markets with one context request per dex, every minute"
 
   expect(context.requests.map(request => request.body)).toEqual([{ type: "metaAndAssetCtxs", dex: "xyz" }]);
   expect(events.map(event => [event.instrumentId, event.payload.kind, event.eligibility])).toEqual([
-    ["ins_hyperliquid_hip3_xyz:TSLA", "funding", "reference_only"],
+    // xyz:TSLA is a reviewed market, so its funding is executable (funding review of 2026-09-30).
+    ["ins_hyperliquid_hip3_xyz:TSLA", "funding", "live"],
   ]);
 });

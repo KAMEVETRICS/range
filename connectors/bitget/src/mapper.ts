@@ -115,11 +115,13 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
 function event(instrument: Instrument, raw: unknown, sourceTimestampMs: number,
   payload: RawVenueEvent["payload"], transport: RawVenueEvent["transport"], qualityFlags: string[] = [], sequence?: string): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
-  // Only a reviewed stock perpetual's book is executable; its funding and index stay reference-only for now.
-  const executable = payload.kind === "order_book" && isReviewedStockPerp(instrument);
+  // A reviewed stock perpetual's book and funding are executable (reviews of 2026-09-30); its index stays
+  // reference-only. Funding changes slowly and tickers refresh every 10 s, so executable funding keeps for 60 s.
+  const executable = (payload.kind === "order_book" || payload.kind === "funding") && isReviewedStockPerp(instrument);
   return {
     eventId: `evt_bitget_${instrument.instrumentId}_${payload.kind}_${sourceTimestampMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
-    instrumentId: instrument.instrumentId, sourceTimestampMs, transport, freshnessBudgetMs: 5_000,
+    instrumentId: instrument.instrumentId, sourceTimestampMs, transport,
+    freshnessBudgetMs: executable && payload.kind === "funding" ? 60_000 : 5_000,
     qualityFlags: executable ? qualityFlags : ["underlying_unverified", "trading_schedule_unverified", ...qualityFlags],
     rawPayloadRefOrHash, eligibility: executable ? "live" : "reference_only", payload: CanonicalObservationPayloadSchema.parse(payload),
     ...(sequence === undefined ? {} : { sequence }),
@@ -167,8 +169,9 @@ export function mapBitgetTickers(input: unknown, instruments: readonly Instrumen
       if (price) result.events.push(event(instrument, raw, row.ts, { kind: "index_price", price }, transport,
         row.indexPrice ? [] : ["last_trade_reference"]));
       if (instrument.productType === "perpetual" && row.fundingRate !== undefined && row.nextFundingTime !== undefined) {
+        // Bitget: on a positive rate, longs pay shorts, settled at 00:00, 08:00 and 16:00 UTC (nextFundingTime).
         result.events.push(event(instrument, raw, row.ts, { kind: "funding", rateType: "current", rate: row.fundingRate,
-          intervalMs: instrument.fundingInterval, nextSettlementMs: row.nextFundingTime }, transport));
+          positiveRatePayer: "long", intervalMs: instrument.fundingInterval, nextSettlementMs: row.nextFundingTime }, transport));
       }
     }
     return result;

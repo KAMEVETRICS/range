@@ -39,7 +39,7 @@ Approved by kongclaves on 2026-09-30 at 08:37:41 UTC, accepting the differences 
 
 A listing whose metadata changes moves to a new version, which takes it out of its mapping (fail-closed) until the mapping is re-pinned at a higher `mappingVersion`.
 
-## Funding review (pending approval)
+## Funding review
 
 Every perpetual leg needs live funding: the evaluator projects funding over the holding horizon (8 hours) for any strategy, so without it even a pure price spread is rejected with `FUNDING_SEMANTICS_UNKNOWN`.
 
@@ -53,4 +53,4 @@ Every perpetual leg needs live funding: the evaluator projects funding over the 
 
 Observed: Bitget's 08:00 UTC settlement (outside US hours) was 0 for both NVDA and TSLA on 09-29 and 09-30, while its 16:00 and 00:00 settlements were not.
 
-Proposed if approved: funding for the ten reviewed listings becomes live with no quality flags, stating that longs pay on a positive rate. Bitget's funding freshness budget becomes 60 s (tickers every 10 s); trade.xyz's stays 120 s (read every 60 s).
+Approved by kongclaves on 2026-09-30 at 10:23:51 UTC, accepting receipt time as trade.xyz's observation time. Funding for the ten reviewed listings is live with no quality flags and states that longs pay on a positive rate; Bitget's executable funding keeps for 60 s (tickers every 10 s), trade.xyz's for 120 s (read every 60 s).
