@@ -150,6 +150,28 @@ it("caps each ticker channel to one delivery per interval, keeping its newest, w
   expect(await iterator.next()).toEqual({ value: undefined, done: true });
 });
 
+it("serves reviewed book channels before display channels queued earlier", async () => {
+  const controller = new AbortController();
+  const sockets: SocketDouble[] = [];
+  const transport = createBitgetPublicWebSocket(() => {
+    const socket = new SocketDouble("none");
+    sockets.push(socket);
+    return socket as unknown as WebSocket;
+  }, { fastBookSymbols: new Set(["F"]), fastBookIntervalMs: 500 });
+  const iterator = transport.stream([{ instType:"usdt-futures", topic:"books50", symbol:"F" }], controller.signal)[Symbol.asyncIterator]();
+  const first = iterator.next();
+  const socket = sockets[0]!;
+  socket.emit("open");
+  socket.message(snapshotFrame("ticker", "A", 1));
+  socket.message(snapshotFrame("books5", "B", 2));
+  socket.message(snapshotFrame("books50", "F", 3));
+  expect((await first).value).toBe(snapshotFrame("books50", "F", 3));
+  expect((await iterator.next()).value).toBe(snapshotFrame("ticker", "A", 1));
+  expect((await iterator.next()).value).toBe(snapshotFrame("books5", "B", 2));
+  controller.abort();
+  expect(await iterator.next()).toEqual({ value: undefined, done: true });
+});
+
 it("refreshes a fast symbol's 50-level books at the fast interval, not the book interval", async () => {
   vi.useFakeTimers();
   let clock = 0;

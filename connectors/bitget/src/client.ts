@@ -70,11 +70,11 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
     books50: options.bookIntervalMs ?? 0 };
   const nowMs = options.nowMs ?? Date.now;
   // Executable books must stay inside the evaluator's 2 s quote budget, so their symbols refresh faster.
-  const intervalOf = (channel: string) => {
+  const isFast = (channel: string) => {
     const [, topic = "", symbol = ""] = channel.split(":");
-    if ((topic === "books5" || topic === "books50") && options.fastBookSymbols?.has(symbol)) return options.fastBookIntervalMs ?? 0;
-    return intervals[topic] ?? 0;
+    return (topic === "books5" || topic === "books50") && options.fastBookSymbols?.has(symbol) === true;
   };
+  const intervalOf = (channel: string) => isFast(channel) ? options.fastBookIntervalMs ?? 0 : intervals[channel.split(":")[1] ?? ""] ?? 0;
   return {
     async *stream(subscriptions, signal) {
       if (signal.aborted || !subscriptions.length) return;
@@ -83,6 +83,9 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
       // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones. Ticker and book
       // channels are also delivered at most once per tickerIntervalMs / bookIntervalMs (uncapped when 0).
       const pending = new Map<string, string>();
+      // Executable books are served before display data: queued behind about 400 ticker and reference-book channels,
+      // a reviewed book waited up to 11 s whenever the consumer fell behind.
+      const priority = new Map<string, string>();
       const deliveredAt = new Map<string, number>();
       let dueTimer: ReturnType<typeof setTimeout> | undefined;
       let unconflated = 0;
@@ -120,8 +123,9 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
             if (message.data === "pong") { awaitingPong = false; return; }
             if (typeof message.data !== "string") { stop(true); return; }
             const key = snapshotChannel(message.data) ?? `unconflated:${unconflated++}`;
-            if (!pending.has(key) && pending.size >= 10_000) { stop(true); return; }
-            pending.set(key, message.data);
+            const queue = isFast(key) ? priority : pending;
+            if (!queue.has(key) && pending.size + priority.size >= 10_000) { stop(true); return; }
+            queue.set(key, message.data);
             wake?.();
           };
           const onFailure = () => stop(true);
@@ -139,14 +143,18 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
         while (!stopped) {
           const now = nowMs();
           let next: [string, string] | undefined;
+          let source = priority;
           let nextDueAt = Number.POSITIVE_INFINITY;
-          for (const entry of pending) {
-            const dueAt = (deliveredAt.get(entry[0]) ?? Number.NEGATIVE_INFINITY) + intervalOf(entry[0]);
-            if (dueAt <= now) { next = entry; break; }
-            nextDueAt = Math.min(nextDueAt, dueAt);
+          for (const queue of [priority, pending]) {
+            for (const entry of queue) {
+              const dueAt = (deliveredAt.get(entry[0]) ?? Number.NEGATIVE_INFINITY) + intervalOf(entry[0]);
+              if (dueAt <= now) { next = entry; source = queue; break; }
+              nextDueAt = Math.min(nextDueAt, dueAt);
+            }
+            if (next) break;
           }
           if (next) {
-            pending.delete(next[0]);
+            source.delete(next[0]);
             if (intervalOf(next[0]) > 0) deliveredAt.set(next[0], now);
             yield next[1];
             continue;
