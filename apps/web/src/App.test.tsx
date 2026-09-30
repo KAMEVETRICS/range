@@ -27,11 +27,13 @@ describe("dashboard pages", { timeout: 15_000 }, () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Markets" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Markets" })).toHaveAttribute("aria-current", "page");
     expect(document.body.dataset.page).toBe("markets");
+    expect(document.title).toBe("Range — Markets");
     expect(dashboard.subscribe).not.toHaveBeenCalled();
 
     navigate("#opportunities");
     expect(await screen.findByRole("heading", { level: 1, name: "Opportunity intelligence" })).toBeVisible();
     expect(document.body.dataset.page).toBe("opportunities");
+    expect(document.title).toBe("Range — Opportunities");
     navigate("#results");
     expect(screen.getByRole("heading", { level: 1, name: "Opportunity intelligence" })).toBeVisible();
     navigate("#markets");

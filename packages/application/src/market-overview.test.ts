@@ -77,6 +77,21 @@ describe("buildMarketOverview", () => {
     expect([row!.cheapest_instrument_id, row!.richest_instrument_id]).toEqual(["ins_bg_aapl", "ins_ext_aapl"]);
   });
 
+  it("leaves out a listing priced far from its row, as a different instrument or unit under the same ticker", () => {
+    const [row] = buildMarketOverview({ asOfMs: NOW, entries: [
+      entry("ins_bg_xiaomi", "bitget", "bitget:XIAOMI", "perpetual", { bid: "3.22", ask: "3.24" }),
+      entry("ins_li_xiaomi", "lighter", "equity:XIAOMI", "perpetual", { bid: "3.21", ask: "3.23" }),
+      entry("ins_ext_xiaomi", "extended", "equity:XIAOMI", "perpetual", { bid: "25.30", ask: "25.32" }),
+    ] }, NOW);
+    expect(row!.cells.map(cell => cell.venue)).toEqual(["bitget", "lighter"]);
+    expect(row!.price_gap_pct).toBeCloseTo((3.23 - 3.22) / 3.22 * 100, 10);
+
+    expect(buildMarketOverview({ asOfMs: NOW, entries: [
+      entry("ins_ext_qnt", "extended", "equity:QNT", "perpetual", { bid: "48.9", ask: "49.0" }),
+      entry("ins_li_qnt", "lighter", "equity:QNT", "perpetual", { bid: "283.0", ask: "284.0" }),
+    ] }, NOW)).toEqual([]);
+  });
+
   it("shows stale values but leaves them out of the gaps", () => {
     const [row] = buildMarketOverview({ asOfMs: NOW, entries: [
       entry("ins_bg_aapl", "bitget", "bitget:AAPL", "perpetual", { bid: "229.9", ask: "230.1", rate: "0.0001", intervalMs: 8 * HOUR }),

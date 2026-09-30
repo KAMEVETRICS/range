@@ -5,6 +5,7 @@ import { OpportunitiesPage } from "./pages/OpportunitiesPage.js";
 
 type Page = "markets" | "opportunities";
 const PAGES: Record<string, Page> = { "#markets": "markets", "#opportunities": "opportunities" };
+const TITLES: Record<Page, string> = { markets: "Range — Markets", opportunities: "Range — Opportunities" };
 
 /** Markets is the default page. Only the open page polls or streams; other in-page anchors leave the page as it is. */
 export function App({ api }: { api: DashboardApi }) {
@@ -15,7 +16,7 @@ export function App({ api }: { api: DashboardApi }) {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
   // The markets page is dark; the body carries the page so the whole viewport follows it.
-  useEffect(() => { document.body.dataset.page = page; }, [page]);
+  useEffect(() => { document.body.dataset.page = page; document.title = TITLES[page]; }, [page]);
   return (
     <>
       <nav className="app-tabs" aria-label="Dashboard pages">

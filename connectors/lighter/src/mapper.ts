@@ -7,13 +7,14 @@ const positive = z.string().regex(/^(?:0\.(?:0*[1-9]\d*)|[1-9]\d*(?:\.\d+)?)$/);
 
 /**
  * Lighter lists stocks and ETFs among crypto, FX, and commodities without an asset-class field, so its stock perpetuals
- * are a reviewed list. Symbols shared with crypto tokens (WEN, BOT, S), indexes, and unclear names are left out.
+ * are a reviewed list. Symbols shared with crypto tokens (WEN, BOT, S), indexes, and unclear names are left out; QNT
+ * is too, since Lighter prices it near 283 where Quantinuum (QNT elsewhere) trades near 49.
  */
 export const LIGHTER_STOCKS: ReadonlySet<string> = new Set([
   "AAOI", "AAPL", "ADI", "AMD", "AMZN", "ANTHROPIC", "ARM", "ASML", "AVGO", "AXTI", "BABA", "BB", "BE", "BMNR", "BOTZ", "BYD", "CBRS",
   "COIN", "CRCL", "CRWV", "CXMT", "DELL", "DIA", "DRAM", "EWY", "GEV", "GME", "GOOGL", "HANMI", "HOOD", "HYUNDAI", "IBM", "INTC",
   "IWM", "KIOXIA", "KORU", "LITE", "MAGS", "META", "MINIMAX", "MRNA", "MRVL", "MSFT", "MSTR", "MU", "NBIS", "NOK", "NOW", "NVDA",
-  "OPENAI", "ORCL", "PLTR", "POPMART", "QCOM", "QNT", "QQQ", "RKLB", "SAMSUNG", "SHEIN", "SKHY", "SKHYNIX", "SMIC", "SNDK", "SOXL",
+  "OPENAI", "ORCL", "PLTR", "POPMART", "QCOM", "QQQ", "RKLB", "SAMSUNG", "SHEIN", "SKHY", "SKHYNIX", "SMIC", "SNDK", "SOXL",
   "SOXS", "SOXX", "SPCX", "SPY", "STRC", "TENCENT", "TSLA", "TSM", "TTWO", "UNITREE", "URA", "WDC", "XIAOMI", "ZHIPU",
 ]);
 

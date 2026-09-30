@@ -104,6 +104,21 @@ function extremes(values: readonly { id: string; value: number }[]) {
   return { low, high };
 }
 
+/**
+ * A listing priced more than this factor away from its row's median mid is a different instrument or unit under the
+ * same ticker (Extended quotes XIAOMI near 25 where other venues quote 3.2), not a price gap, so the row leaves it out.
+ */
+const PRICE_OUTLIER_FACTOR = 1.5;
+
+function withoutPriceOutliers(cells: MarketOverviewCell[]): MarketOverviewCell[] {
+  const mids = cells.flatMap(item => item.mid === null ? [] : [Number(item.mid)]).sort((a, b) => a - b);
+  if (mids.length < 2) return cells;
+  const half = Math.floor(mids.length / 2);
+  const median = mids.length % 2 ? mids[half]! : (mids[half - 1]! + mids[half]!) / 2;
+  return cells.filter(item => item.mid === null ||
+    (Number(item.mid) <= median * PRICE_OUTLIER_FACTOR && Number(item.mid) >= median / PRICE_OUTLIER_FACTOR));
+}
+
 /** One row per ticker listed on two or more venues, in ticker order; gaps use live values only. */
 export function buildMarketOverview(snapshot: MarketBoardSnapshot, nowMs: number): MarketOverviewRow[] {
   const groups = new Map<string, MarketBoardEntry[]>();
@@ -113,8 +128,8 @@ export function buildMarketOverview(snapshot: MarketBoardSnapshot, nowMs: number
   }
   const rows: MarketOverviewRow[] = [];
   for (const [ticker, entries] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
-    if (new Set(entries.map(entry => entry.venue)).size < 2) continue;
-    const cells = entries.map(entry => cell(entry, nowMs));
+    const cells = withoutPriceOutliers(entries.map(entry => cell(entry, nowMs)));
+    if (new Set(cells.map(item => item.venue)).size < 2) continue;
     const prices = extremes(cells.filter(item => item.book_live).map(item => ({ id: item.instrument_id, value: Number(item.mid) })));
     const funding = extremes(cells.flatMap(item => item.funding?.live ? [{ id: item.instrument_id, value: item.funding.rate_8h_pct }] : []));
     rows.push({

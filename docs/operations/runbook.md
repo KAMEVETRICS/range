@@ -29,7 +29,7 @@ The Markets page compares Bitget with every other venue by ticker. Besides the B
 | `connector-lighter` | `market_stats/all` WebSocket (REST allows 60 requests a minute) | stream, read every 5 s | reviewed list |
 | `connector-variational` | `/metadata/stats` | 10 s | reviewed list |
 
-Pacifica, Lighter, and Variational have no asset-class field, so their stocks are reviewed lists in each connector's `mapper.ts`; add a newly listed stock there. Lighter and Variational quotes have no sizes, and Variational's funding is stated as an annual fraction. When venues name one share differently (Aster's BBX is BlackBerry, BB), add the alias to `TICKER_ALIASES` in `packages/application/src/market-overview.ts`. QFEX, Nado, and Ondo Stocks need API keys and are not connected.
+Pacifica, Lighter, and Variational have no asset-class field, so their stocks are reviewed lists in each connector's `mapper.ts`; add a newly listed stock there. Lighter and Variational quotes have no sizes, and Variational's funding is stated as an annual fraction. When venues name one share differently (Aster's BBX is BlackBerry, BB), add the alias to `TICKER_ALIASES` in `packages/application/src/market-overview.ts`. A listing priced more than 1.5× from its row's median is left out as a different instrument or unit under the same ticker (Extended quotes XIAOMI near 25 where other venues quote 3.2). QFEX, Nado, and Ondo Stocks need API keys and are not connected.
 
 ## Correctness alerts
 
