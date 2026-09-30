@@ -16,5 +16,9 @@ server {
     proxy_buffering off;
     proxy_read_timeout 3600s;
   }
+  # The page names its content-hashed bundle: revalidating the page on every load gets a deploy to returning visitors at
+  # once, where a heuristically cached page kept an old bundle running; the bundles themselves never change.
+  location = /index.html { add_header Cache-Control "no-cache"; }
+  location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
   location / { try_files $uri $uri/ /index.html; }
 }
