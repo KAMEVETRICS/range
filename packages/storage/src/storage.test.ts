@@ -327,6 +327,30 @@ describe("history retention", () => {
     await pool.end();
   });
 
+  it("writes a batch's evidence and all its sources in one statement each", async () => {
+    const { pool, history } = await store();
+    await history.appendMany([book("evt_source_1", now), book("evt_source_2", now)]);
+    const statements: string[] = [];
+    const connect = pool.connect.bind(pool);
+    vi.spyOn(pool, "connect").mockImplementation(async () => {
+      const client = await connect();
+      const query = client.query.bind(client);
+      client.query = ((sql: string, values?: unknown[]) => { statements.push(sql); return query(sql, values); }) as typeof client.query;
+      return client;
+    });
+    const bundle = (index: number) => {
+      const payload = parseEvent("evidence.bundle.v1", { evidenceHash: `sha256:${String(index).repeat(64)}`, calculationVersion: "calc.v1",
+        sourceEventIds: ["evt_source_1", "evt_source_2"], canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: [] });
+      return { eventId: `evt_evidence_${index}`, topic: "evidence.bundle.v1" as const, key: payload.evidenceHash, acceptedAtMs: now,
+        archiveId: "archive1", calculationVersion: "calc.v1", payload };
+    };
+    await history.appendMany([1, 2, 3].map(bundle));
+    expect((await pool.query("SELECT evidence_hash FROM evidence_sources")).rows).toHaveLength(6);
+    expect(statements.filter(sql => sql.includes("INSERT INTO evidence("))).toHaveLength(1);
+    expect(statements.filter(sql => sql.includes("INSERT INTO evidence_sources"))).toHaveLength(1);
+    await pool.end();
+  });
+
   it("refuses evidence until its sources are recorded, without taking the event-log cursor", async () => {
     const { pool, history } = await store();
     const statements: string[] = [];

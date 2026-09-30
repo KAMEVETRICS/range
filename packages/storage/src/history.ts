@@ -68,15 +68,59 @@ function isRepeatedObservation(stored: unknown, incoming: StoredEvent): boolean 
   return before !== undefined && before === venueData(incoming.payload);
 }
 
-/** A book or funding observation's time-series row. event_log.record already holds the whole observation; this row
- * keeps only what its readers use, the receive time, so a book is stored once. */
-function observationRow(event: StoredEvent): unknown[] | undefined {
-  const payload = event.payload;
-  if (event.topic !== "instrument.registry.v1" && "sourceTimestamp" in payload && "instrumentId" in payload) {
-    return [new Date(payload.sourceTimestamp), event.eventId, payload.instrumentId, payload.venue,
-      JSON.stringify({ receivedTimestamp: payload.receivedTimestamp })];
+/** Postgres binds at most 65,535 parameters in one statement. */
+const MAX_PARAMETERS = 65_535;
+
+async function insertRows(sql: SqlClient, target: string, rows: readonly unknown[][]): Promise<void> {
+  if (!rows.length) return;
+  const width = rows[0]!.length;
+  const perStatement = Math.floor(MAX_PARAMETERS / width);
+  for (let start = 0; start < rows.length; start += perStatement) {
+    const chunk = rows.slice(start, start + perStatement);
+    await sql.query(`INSERT INTO ${target} VALUES ${chunk.map((_, row) =>
+      `(${Array.from({ length: width }, (_, column) => `$${row * width + column + 1}`).join(",")})`).join(", ")} ON CONFLICT DO NOTHING`,
+    chunk.flat());
   }
-  return undefined;
+}
+
+/**
+ * Writes the recorded events' own table rows: one statement per table and batch, in foreign-key order. They run while
+ * the event-log cursor is held, so every other writer waits on them; a statement per row (about 2,000 evidence sources
+ * for a batch of bundles) held it for 20 s at a time.
+ */
+async function materializeMany(sql: SqlClient, events: readonly StoredEvent[]): Promise<void> {
+  const instruments: unknown[][] = [], observations: unknown[][] = [], evidence: unknown[][] = [], sources: unknown[][] = [];
+  const opportunities: unknown[][] = [], intents: unknown[][] = [], audit: unknown[][] = [];
+  for (const event of events) {
+    const payload = event.payload;
+    const json = JSON.stringify(payload);
+    if (event.topic === "instrument.registry.v1" && "kind" in payload && payload.kind === "upsert") {
+      const instrument = payload.instrument;
+      instruments.push([instrument.instrumentId, instrument.metadataVersion, instrument.underlyingId, event.eventId, JSON.stringify(instrument)]);
+    } else if (event.topic !== "instrument.registry.v1" && "sourceTimestamp" in payload && "instrumentId" in payload) {
+      // event_log.record already holds the whole observation. This time-series row keeps only what its readers use,
+      // the receive time, so a book is stored once.
+      observations.push([new Date(payload.sourceTimestamp), event.eventId, payload.instrumentId, payload.venue,
+        JSON.stringify({ receivedTimestamp: payload.receivedTimestamp })]);
+    } else if (event.topic === "evidence.bundle.v1" && "sourceEventIds" in payload) {
+      if (payload.calculationVersion !== event.calculationVersion) throw new Error("Evidence calculation version mismatch");
+      evidence.push([payload.evidenceHash, event.calculationVersion, event.archiveId, event.eventId, json]);
+      for (const source of new Set(payload.sourceEventIds)) sources.push([payload.evidenceHash, source]);
+    } else if (event.topic === "opportunity.v1" && "stateRevision" in payload) {
+      opportunities.push([payload.opportunityId, payload.stateRevision, payload.status, payload.underlyingId, event.acceptedAtMs,
+        event.calculationVersion, event.archiveId, payload.evidenceHash ?? null, json]);
+    } else if (event.topic === "intent.lifecycle.v1" && "idempotencyKey" in payload) {
+      intents.push([payload.idempotencyKey, payload.opportunityId, payload.evidenceHash, payload.expiresAt, json]);
+    } else audit.push([event.eventId, event.acceptedAtMs, json]);
+  }
+  await insertRows(sql, "instruments(instrument_id, metadata_version, underlying_id, event_id, payload)", instruments);
+  await insertRows(sql, "observations(source_time, event_id, instrument_id, venue, payload)", observations);
+  await insertRows(sql, "evidence(evidence_hash, calculation_version, archive_id, event_id, payload)", evidence);
+  await insertRows(sql, "evidence_sources(evidence_hash, source_event_id)", sources);
+  await insertRows(sql, `opportunities(opportunity_id, state_revision, status, underlying_id, accepted_at_ms, calculation_version, archive_id,
+    evidence_hash, payload)`, opportunities);
+  await insertRows(sql, "intents(idempotency_key, opportunity_id, evidence_hash, expires_at, payload)", intents);
+  await insertRows(sql, "audit_events(event_id, accepted_at_ms, payload)", audit);
 }
 
 export class HistoryStore {
@@ -145,27 +189,15 @@ export class HistoryStore {
           fresh.flatMap(({ event, contentHash }, row) => [last - fresh.length + 1 + row, event.eventId, event.topic,
             event.underlyingId ?? null, event.acceptedAtMs, event.archiveId, event.calculationVersion ?? null, contentHash, JSON.stringify(event)]));
         const written = new Set(inserted.rows.map(row => String(row.event_id)));
-        // Observations are most of the volume, so their rows go in one statement per batch: one round trip each held
-        // the book writer below the rate books arrive.
-        const observations: unknown[][] = [];
         for (const { event, contentHash } of fresh) {
-          if (written.has(event.eventId)) {
-            const row = observationRow(event);
-            if (row) observations.push(row);
-            else await this.materialize(client, event);
-            continue;
-          }
+          if (written.has(event.eventId)) continue;
           // A concurrent appender committed this eventId after the check above; accept only an equivalent record.
           const raced = await client.query("SELECT content_hash, record FROM event_log WHERE event_id = $1", [event.eventId]);
           if (raced.rows[0]?.content_hash !== contentHash && !isRepeatedObservation(raced.rows[0]?.record, event)) {
             throw new Error("Event is immutable");
           }
         }
-        if (observations.length) {
-          await client.query(`INSERT INTO observations(source_time, event_id, instrument_id, venue, payload)
-            VALUES ${observations.map((_, row) => `(${Array.from({ length: 5 }, (_, column) => `$${row * 5 + column + 1}`).join(",")})`).join(", ")}
-            ON CONFLICT DO NOTHING`, observations.flat());
-        }
+        await materializeMany(client, fresh.map(item => item.event).filter(event => written.has(event.eventId)));
       }
       await client.query("COMMIT");
     } catch (error) { await client.query("ROLLBACK"); throw error; }
@@ -238,29 +270,6 @@ export class HistoryStore {
     if (await missing("evidence", "evidence_hash", cited.filter(hash => !batchHashes.has(hash)))) {
       throw new Error("Cited evidence is not yet recorded");
     }
-  }
-
-  private async materialize(sql: SqlClient, event: StoredEvent): Promise<void> {
-    const payload = event.payload;
-    const json = JSON.stringify(payload);
-    if (event.topic === "instrument.registry.v1" && "kind" in payload && payload.kind === "upsert") {
-      const instrument = payload.instrument;
-      await sql.query(`INSERT INTO instruments(instrument_id, metadata_version, underlying_id, event_id, payload)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [instrument.instrumentId, instrument.metadataVersion, instrument.underlyingId, event.eventId, JSON.stringify(instrument)]);
-    } else if (event.topic === "evidence.bundle.v1" && "sourceEventIds" in payload) {
-      if (payload.calculationVersion !== event.calculationVersion) throw new Error("Evidence calculation version mismatch");
-      await sql.query(`INSERT INTO evidence(evidence_hash, calculation_version, archive_id, event_id, payload)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [payload.evidenceHash, event.calculationVersion, event.archiveId, event.eventId, json]);
-      for (const source of new Set(payload.sourceEventIds)) await sql.query(
-        "INSERT INTO evidence_sources(evidence_hash, source_event_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [payload.evidenceHash, source]);
-    } else if (event.topic === "opportunity.v1" && "stateRevision" in payload) {
-      await sql.query(`INSERT INTO opportunities(opportunity_id, state_revision, status, underlying_id, accepted_at_ms, calculation_version, archive_id, evidence_hash, payload)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, [payload.opportunityId, payload.stateRevision, payload.status,
-        payload.underlyingId, event.acceptedAtMs, event.calculationVersion, event.archiveId, payload.evidenceHash ?? null, json]);
-    } else if (event.topic === "intent.lifecycle.v1" && "idempotencyKey" in payload) {
-      await sql.query(`INSERT INTO intents(idempotency_key, opportunity_id, evidence_hash, expires_at, payload)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [payload.idempotencyKey, payload.opportunityId, payload.evidenceHash, payload.expiresAt, json]);
-    } else await sql.query("INSERT INTO audit_events(event_id, accepted_at_ms, payload) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", [event.eventId, event.acceptedAtMs, json]);
   }
 
   async queryEvents(filter: { underlyingId?: string; fromMs?: number; toMs?: number; afterOrdinal?: number; limit?: number } = {}): Promise<StoredEvent[]> {
