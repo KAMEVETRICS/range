@@ -101,6 +101,9 @@ it("uses full snapshot books5 and ticker messages and rejects malformed/incremen
   const instruments = mapBitgetInstruments(fixture("instruments"));
   const frame = {arg:{instType:"usdt-futures",topic:"books5",symbol:"AAPLUSDT"},action:"snapshot",data:[{...fixture("orderbook").data,seq:"99999999999999999"}],ts:1770531248001};
   expect(mapBitgetMessage(frame,instruments).events[0]).toMatchObject({transport:"websocket",sequence:"99999999999999999",sourceTimestampMs:1770531248000});
+  const deep = mapBitgetMessage({...frame,arg:{...frame.arg,topic:"books50"}},instruments).events[0];
+  expect(deep).toMatchObject({transport:"websocket",payload:{kind:"order_book"}});
+  expect(() => mapBitgetMessage({...frame,arg:{...frame.arg,topic:"books"}},instruments)).toThrow();
   expect(mapBitgetMessage("pong",instruments).events).toEqual([]);
   expect(() => mapBitgetMessage({...frame,action:"update"},instruments)).toThrow();
   expect(() => mapBitgetMessage({secret:"fixture-secret"},instruments)).toThrow("Connector");

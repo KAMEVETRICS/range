@@ -47,11 +47,11 @@ export class BitgetPublicClient {
   }
 }
 
-export interface BitgetSubscription { instType: string; topic: "ticker" | "books5"; symbol: string }
+export interface BitgetSubscription { instType: string; topic: "ticker" | "books5" | "books50"; symbol: string }
 export interface BitgetWebSocketPort { stream(subscriptions: readonly BitgetSubscription[], signal: AbortSignal): AsyncIterable<unknown> }
 type SocketFactory = (url: string) => WebSocket;
 
-/** Channel identity of a full books5/ticker snapshot; any other message is never conflated. */
+/** Channel identity of a full book or ticker snapshot; any other message is never conflated. */
 function snapshotChannel(data: string): string | undefined {
   try {
     const frame = JSON.parse(data) as { action?: unknown; arg?: { instType?: unknown; topic?: unknown; symbol?: unknown } };
@@ -62,16 +62,17 @@ function snapshotChannel(data: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** Full books5 snapshots avoid incremental-book reconstruction and resync ambiguity. */
+/** Full books5/books50 snapshots avoid incremental-book reconstruction and resync ambiguity. */
 export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => new WebSocket(url),
   options: { tickerIntervalMs?: number; bookIntervalMs?: number; fastBookSymbols?: ReadonlySet<string>; fastBookIntervalMs?: number;
     nowMs?: () => number } = {}): BitgetWebSocketPort {
-  const intervals: Record<string, number> = { ticker: options.tickerIntervalMs ?? 0, books5: options.bookIntervalMs ?? 0 };
+  const intervals: Record<string, number> = { ticker: options.tickerIntervalMs ?? 0, books5: options.bookIntervalMs ?? 0,
+    books50: options.bookIntervalMs ?? 0 };
   const nowMs = options.nowMs ?? Date.now;
   // Executable books must stay inside the evaluator's 2 s quote budget, so their symbols refresh faster.
   const intervalOf = (channel: string) => {
     const [, topic = "", symbol = ""] = channel.split(":");
-    if (topic === "books5" && options.fastBookSymbols?.has(symbol)) return options.fastBookIntervalMs ?? 0;
+    if ((topic === "books5" || topic === "books50") && options.fastBookSymbols?.has(symbol)) return options.fastBookIntervalMs ?? 0;
     return intervals[topic] ?? 0;
   };
   return {
@@ -79,7 +80,7 @@ export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => n
       if (signal.aborted || !subscriptions.length) return;
       if (subscriptions.length > 3_960) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
       // Full snapshots supersede their predecessors, so a slow consumer receives each channel's newest state.
-      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones. Ticker and books5
+      // A refreshed channel keeps its queue position, so busy channels cannot starve quiet ones. Ticker and book
       // channels are also delivered at most once per tickerIntervalMs / bookIntervalMs (uncapped when 0).
       const pending = new Map<string, string>();
       const deliveredAt = new Map<string, number>();

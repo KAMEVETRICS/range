@@ -1,7 +1,7 @@
 import { ConnectorDiagnosticError, type ConnectorAdapter, type RawVenueEvent } from "@range/connector-sdk";
 import type { Instrument } from "@range/domain";
 import { BitgetPublicClient, type BitgetSubscription, type BitgetWebSocketPort } from "./client.js";
-import { BITGET_CATEGORIES, type BitgetCategory, bitgetCategory, bitgetEquityTicker, isReality, mapBitgetBook, mapBitgetInstruments, mapBitgetMessage, mapBitgetTickers, type BitgetMappedMessages, type BitgetTickerEvidence } from "./mapper.js";
+import { BITGET_CATEGORIES, type BitgetCategory, bitgetCategory, bitgetEquityTicker, isReality, isReviewedStockPerp, mapBitgetBook, mapBitgetInstruments, mapBitgetMessage, mapBitgetTickers, type BitgetMappedMessages, type BitgetTickerEvidence } from "./mapper.js";
 
 export interface BitgetAdapter extends ConnectorAdapter { tickerEvidence(): readonly BitgetTickerEvidence[] }
 
@@ -80,10 +80,13 @@ export function createBitgetAdapter(http: BitgetPublicClient, ws: BitgetWebSocke
       }
       return mapBitgetBook(await http.market("orderbook", bitgetCategory(instrument), signal, instrument.venueSymbol), instrument);
     },
+    // Reviewed stocks take 50-level snapshots: their top five levels often hold under $1,000, short of a $2,500
+    // quote. Every other listing keeps five.
     async *stream(instruments, signal) {
       const subscriptions: BitgetSubscription[] = instruments.flatMap(instrument => {
         const identity = {instType:bitgetCategory(instrument).toLowerCase(), symbol:instrument.venueSymbol};
-        return [{...identity, topic:"ticker" as const}, ...(isReality(instrument) ? [] : [{...identity, topic:"books5" as const}])];
+        const books = isReviewedStockPerp(instrument) ? "books50" as const : "books5" as const;
+        return [{...identity, topic:"ticker" as const}, ...(isReality(instrument) ? [] : [{...identity, topic:books}])];
       });
       for await (const message of ws.stream(subscriptions, signal)) {
         if (signal.aborted) break;

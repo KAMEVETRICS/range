@@ -55,12 +55,14 @@ it("ingests WS ticker funding and snapshot books with correct public subscriptio
   const instruments = await context.adapter.discover(signal());
   context.frames([
     fixture("ticker-ws"),
-    {arg:{instType:"usdt-futures",symbol:"AAPLUSDT",topic:"books5"}, action:"snapshot", ts:1770531248000, data:[fixture("orderbook").data]},
+    {arg:{instType:"usdt-futures",symbol:"AAPLUSDT",topic:"books50"}, action:"snapshot", ts:1770531248000, data:[fixture("orderbook").data]},
   ]);
   const events = [];
   for await (const event of context.adapter.stream!(instruments, signal())) events.push(event);
   expect(events.map(e => e.payload.kind)).toEqual(["index_price", "funding", "order_book"]);
-  expect(context.subscriptions).toContainEqual({instType:"usdt-futures",symbol:"AAPLUSDT",topic:"books5"});
+  // The reviewed stock perp takes 50-level books; the unreviewed spot listing keeps five.
+  expect(context.subscriptions).toContainEqual({instType:"usdt-futures",symbol:"AAPLUSDT",topic:"books50"});
+  expect(context.subscriptions).toContainEqual({instType:"spot",symbol:"AAPLXUSDT",topic:"books5"});
   expect(context.subscriptions).not.toContainEqual({instType:"spot",symbol:"RAAPLUSDT",topic:"books5"});
   expect(context.adapter.tickerEvidence().find(e => e.instrumentId === "ins_bitget_USDT-FUTURES_AAPLUSDT")?.openInterest).toBe("12345.6789");
 });

@@ -183,11 +183,11 @@ export function mapBitgetMessage(input: unknown, instruments: readonly Instrumen
     if (input === "pong") return { events: [], evidence: [] };
     const raw = typeof input === "string" ? parseBitgetJson(input) : input;
     if (raw && typeof raw === "object" && (raw as {event?:unknown}).event === "subscribe") return { events: [], evidence: [] };
-    const frame = z.object({ arg: z.object({ instType: text, symbol: text, topic: z.enum(["books5", "ticker"]) }),
+    const frame = z.object({ arg: z.object({ instType: text, symbol: text, topic: z.enum(["books5", "books50", "ticker"]) }),
       action: z.literal("snapshot"), data: z.array(z.record(z.string(), z.unknown())).min(1), ts: timestamp }).parse(raw);
     const instrument = instruments.find(i => i.venueFamily?.toLowerCase() === frame.arg.instType && i.venueSymbol === frame.arg.symbol);
     if (!instrument) throw new Error();
-    if (frame.arg.topic === "books5") return { events: frame.data.map(row => mapBitgetBook({ code: "00000", data: row }, instrument, "websocket")), evidence: [] };
+    if (frame.arg.topic !== "ticker") return { events: frame.data.map(row => mapBitgetBook({ code: "00000", data: row }, instrument, "websocket")), evidence: [] };
     return mapBitgetTickers({ code: "00000", data: frame.data.map(row => ({ ...row, category: instrument.venueFamily, symbol: instrument.venueSymbol, ts: row.ts ?? frame.ts })) }, [instrument], "websocket");
   });
 }
