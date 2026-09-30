@@ -1,0 +1,486 @@
+{
+  "timezone": "UTC",
+  "serverTime": 1790735686232,
+  "symbols": [
+    {
+      "symbol": "BTCUSDT",
+      "filters": [
+        {
+          "minPrice": "1",
+          "maxPrice": "1000000",
+          "filterType": "PRICE_FILTER",
+          "tickSize": "0.1"
+        },
+        {
+          "stepSize": "0.001",
+          "filterType": "LOT_SIZE",
+          "maxQty": "1000",
+          "minQty": "0.001"
+        },
+        {
+          "stepSize": "0.001",
+          "filterType": "MARKET_LOT_SIZE",
+          "maxQty": "120",
+          "minQty": "0.001"
+        },
+        {
+          "limit": 200,
+          "filterType": "MAX_NUM_ORDERS"
+        },
+        {
+          "limit": 10,
+          "filterType": "MAX_NUM_ALGO_ORDERS"
+        },
+        {
+          "notional": "5",
+          "filterType": "MIN_NOTIONAL"
+        },
+        {
+          "multiplierDown": "0.9800",
+          "multiplierUp": "1.0200",
+          "ltMultiplierDown": "0",
+          "multiplierDecimal": "4",
+          "filterType": "PERCENT_PRICE",
+          "ltMultiplierUp": "0"
+        }
+      ],
+      "orderTypes": [
+        "LIMIT",
+        "MARKET",
+        "STOP",
+        "STOP_MARKET",
+        "TAKE_PROFIT",
+        "TAKE_PROFIT_MARKET",
+        "TRAILING_STOP_MARKET"
+      ],
+      "timeInForce": [
+        "GTC",
+        "IOC",
+        "GTX",
+        "HIDDEN"
+      ],
+      "createTime": 1630045468108,
+      "pair": "BTCUSDT",
+      "contractType": "PERPETUAL",
+      "deliveryDate": 4133404800000,
+      "onboardDate": 1627628400000,
+      "status": "TRADING",
+      "maintMarginPercent": "2.5000",
+      "requiredMarginPercent": "5.0000",
+      "baseAsset": "BTC",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "pricePrecision": 1,
+      "quantityPrecision": 3,
+      "baseAssetPrecision": 8,
+      "quotePrecision": 8,
+      "underlyingType": "COIN",
+      "underlyingSubType": [
+        "Top"
+      ],
+      "symbolType": 0,
+      "tradingMode": 0,
+      "name": "",
+      "channel": "",
+      "sequenceNo": 10,
+      "twapMinNotional": "1000",
+      "imn": "16000.00",
+      "tags": [],
+      "settlePlan": 0,
+      "triggerProtect": "0.0200",
+      "liquidationFee": "0.025000",
+      "marketTakeBound": "0.02"
+    },
+    {
+      "symbol": "AAPLUSDT",
+      "filters": [
+        {
+          "minPrice": "0.010000",
+          "maxPrice": "2000",
+          "filterType": "PRICE_FILTER",
+          "tickSize": "0.010000"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "LOT_SIZE",
+          "maxQty": "20000",
+          "minQty": "0.01"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "MARKET_LOT_SIZE",
+          "maxQty": "2000",
+          "minQty": "0.01"
+        },
+        {
+          "limit": 200,
+          "filterType": "MAX_NUM_ORDERS"
+        },
+        {
+          "limit": 10,
+          "filterType": "MAX_NUM_ALGO_ORDERS"
+        },
+        {
+          "notional": "5",
+          "filterType": "MIN_NOTIONAL"
+        },
+        {
+          "multiplierDown": "0.9800",
+          "multiplierUp": "1.0200",
+          "ltMultiplierDown": "0.9800",
+          "multiplierDecimal": "4",
+          "filterType": "PERCENT_PRICE",
+          "ltMultiplierUp": "1.0200"
+        }
+      ],
+      "orderTypes": [
+        "LIMIT",
+        "MARKET",
+        "STOP",
+        "STOP_MARKET",
+        "TAKE_PROFIT",
+        "TAKE_PROFIT_MARKET",
+        "TRAILING_STOP_MARKET"
+      ],
+      "timeInForce": [
+        "GTC",
+        "IOC",
+        "GTX",
+        "HIDDEN"
+      ],
+      "createTime": 1752152822909,
+      "pair": "AAPLUSDT",
+      "contractType": "PERPETUAL",
+      "deliveryDate": 4133404800000,
+      "onboardDate": 1751871600000,
+      "status": "TRADING",
+      "maintMarginPercent": "2.5000",
+      "requiredMarginPercent": "5.0000",
+      "baseAsset": "AAPL",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "pricePrecision": 6,
+      "quantityPrecision": 2,
+      "baseAssetPrecision": 8,
+      "quotePrecision": 8,
+      "underlyingType": "COIN",
+      "underlyingSubType": [
+        "STOCK"
+      ],
+      "symbolType": 1,
+      "tradingMode": 1,
+      "name": "",
+      "channel": "nasdaq",
+      "sequenceNo": 0,
+      "twapMinNotional": "1000",
+      "imn": "4000.00",
+      "tags": [
+        "Apple",
+        "Stock",
+        "股票",
+        "苹果",
+        "苹",
+        "股票",
+        "蘋果",
+        "蘋"
+      ],
+      "settlePlan": 0,
+      "triggerProtect": "0.0200",
+      "liquidationFee": "0.025000",
+      "marketTakeBound": "0.02"
+    },
+    {
+      "symbol": "TSLAUSDT",
+      "filters": [
+        {
+          "minPrice": "0.010000",
+          "maxPrice": "2000",
+          "filterType": "PRICE_FILTER",
+          "tickSize": "0.010000"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "LOT_SIZE",
+          "maxQty": "20000",
+          "minQty": "0.01"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "MARKET_LOT_SIZE",
+          "maxQty": "2000",
+          "minQty": "0.01"
+        },
+        {
+          "limit": 200,
+          "filterType": "MAX_NUM_ORDERS"
+        },
+        {
+          "limit": 10,
+          "filterType": "MAX_NUM_ALGO_ORDERS"
+        },
+        {
+          "notional": "5",
+          "filterType": "MIN_NOTIONAL"
+        },
+        {
+          "multiplierDown": "0.9800",
+          "multiplierUp": "1.0200",
+          "ltMultiplierDown": "0.9800",
+          "multiplierDecimal": "4",
+          "filterType": "PERCENT_PRICE",
+          "ltMultiplierUp": "1.0200"
+        }
+      ],
+      "orderTypes": [
+        "LIMIT",
+        "MARKET",
+        "STOP",
+        "STOP_MARKET",
+        "TAKE_PROFIT",
+        "TAKE_PROFIT_MARKET",
+        "TRAILING_STOP_MARKET"
+      ],
+      "timeInForce": [
+        "GTC",
+        "IOC",
+        "GTX",
+        "HIDDEN"
+      ],
+      "createTime": 1752580795904,
+      "pair": "TSLAUSDT",
+      "contractType": "PERPETUAL",
+      "deliveryDate": 4133404800000,
+      "onboardDate": 1752562800000,
+      "status": "TRADING",
+      "maintMarginPercent": "2.5000",
+      "requiredMarginPercent": "5.0000",
+      "baseAsset": "TSLA",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "pricePrecision": 6,
+      "quantityPrecision": 2,
+      "baseAssetPrecision": 8,
+      "quotePrecision": 8,
+      "underlyingType": "COIN",
+      "underlyingSubType": [
+        "STOCK"
+      ],
+      "symbolType": 1,
+      "tradingMode": 1,
+      "name": "",
+      "channel": "nasdaq",
+      "sequenceNo": 0,
+      "twapMinNotional": "1000",
+      "imn": "4000.00",
+      "tags": [
+        "Tesla",
+        "Stock",
+        "股票",
+        "特斯拉",
+        "股票",
+        "特斯拉"
+      ],
+      "settlePlan": 0,
+      "triggerProtect": "0.0200",
+      "liquidationFee": "0.025000",
+      "marketTakeBound": "0.02"
+    },
+    {
+      "symbol": "BBXUSDT",
+      "filters": [
+        {
+          "minPrice": "0.00100",
+          "maxPrice": "20000",
+          "filterType": "PRICE_FILTER",
+          "tickSize": "0.00100"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "LOT_SIZE",
+          "maxQty": "400000",
+          "minQty": "0.01"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "MARKET_LOT_SIZE",
+          "maxQty": "7000",
+          "minQty": "0.01"
+        },
+        {
+          "limit": 200,
+          "filterType": "MAX_NUM_ORDERS"
+        },
+        {
+          "limit": 10,
+          "filterType": "MAX_NUM_ALGO_ORDERS"
+        },
+        {
+          "notional": "5",
+          "filterType": "MIN_NOTIONAL"
+        },
+        {
+          "multiplierDown": "0.9500",
+          "multiplierUp": "1.0500",
+          "ltMultiplierDown": "0.9500",
+          "multiplierDecimal": "4",
+          "filterType": "PERCENT_PRICE",
+          "ltMultiplierUp": "1.0500"
+        }
+      ],
+      "orderTypes": [
+        "LIMIT",
+        "MARKET",
+        "STOP",
+        "STOP_MARKET",
+        "TAKE_PROFIT",
+        "TAKE_PROFIT_MARKET",
+        "TRAILING_STOP_MARKET"
+      ],
+      "timeInForce": [
+        "GTC",
+        "IOC",
+        "GTX",
+        "HIDDEN"
+      ],
+      "createTime": 1780414121184,
+      "pair": "BBXUSDT",
+      "contractType": "PERPETUAL",
+      "deliveryDate": 4133404800000,
+      "onboardDate": 1780421400000,
+      "status": "TRADING",
+      "maintMarginPercent": "16.6600",
+      "requiredMarginPercent": "33.3300",
+      "baseAsset": "BBX",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "pricePrecision": 5,
+      "quantityPrecision": 2,
+      "baseAssetPrecision": 8,
+      "quotePrecision": 8,
+      "underlyingType": "COIN",
+      "underlyingSubType": [
+        "STOCK"
+      ],
+      "symbolType": 1,
+      "tradingMode": 1,
+      "name": "",
+      "channel": "nasdaq",
+      "sequenceNo": 0,
+      "twapMinNotional": "1000",
+      "imn": "4000.00",
+      "tags": [
+        "BlackBerry",
+        "Stock",
+        "股票",
+        "黑莓",
+        "黑莓",
+        "股票",
+        "黑莓",
+        "黑"
+      ],
+      "settlePlan": 0,
+      "triggerProtect": "0.0500",
+      "liquidationFee": "0.025000",
+      "marketTakeBound": "0.05"
+    },
+    {
+      "symbol": "METAUSD1",
+      "filters": [
+        {
+          "minPrice": "0.01000",
+          "maxPrice": "20000",
+          "filterType": "PRICE_FILTER",
+          "tickSize": "0.01000"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "LOT_SIZE",
+          "maxQty": "4000",
+          "minQty": "0.01"
+        },
+        {
+          "stepSize": "0.01",
+          "filterType": "MARKET_LOT_SIZE",
+          "maxQty": "700",
+          "minQty": "0.01"
+        },
+        {
+          "limit": 200,
+          "filterType": "MAX_NUM_ORDERS"
+        },
+        {
+          "limit": 10,
+          "filterType": "MAX_NUM_ALGO_ORDERS"
+        },
+        {
+          "notional": "5",
+          "filterType": "MIN_NOTIONAL"
+        },
+        {
+          "multiplierDown": "0.9500",
+          "multiplierUp": "1.0500",
+          "ltMultiplierDown": "0.9500",
+          "multiplierDecimal": "4",
+          "filterType": "PERCENT_PRICE",
+          "ltMultiplierUp": "1.0500"
+        }
+      ],
+      "orderTypes": [
+        "LIMIT",
+        "MARKET",
+        "STOP",
+        "STOP_MARKET",
+        "TAKE_PROFIT",
+        "TAKE_PROFIT_MARKET",
+        "TRAILING_STOP_MARKET"
+      ],
+      "timeInForce": [
+        "GTC",
+        "IOC",
+        "GTX",
+        "HIDDEN"
+      ],
+      "createTime": 1790222225962,
+      "pair": "METAUSD1",
+      "contractType": "PERPETUAL",
+      "deliveryDate": 4133404800000,
+      "onboardDate": 1790233200000,
+      "status": "TRADING",
+      "maintMarginPercent": "16.6600",
+      "requiredMarginPercent": "33.3300",
+      "baseAsset": "META",
+      "quoteAsset": "USD1",
+      "marginAsset": "USD1",
+      "pricePrecision": 5,
+      "quantityPrecision": 2,
+      "baseAssetPrecision": 8,
+      "quotePrecision": 8,
+      "underlyingType": "COIN",
+      "underlyingSubType": [
+        "STOCK",
+        "AOS2",
+        "USD1-RWA"
+      ],
+      "symbolType": 1,
+      "tradingMode": 1,
+      "name": "",
+      "channel": "nasdaq",
+      "sequenceNo": 0,
+      "twapMinNotional": "1000",
+      "imn": "4000.00",
+      "tags": [
+        "Meta",
+        "Stock",
+        "Facebook",
+        "脸书",
+        "股票",
+        "臉書",
+        "股票"
+      ],
+      "settlePlan": 0,
+      "triggerProtect": "0.0500",
+      "liquidationFee": "0.025000",
+      "marketTakeBound": "0.05"
+    }
+  ]
+}

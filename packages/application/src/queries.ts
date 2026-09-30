@@ -4,7 +4,7 @@ import { EvidenceBundleSchema, InstrumentSchema, MarketBoardSnapshotSchema, Obse
   type Opportunity } from "@range/domain";
 import type { CurrentStateStore, HistoryStore, SqlClient, StoredEvent } from "@range/storage";
 
-export const VenueFilterSchema = z.enum(["bitget", "ondo_stocks", "ondo_perps", "hyperliquid_hip3", "bybit", "qfex", "lighter", "extended", "aster", "variational", "pacifica", "nado"]);
+export const VenueFilterSchema = z.enum(["bitget", "ondo_stocks", "ondo_perps", "hyperliquid_hip3", "bybit", "qfex", "lighter", "extended", "aster", "variational", "pacifica", "nado", "binance"]);
 export const UnderlyingFilterSchema = z.string().max(100).regex(/^[A-Za-z][A-Za-z0-9_-]*:[A-Za-z0-9_.-]+$/);
 const boundedInt = (max: number) => z.coerce.number().int().min(0).max(max);
 export const PageQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), offset: boundedInt(900).default(0) }).strict();

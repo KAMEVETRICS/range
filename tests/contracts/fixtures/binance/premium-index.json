@@ -1,0 +1,42 @@
+[
+  {
+    "symbol": "MINIMAXUSDT",
+    "markPrice": "31.76592770",
+    "indexPrice": "31.75510396",
+    "estimatedSettlePrice": "31.74538719",
+    "lastFundingRate": "0.00000000",
+    "interestRate": "0.00000000",
+    "nextFundingTime": 1790740800000,
+    "time": 1790736890307
+  },
+  {
+    "symbol": "BTCUSDT",
+    "markPrice": "83385.60000000",
+    "indexPrice": "83429.37434783",
+    "estimatedSettlePrice": "83404.72592186",
+    "lastFundingRate": "0.00005089",
+    "interestRate": "0.00010000",
+    "nextFundingTime": 1790755200000,
+    "time": 1790736890001
+  },
+  {
+    "symbol": "NVDAUSDT",
+    "markPrice": "228.15000000",
+    "indexPrice": "228.03781617",
+    "estimatedSettlePrice": "227.87732158",
+    "lastFundingRate": "0.00014895",
+    "interestRate": "0.00000000",
+    "nextFundingTime": 1790755200000,
+    "time": 1790736890307
+  },
+  {
+    "symbol": "TSLAUSDT",
+    "markPrice": "354.05000000",
+    "indexPrice": "353.80169601",
+    "estimatedSettlePrice": "353.68011965",
+    "lastFundingRate": "0.00028180",
+    "interestRate": "0.00000000",
+    "nextFundingTime": 1790755200000,
+    "time": 1790736890307
+  }
+]

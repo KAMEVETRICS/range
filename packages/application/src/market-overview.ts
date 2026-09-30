@@ -48,14 +48,25 @@ export type MarketOverviewCell = z.infer<typeof MarketOverviewCellSchema>;
 export type MarketOverviewRow = z.infer<typeof MarketOverviewRowSchema>;
 
 /**
+ * Venue names for a share that differ from its listed ticker: an X suffix where the ticker is also a crypto token's
+ * (Variational names BBX "BlackBerry Limited" and STXX "Seagate Technology"; Bybit maps QNTX to QNT), Berkshire
+ * without its class dot, and Variational's VISA.
+ */
+const TICKER_ALIASES: Readonly<Record<string, string>> = { BBX: "BB", STXX: "STX", QNTX: "QNT", "BRK.B": "BRKB", VISA: "V" };
+
+/**
  * The stock ticker a listing tracks: `equity:X` underlyings, and Bitget's venue-local names (`bitget:rX` Reality
  * tokens, `bitget:X` stock perpetuals). A match by ticker is not a reviewed mapping: the overview is display only.
  */
 export function displayTicker(entry: Pick<MarketBoardEntry, "venue" | "underlyingId" | "productType">): string | undefined {
-  if (entry.underlyingId.startsWith("equity:")) return entry.underlyingId.slice("equity:".length).toUpperCase() || undefined;
-  if (entry.venue !== "bitget" || !entry.underlyingId.startsWith("bitget:")) return undefined;
-  const name = entry.underlyingId.slice("bitget:".length);
-  return (entry.productType === "tokenized_spot" && /^r[A-Z]/.test(name) ? name.slice(1) : name).toUpperCase() || undefined;
+  let name: string;
+  if (entry.underlyingId.startsWith("equity:")) name = entry.underlyingId.slice("equity:".length);
+  else if (entry.venue === "bitget" && entry.underlyingId.startsWith("bitget:")) {
+    name = entry.underlyingId.slice("bitget:".length);
+    if (entry.productType === "tokenized_spot" && /^r[A-Z]/.test(name)) name = name.slice(1);
+  } else return undefined;
+  const ticker = name.toUpperCase();
+  return TICKER_ALIASES[ticker] ?? (ticker || undefined);
 }
 
 function cell(entry: MarketBoardEntry, nowMs: number): MarketOverviewCell {

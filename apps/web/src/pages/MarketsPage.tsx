@@ -7,9 +7,9 @@ type Period = "1h" | "8h" | "1d" | "apr";
 /** Bitget is the primary venue: every other venue is shown next to its spread against Bitget. */
 const PRIMARY = "bitget";
 const HOUR_MS = 3_600_000;
-const VENUE_ORDER = ["hyperliquid_hip3", "extended", "ondo_perps", "bybit", "aster", "lighter", "pacifica", "variational"];
+const VENUE_ORDER = ["binance", "hyperliquid_hip3", "bybit", "lighter", "aster", "pacifica", "extended", "variational", "ondo_perps"];
 const VENUES: Record<string, { label: string; mono: string }> = {
-  bitget: { label: "Bitget", mono: "BG" }, hyperliquid_hip3: { label: "Hyperliquid", mono: "HL" }, extended: { label: "Extended", mono: "EX" },
+  bitget: { label: "Bitget", mono: "BG" }, binance: { label: "Binance", mono: "BN" }, hyperliquid_hip3: { label: "Hyperliquid", mono: "HL" }, extended: { label: "Extended", mono: "EX" },
   ondo_perps: { label: "Ondo", mono: "ON" }, bybit: { label: "Bybit", mono: "BY" }, aster: { label: "Aster", mono: "AS" },
   lighter: { label: "Lighter", mono: "LI" }, pacifica: { label: "Pacifica", mono: "PA" }, variational: { label: "Variational", mono: "VA" },
 };

@@ -1,0 +1,13 @@
+{
+  "name": "@range/connector-variational",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/adapter.ts" },
+  "dependencies": {
+    "@range/connector-sdk": "workspace:*",
+    "@range/domain": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": { "tsx": "^4.20.0" }
+}

@@ -1,0 +1,52 @@
+[
+  {
+    "symbol": "TSLAUSDT",
+    "markPrice": "354.04180921",
+    "indexPrice": "353.55303384",
+    "estimatedSettlePrice": "353.97574303",
+    "lastFundingRate": "0.00028227",
+    "interestRate": "0",
+    "nextFundingTime": 1790755200000,
+    "time": 1790735954000
+  },
+  {
+    "symbol": "AAPLUSDT",
+    "markPrice": "329.93031324",
+    "indexPrice": "329.68404551",
+    "estimatedSettlePrice": "329.95089642",
+    "lastFundingRate": "0",
+    "interestRate": "0",
+    "nextFundingTime": 1790755200000,
+    "time": 1790735954000
+  },
+  {
+    "symbol": "METAUSD1",
+    "markPrice": "739.49409352",
+    "indexPrice": "738.96964091",
+    "estimatedSettlePrice": "740.86766302",
+    "lastFundingRate": "0",
+    "interestRate": "0",
+    "nextFundingTime": 1790755200000,
+    "time": 1790735954000
+  },
+  {
+    "symbol": "BBXUSDT",
+    "markPrice": "8.71906071",
+    "indexPrice": "8.71041061",
+    "estimatedSettlePrice": "8.72019588",
+    "lastFundingRate": "0",
+    "interestRate": "0",
+    "nextFundingTime": 1790755200000,
+    "time": 1790735954000
+  },
+  {
+    "symbol": "BTCUSDT",
+    "markPrice": "83282.80000000",
+    "indexPrice": "83315.29326087",
+    "estimatedSettlePrice": "83446.31466848",
+    "lastFundingRate": "0.00006108",
+    "interestRate": "0.00010000",
+    "nextFundingTime": 1790755200000,
+    "time": 1790735954000
+  }
+]

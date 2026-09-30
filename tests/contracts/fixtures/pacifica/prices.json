@@ -1,0 +1,43 @@
+{
+  "success": true,
+  "data": [
+    {
+      "funding": "0.0000125",
+      "mark": "353.88",
+      "mid": "353.94",
+      "next_funding": "0.0000125",
+      "open_interest": "955.068",
+      "oracle": "353.703031",
+      "symbol": "TSLA",
+      "timestamp": 1790736446721,
+      "volume_24h": "272048.462",
+      "yesterday_price": "357.07"
+    },
+    {
+      "funding": "0.0000125",
+      "mark": "228.01",
+      "mid": "228.025",
+      "next_funding": "0.0000125",
+      "open_interest": "1125.94",
+      "oracle": "227.89719",
+      "symbol": "NVDA",
+      "timestamp": 1790736446721,
+      "volume_24h": "344080.6498",
+      "yesterday_price": "228.6"
+    },
+    {
+      "funding": "0.0000125",
+      "mark": "83426.921865",
+      "mid": "83448.5",
+      "next_funding": "0.0000125",
+      "open_interest": "538.33623",
+      "oracle": "83426.921865",
+      "symbol": "BTC",
+      "timestamp": 1790736446721,
+      "volume_24h": "393006817.8423",
+      "yesterday_price": "83024"
+    }
+  ],
+  "error": null,
+  "code": null
+}

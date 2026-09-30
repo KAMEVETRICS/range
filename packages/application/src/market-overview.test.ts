@@ -26,6 +26,13 @@ describe("displayTicker", () => {
     expect(displayTicker({ venue: "bitget", underlyingId: "bitget:AAPL", productType: "perpetual" })).toBe("AAPL");
     expect(displayTicker({ venue: "hyperliquid_hip3", underlyingId: "crypto:BTC", productType: "perpetual" })).toBeUndefined();
   });
+
+  it("files a venue's suffixed or punctuated name for a share under its listed ticker", () => {
+    expect(displayTicker({ venue: "aster", underlyingId: "equity:BBX", productType: "perpetual" })).toBe("BB");
+    expect(displayTicker({ venue: "extended", underlyingId: "equity:STXX", productType: "perpetual" })).toBe("STX");
+    expect(displayTicker({ venue: "bybit", underlyingId: "equity:BRK.B", productType: "perpetual" })).toBe("BRKB");
+    expect(displayTicker({ venue: "variational", underlyingId: "equity:VISA", productType: "perpetual" })).toBe("V");
+  });
 });
 
 describe("buildMarketOverview", () => {

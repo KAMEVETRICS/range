@@ -165,7 +165,52 @@ importers:
         specifier: ^4.0.0
         version: 4.1.11(@types/node@24.13.6)(jsdom@27.4.0(supports-color@7.2.0))(vite@8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  connectors/aster:
+    dependencies:
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
+  connectors/binance:
+    dependencies:
+      '@range/connector-aster':
+        specifier: workspace:*
+        version: link:../aster
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
   connectors/bitget:
+    dependencies:
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
+  connectors/bybit:
     dependencies:
       '@range/connector-sdk':
         specifier: workspace:*
@@ -213,7 +258,55 @@ importers:
         specifier: ^4.20.0
         version: 4.23.15
 
+  connectors/lighter:
+    dependencies:
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
   connectors/ondo-perps:
+    dependencies:
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
+  connectors/pacifica:
+    dependencies:
+      '@range/connector-sdk':
+        specifier: workspace:*
+        version: link:../../packages/connector-sdk
+      '@range/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
+  connectors/variational:
     dependencies:
       '@range/connector-sdk':
         specifier: workspace:*

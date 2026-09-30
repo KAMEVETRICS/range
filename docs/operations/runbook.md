@@ -15,7 +15,21 @@ The verifier is intentionally fail-closed. On the checked-in empty mapping seed 
 
 ## Public dashboard
 
-On the VPS the dashboard is served at `https://range.datatides.xyz` by the host's Caddy, which also serves other sites; its site block lives in `/etc/caddy/Caddyfile`, outside this repository. Since 2026-09-29 it is public for a hackathon: Caddy forwards to the dashboard container on `127.0.0.1:4173` without a login, and the container's nginx adds the read-only dashboard token (`market:read`, `opportunity:read`) to API calls, so the browser never holds it. Anyone can read what the dashboard shows; nothing can be changed through it. Every visitor shares the dashboard client's gateway rate limits (10 opportunity scans and 60 of each other operation per minute), so heavy use or a bot can make the page show rate-limit errors for up to a minute. To require a login again, add a `basic_auth` block (hash from `caddy hash-password`) to the site, run `caddy validate --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`; a reload does not interrupt the other sites.
+On the VPS the dashboard is served at `https://range.datatides.xyz` by the host's Caddy, which also serves other sites; its site block lives in `/etc/caddy/Caddyfile`, outside this repository. Since 2026-09-29 it is public for a hackathon: Caddy forwards to the dashboard container on `127.0.0.1:4173` without a login, and the container's nginx adds the read-only dashboard token (`market:read`, `opportunity:read`) to API calls, so the browser never holds it. Anyone can read what the dashboard shows; nothing can be changed through it. Every visitor shares the dashboard client's gateway rate limits (600 market overviews, 10 opportunity scans, and 60 of each other operation per minute), so heavy use or a bot can make the page show rate-limit errors for up to a minute. To require a login again, add a `basic_auth` block (hash from `caddy hash-password`) to the site, run `caddy validate --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`; a reload does not interrupt the other sites.
+
+## Reference venues on the Markets page
+
+The Markets page compares Bitget with every other venue by ticker. Besides the Bitget, Hyperliquid, Extended, and Ondo Perps connectors, six reference-only connectors read public market data in bulk, one top-of-book level per market and funding, and never feed opportunities:
+
+| Connector | Source | Cadence | Stock listings |
+| --- | --- | --- | --- |
+| `connector-bybit` | v5 linear tickers | 5 s | `symbolType: "stock"` |
+| `connector-aster`, `connector-binance` | Binance-compatible futures API: all book tickers, all premium indexes | 5 s, funding 60 s | Aster `underlyingSubType` STOCK; Binance `TRADIFI_PERPETUAL` with an equity `underlyingType` |
+| `connector-pacifica` | one book read per market, prices feed for funding | 20 s (about 45 of Pacifica's 1,000 credits a minute) | reviewed list |
+| `connector-lighter` | `market_stats/all` WebSocket (REST allows 60 requests a minute) | stream, read every 5 s | reviewed list |
+| `connector-variational` | `/metadata/stats` | 10 s | reviewed list |
+
+Pacifica, Lighter, and Variational have no asset-class field, so their stocks are reviewed lists in each connector's `mapper.ts`; add a newly listed stock there. Lighter and Variational quotes have no sizes, and Variational's funding is stated as an annual fraction. When venues name one share differently (Aster's BBX is BlackBerry, BB), add the alias to `TICKER_ALIASES` in `packages/application/src/market-overview.ts`. QFEX, Nado, and Ondo Stocks need API keys and are not connected.
 
 ## Correctness alerts
 

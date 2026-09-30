@@ -227,6 +227,7 @@ main.markets { width: min(100%, 1720px); margin: 0 auto; padding: 22px 24px 40px
 .venue-icon::after { content: attr(data-mono); }
 .icons .venue-icon + .venue-icon { margin-left: -7px; box-shadow: 0 0 0 2px #121b25; }
 .venue-icon[data-venue="bitget"] { color: #041a1e; background: #00e5f0; }
+.venue-icon[data-venue="binance"] { color: #1e1500; background: #f0b90b; }
 .venue-icon[data-venue="hyperliquid_hip3"] { color: #06231c; background: #97fce4; }
 .venue-icon[data-venue="extended"] { color: #fff; background: #7c5cff; }
 .venue-icon[data-venue="ondo_perps"] { color: #fff; background: #2563eb; }
