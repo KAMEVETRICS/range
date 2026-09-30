@@ -144,6 +144,14 @@ async function main() {
     feesBpsByVenue, slippageBpsByVenue, financingBps: "0", gasAndTransferBps: "0",
     fxConversionBps: "0", uncertaintyBufferBps: "0", calculationVersion,
   }, sql, redis);
+  // The pair view, like the market board: the latest evaluation of every reviewed pair, republished every 2 s.
+  let pairsVersion = 0;
+  const pairsTimer = setInterval(() => {
+    const at = Date.now();
+    pairsVersion = Math.max(at, pairsVersion + 1);
+    current.put("pair-evaluations", { version: pairsVersion, expiresAt: at + 30_000, value: service.worker.pairEvaluations(at) })
+      .catch(error => telemetry.logger.error("pair evaluations publish failed", { error }));
+  }, 2_000);
   let subscriptionsReady = true;
   const healthServer = createServer(async (request, response) => {
     if (request.url === "/healthz") {
@@ -157,7 +165,7 @@ async function main() {
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     subscriptionsReady = false;
-    clearInterval(pruneTimer); clearInterval(boardTimer); stopPruning.abort();
+    clearInterval(pruneTimer); clearInterval(boardTimer); clearInterval(pairsTimer); stopPruning.abort();
     await service.stop(); for (const stop of stops.reverse()) await stop(); await transport.close(); await pruning;
     await new Promise<void>((resolve, reject) => healthServer.close(error => error ? reject(error) : resolve()));
     redis.disconnect(); await sql.end();

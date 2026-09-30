@@ -281,3 +281,18 @@ main.markets { width: min(100%, 1720px); margin: 0 auto; padding: 22px 24px 40px
   .markets-table-shell { overflow: auto; border: 1px solid #1c2835; }
   .cell-details { width: min(280px, 86vw); }
 }
+
+/* Reviewed pairs: the latest evaluation of each approved pair, rejected ones included */
+.reviewed-pairs { width: min(100%, 1720px); margin: 0 auto 18px; padding: 18px 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.pairs-note { margin: 4px 0 12px; color: var(--muted); font-size: 13px; }
+.pairs-table-shell { overflow-x: auto; }
+.pairs-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pairs-table th, .pairs-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.pairs-table thead th { color: var(--muted); font-size: 12px; font-weight: 600; }
+.pairs-table tbody tr { cursor: pointer; }
+.pairs-table tbody tr:hover { background: var(--surface-subtle); }
+.pairs-table tbody tr.actionable { background: rgb(22 163 74 / 8%); }
+.pairs-table .positive { color: #15803d; font-weight: 700; }
+.pairs-table .negative { color: #b91c1c; font-weight: 600; }
+.pairs-table .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; color: var(--muted); background: var(--surface-subtle); font-size: 12px; }
+.pairs-table .badge.ok { color: #fff; background: #16a34a; font-weight: 700; }

@@ -114,6 +114,9 @@ importers:
       '@range/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      decimal.js:
+        specifier: ^10.6.0
+        version: 10.6.0
       ioredis:
         specifier: ^5.8.0
         version: 5.11.1(supports-color@7.2.0)

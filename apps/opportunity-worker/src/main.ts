@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { EventBus } from "@range/event-bus";
-import { isCurrentAtRevision, type ObservationEnvelope, type Opportunity, type VenueHealth } from "@range/domain";
+import { Decimal } from "decimal.js";
+import { FundingProjectionSchema, isCurrentAtRevision, PairEvaluationSnapshotSchema, type ObservationEnvelope, type Opportunity,
+  type PairEvaluationSnapshot, type VenueHealth } from "@range/domain";
 import { InstrumentRegistry } from "@range/instruments";
 import { OrderBook, normalizeFunding, projectFunding, quoteAtNotional, type NormalizedFunding } from "@range/market-state";
 import { activeLifecycle, evaluateOpportunityWithEvidence, type EvaluationInput, type EvaluationLeg, type Strategy } from "@range/opportunity";
@@ -36,6 +38,8 @@ export interface OpportunityWorker {
   stop(): Promise<void>;
   currentRevision(underlyingId: string): number;
   isCurrent(opportunity: Opportunity): boolean;
+  /** The latest evaluation of every reviewed pair, strategy, and direction, with the reviewed mappings behind them. */
+  pairEvaluations(asOfMs: number): PairEvaluationSnapshot;
 }
 
 interface BookCursor {
@@ -188,6 +192,9 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   // reasons change, or every 30 s so readers keep a current one.
   const REJECTION_REFRESH_MS = 30_000;
   const lastRejection = new Map<string, { reasons: string; atMs: number }>();
+  // Every evaluation, rejected or not, replaces its pair and direction here for the pair view; publishing it costs nothing.
+  // Validated against PairEvaluationSchema when the snapshot is taken.
+  const latestEvaluations = new Map<string, { underlyingId: string } & Record<string, unknown>>();
   const evaluateUnlocked = async (underlyingId: string) => {
     await accepting;
     assertAuthority();
@@ -228,6 +235,19 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
               fundingSourceExpiresAtMs = Math.min(...normalized
                 .filter(item => projected.sourceObservationIds.includes(item.sourceObservationId as never))
                 .map(item => item.sourceTimestampMs + item.freshnessBudgetMs));
+            } else if (projected.status === "no_settlement_due") {
+              // No settlement falls inside the holding window, so no funding changes hands: a zero projection, sourced
+              // from the observations that place the next settlement after it. Unknown funding would reject the pair.
+              const sources = normalized.filter(item => item.projectionEligible);
+              projection = FundingProjectionSchema.parse({
+                status: "projected", venue: instrument.venue, instrumentId: instrument.instrumentId,
+                rateTypes: [...new Set(sources.map(item => item.rateType))], positiveRatePayer: sources[0]!.positiveRatePayer,
+                intervalMs: sources[0]!.intervalMs, nextSettlementMs: projected.nextSettlementMs,
+                holdingStartMs: at, holdingEndMs: at + policy.holdingHorizonMs, holdingHorizonMs: policy.holdingHorizonMs,
+                settlementCount: 0, positionSide: side === "buy" ? "long" : "short", expectedCashflowBps: "0", expectedCashflowUsd: "0",
+                sourceObservationIds: sources.map(item => item.sourceObservationId),
+              });
+              fundingSourceExpiresAtMs = Math.min(...sources.map(item => item.sourceTimestampMs + item.freshnessBudgetMs));
             }
           }
           const metadata = books.get(instrument.instrumentId)?.metadata();
@@ -276,6 +296,16 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           expiryTimers.set(versioned.opportunityId, timer);
         }
         const directionKey = `${underlyingId}|${strategy}|${pair[buyIndex]!.instrumentId}`;
+        const side = (instrument: typeof a) => ({ instrumentId: instrument.instrumentId, venue: instrument.venue,
+          venueSymbol: instrument.venueSymbol, averagePrice: legs.find(leg => leg.instrumentId === instrument.instrumentId)?.quote?.averagePrice ?? null });
+        latestEvaluations.set(directionKey, {
+          underlyingId, strategy, buy: side(pair[buyIndex]!), sell: side(pair[1 - buyIndex]!), status: versioned.status,
+          grossSpreadBps: versioned.grossSpreadBps, expectedFundingBps: versioned.expectedFundingBps,
+          costsBps: [versioned.tradingFeesBps, versioned.slippageBps, versioned.financingBps, versioned.gasAndTransferBps,
+            versioned.fxConversionBps, versioned.uncertaintyBufferBps].reduce((sum, value) => sum.plus(value), new Decimal(0)).toFixed(),
+          netEdgeBps: versioned.netEdgeBps, capacityUsd: versioned.capacityUsd, requestedNotionalUsd: policy.requestedNotionalUsd,
+          rejectionReasons: [...versioned.rejectionReasons], evaluatedAtMs: at,
+        });
         if (versioned.status === "rejected") {
           const reasons = [...versioned.rejectionReasons].sort().join(",");
           const last = lastRejection.get(directionKey);
@@ -432,6 +462,19 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   }), { deleteGroupOnStop: true }));
   return {
     currentRevision(underlyingId) { assertAuthority(); return revisionOf(underlyingId); },
+    pairEvaluations(asOfMs) {
+      const mappings = registry.listReviewedMappings().map(mapping => ({
+        underlyingId: mapping.underlyingId,
+        members: mapping.members.flatMap(member => {
+          const instrument = registry.getCurrent(member.instrumentId)?.instrument;
+          return instrument ? [{ instrumentId: instrument.instrumentId, venue: instrument.venue, venueSymbol: instrument.venueSymbol,
+            underlyingId: instrument.underlyingId }] : [];
+        }),
+      })).filter(mapping => mapping.members.length >= 2);
+      const reviewed = new Set<string>(mappings.map(mapping => mapping.underlyingId));
+      return PairEvaluationSnapshotSchema.parse({ asOfMs, mappings,
+        pairs: [...latestEvaluations.values()].filter(item => reviewed.has(item.underlyingId)) });
+    },
     isCurrent(opportunity) {
       if (authorityFailed) return false;
       if (!isCurrentAtRevision(opportunity, revisionOf(opportunity.underlyingId), now())) return false;

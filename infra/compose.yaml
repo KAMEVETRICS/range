@@ -251,6 +251,9 @@ services:
       # The size each opportunity is priced at. Bitget's five visible levels hold about $5,000-$11,000 on the reviewed
       # stocks, so $10,000 left the thinner ones permanently short of depth.
       RANGE_REQUESTED_NOTIONAL_USD: "2500"
+      # A pair is priced as held for one hour: trade.xyz publishes only its next hourly funding rate and nothing is
+      # extrapolated, so a longer hold could never be covered; a window with no settlement is zero funding.
+      RANGE_HOLDING_HORIZON_MS: "3600000"
       RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-24}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318

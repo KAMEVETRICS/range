@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { EvidenceBundleSchema, InstrumentSchema, MarketBoardSnapshotSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema,
-  PositiveDecimalStringSchema, type EvidenceBundle, type Instrument, type MarketBoardSnapshot, type ObservationEnvelope,
-  type Opportunity } from "@range/domain";
+  PairEvaluationSnapshotSchema, PositiveDecimalStringSchema, type EvidenceBundle, type Instrument, type MarketBoardSnapshot,
+  type ObservationEnvelope, type Opportunity, type PairEvaluationSnapshot } from "@range/domain";
 import type { CurrentStateStore, HistoryStore, SqlClient, StoredEvent } from "@range/storage";
 
 export const VenueFilterSchema = z.enum(["bitget", "ondo_stocks", "ondo_perps", "hyperliquid_hip3", "bybit", "qfex", "lighter", "extended", "aster", "variational", "pacifica", "nado", "binance"]);
@@ -10,6 +10,7 @@ const boundedInt = (max: number) => z.coerce.number().int().min(0).max(max);
 export const PageQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), offset: boundedInt(900).default(0) }).strict();
 export const InstrumentQuerySchema = PageQuerySchema.extend({ underlying: UnderlyingFilterSchema.optional(), venue: VenueFilterSchema.optional() }).strict();
 export const MarketQuerySchema = z.object({ underlying: UnderlyingFilterSchema, venue: VenueFilterSchema.optional() }).strict();
+export const PairsQuerySchema = z.object({ underlying: UnderlyingFilterSchema.optional() }).strict();
 export const FundingCompareQuerySchema = MarketQuerySchema.extend({
   notional_usd: PositiveDecimalStringSchema.and(z.string().max(128)),
   holding_horizon_ms: z.coerce.number().int().min(1).max(86_400_000),
@@ -48,6 +49,8 @@ export interface ApplicationQueries {
   latestEventOrdinal(context: RequestContext): Promise<number>;
   /** The display board the opportunity worker publishes: latest top of book and funding per instrument. */
   getMarketBoard(context: RequestContext): Promise<MarketBoardSnapshot | undefined>;
+  /** The worker's latest evaluation of every reviewed pair, and the reviewed mappings behind them. */
+  getPairEvaluations(context: RequestContext): Promise<PairEvaluationSnapshot | undefined>;
 }
 
 /** Storage-backed adapter; venue configuration is a public capability manifest,
@@ -135,6 +138,11 @@ export class StorageQueries implements ApplicationQueries {
     this.audit(context, "storage.market-board");
     const state = await this.current.get("market-board");
     return state ? MarketBoardSnapshotSchema.parse(state.value) : undefined;
+  }
+  async getPairEvaluations(context: RequestContext) {
+    this.audit(context, "storage.pair-evaluations");
+    const state = await this.current.get("pair-evaluations");
+    return state ? PairEvaluationSnapshotSchema.parse(state.value) : undefined;
   }
   async latestEventOrdinal(context: RequestContext) {
     this.audit(context, "storage.event-cursor");

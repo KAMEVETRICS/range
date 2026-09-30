@@ -84,6 +84,8 @@ function apiWith(items: Opportunity[], detail = items[0], warnings: string[] = [
     }),
     listVenues: vi.fn().mockResolvedValue(venues),
     marketOverview: vi.fn(),
+    pairEvaluations: vi.fn().mockResolvedValue({ status: "ok", as_of: "2026-09-30T10:00:00.000Z", freshness: { oldest_input_ms: 0 },
+      result: { as_of_ms: null, pairs: [] }, evidence: [], warnings: [], trace_id: "rng_trace_pairs" }),
     subscribe: vi.fn(() => () => undefined),
     intentPreviewCapability: { available: false as const, reason: "Intent preview requires a server-side intent:create scope; no privileged token is exposed to this browser." },
   };

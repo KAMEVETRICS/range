@@ -644,6 +644,54 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
+  it("keeps the latest evaluation of every reviewed pair, strategy, and direction for the pair view", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const snapshot = worker.pairEvaluations(NOW);
+    expect(snapshot.mappings).toEqual([{ underlyingId: "equity:TSLA", members: [
+      { instrumentId: "ins_a", venue: "venue_a", venueSymbol: "ins_a", underlyingId: "equity:TSLA" },
+      { instrumentId: "ins_b", venue: "venue_b", venueSymbol: "ins_b", underlyingId: "equity:TSLA" }] }]);
+    expect(snapshot.pairs.map(item => [item.strategy, item.buy.instrumentId, item.sell.instrumentId]).sort()).toEqual([
+      ["funding_differential", "ins_a", "ins_b"], ["funding_differential", "ins_b", "ins_a"],
+      ["perp_spread", "ins_a", "ins_b"], ["perp_spread", "ins_b", "ins_a"]]);
+    // Buying at 100 on venue_a and selling at 125 on venue_b clears costs; the reverse cannot.
+    const spread = snapshot.pairs.find(item => item.strategy === "perp_spread" && item.buy.instrumentId === "ins_a")!;
+    expect(spread).toMatchObject({ status: "actionable", buy: { venue: "venue_a", averagePrice: "100" }, sell: { venue: "venue_b", averagePrice: "125" },
+      costsBps: "10", requestedNotionalUsd: "1000", evaluatedAtMs: NOW, rejectionReasons: [] });
+    expect(snapshot.pairs.find(item => item.strategy === "perp_spread" && item.buy.instrumentId === "ins_b")).toMatchObject({ status: "rejected" });
+    await worker.stop();
+  });
+
+  it("counts a holding window without a funding settlement as zero funding, not unknown funding", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const published: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "no-settlement", async event => { published.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    for (const [venue, id] of [["venue_a", "ins_a"], ["venue_b", "ins_b"]] as const) {
+      await bus.publish("venue.health.v1", venue, { venue, connectionState: "connected", lastEventAgeMs: 10,
+        clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
+      // The next settlement falls an hour out, well past the 2 s holding window.
+      await bus.publish("funding.observation.v1", id, { eventId: `evt_funding_later_${venue}`, schemaVersion: 1, venue, instrumentId: id,
+        transport: "websocket", sourceTimestamp: NOW - 10, receivedTimestamp: NOW - 5, freshnessBudgetMs: 2_000, qualityFlags: [],
+        rawPayloadRefOrHash: "sha256:funding", eligibility: "live", payload: { kind: "funding", rateType: "predicted", rate: "0.0001",
+          positiveRatePayer: "long", intervalMs: 3_600_000, nextSettlementMs: NOW + 3_600_000 } } as never);
+    }
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_book_a"),
+      payload: { kind: "order_book", bids: [{ price: "99", quantity: "20" }], asks: [{ price: "100", quantity: "20" }], capacityUsd: "2000" } } as never);
+    await bus.publish("book.state.v1", "ins_b", { ...book("ins_b", "venue_b", "100.3", "evt_book_b"),
+      payload: { kind: "order_book", bids: [{ price: "125", quantity: "20" }], asks: [{ price: "126", quantity: "20" }], capacityUsd: "2000" } } as never);
+    await worker.flush();
+    const actionable = published.find(item => item.status === "actionable" && item.strategy === "perp_spread");
+    expect(actionable).toBeDefined();
+    expect(actionable!.legs.map(leg => leg.fundingProjection?.settlementCount)).toEqual([0, 0]);
+    expect(published.some(item => item.rejectionReasons.includes("FUNDING_SEMANTICS_UNKNOWN"))).toBe(false);
+    await worker.stop();
+  });
+
   it("does not republish a rejection whose reasons are unchanged", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();

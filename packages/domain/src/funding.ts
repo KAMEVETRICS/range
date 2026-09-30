@@ -40,7 +40,8 @@ export const FundingProjectionSchema = z.object({
   holdingStartMs: EpochMillisecondsSchema,
   holdingEndMs: EpochMillisecondsSchema,
   holdingHorizonMs: z.number().int().positive(),
-  settlementCount: z.number().int().positive(),
+  /** Zero when no settlement falls inside the holding window, so no funding changes hands. */
+  settlementCount: z.number().int().nonnegative(),
   positionSide: z.enum(["long", "short"]),
   expectedCashflowBps: DecimalStringSchema,
   expectedCashflowUsd: DecimalStringSchema,

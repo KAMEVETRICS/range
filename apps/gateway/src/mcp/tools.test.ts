@@ -11,7 +11,7 @@ const queries: ApplicationQueries = {
   listVenues: async () => [], findInstruments: async () => [], getMarketSnapshot: async () => [],
   scanOpportunities: async () => [], inspectOpportunity: async () => undefined,
   getEvidence: async () => undefined, getSourceTimestamps: async () => [], getOpportunityHistory: async () => [],
-  getAcceptedRevision: async () => undefined, readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined,
+  getAcceptedRevision: async () => undefined, readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined, getPairEvaluations: async () => undefined,
 };
 let requestId = 0;
 async function call(method: string, params: unknown, scopes = ["market:read", "opportunity:read", "intent:create"]) {

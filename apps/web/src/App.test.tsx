@@ -9,6 +9,7 @@ const envelope = (result: unknown) => ({ status: "ok", as_of: "2026-09-29T22:00:
   evidence: [], warnings: [], trace_id: "rng_trace_app" });
 const api = () => ({
   marketOverview: vi.fn().mockResolvedValue(envelope({ board_as_of_ms: null, matching: "ticker_unreviewed", rows: [] })),
+  pairEvaluations: vi.fn().mockResolvedValue(envelope({ as_of_ms: null, pairs: [] })),
   scanOpportunities: vi.fn().mockResolvedValue(envelope({ items: [], quote_timestamps: [], next_offset: null })),
   inspectOpportunity: vi.fn(),
   listVenues: vi.fn().mockResolvedValue(envelope({ items: [], next_offset: null })),

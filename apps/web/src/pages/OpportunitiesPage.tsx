@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import type { DashboardApi, DashboardStreamEvent, Opportunity, OpportunityDetailEnvelope, OpportunityFilters, QuoteTimestamp, VenueView } from "../api/client.js";
 import { OpportunityDetail } from "../components/OpportunityDetail.js";
 import { OpportunityTable } from "../components/OpportunityTable.js";
+import { ReviewedPairs } from "../components/ReviewedPairs.js";
 import { VenueHealth } from "../components/VenueHealth.js";
 
 export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { api: DashboardApi; initialUnderlying?: string }) {
@@ -89,6 +90,10 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
 
       <p className="disclaimer"><strong>Intelligence, not guaranteed profit.</strong> Values are application-service outputs from synchronized source evidence; Range does not submit orders, sign, hold assets, or manage wallets.</p>
       <VenueHealth venues={venues} warnings={venueWarnings} />
+      <ReviewedPairs api={api} onSelectUnderlying={(underlying) => {
+        setDraft((current) => ({ ...current, underlying }));
+        setFilters((current) => ({ ...current, underlying }));
+      }} />
 
       <section id="results" className="workspace" aria-labelledby="results-heading">
         <div className="results-panel">

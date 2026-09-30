@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { Decimal } from "decimal.js";
-import { FundingProjectionSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, VenueHealthSchema, type Opportunity } from "@range/domain";
+import { FundingProjectionSchema, InstrumentSchema, ObservationEnvelopeSchema, OpportunitySchema, PairEvaluationSchema, VenueHealthSchema,
+  type Opportunity, type PairEvaluationSnapshot } from "@range/domain";
 import { normalizeFunding, projectFunding } from "@range/market-state";
 import { FundingCompareQuerySchema, InstrumentQuerySchema, MarketOverviewQuerySchema, MarketQuerySchema, OpportunityParamsSchema, PageQuerySchema,
-  ScanQuerySchema, VenueViewSchema, type ApplicationQueries, type EventPageItem, type RequestContext } from "./queries.js";
+  PairsQuerySchema, ScanQuerySchema, VenueViewSchema, type ApplicationQueries, type EventPageItem, type RequestContext } from "./queries.js";
 import { buildMarketOverview, MarketOverviewRowSchema, type MarketOverviewRow } from "./market-overview.js";
 
 // Deliberately omit free-form connector metadata and private raw-payload locators.
@@ -39,6 +40,7 @@ export const responseSchemas = {
   health: EnvelopeSchema.extend({ result: VenueViewSchema }),
   marketOverview: EnvelopeSchema.extend({ result: z.object({ board_as_of_ms: z.number().int().nullable(),
     matching: z.literal("ticker_unreviewed"), rows: z.array(MarketOverviewRowSchema).max(2000) }).strict() }),
+  pairs: EnvelopeSchema.extend({ result: z.object({ as_of_ms: z.number().int().nullable(), pairs: z.array(PairEvaluationSchema).max(2000) }).strict() }),
   error: EnvelopeSchema.extend({ result: z.object({ code: z.string() }).strict() }),
 };
 export class ApplicationError extends Error {
@@ -48,6 +50,27 @@ export class ApplicationError extends Error {
 export class RangeApplication {
   constructor(readonly queries: ApplicationQueries, private readonly now: () => number = Date.now) {}
   private overview?: { readAtMs: number; asOfMs: number | null; rows: MarketOverviewRow[] };
+  private pairs?: { readAtMs: number; snapshot: PairEvaluationSnapshot | undefined };
+  /** The worker republishes the pair view every 2 s; one read serves every caller (and every scan) for a second. */
+  private async pairSnapshot(context: RequestContext) {
+    const now = this.now();
+    if (!this.pairs || now - this.pairs.readAtMs >= 1_000) this.pairs = { readAtMs: now, snapshot: await this.queries.getPairEvaluations(context) };
+    return this.pairs.snapshot;
+  }
+  /**
+   * The latest evaluation of every reviewed pair, strategy, and direction, including rejections: the reason nothing
+   * is actionable is part of the answer. A pair's evaluatedAtMs says how old each one is.
+   */
+  async getPairEvaluations(input: unknown, context: RequestContext) {
+    const query = PairsQuerySchema.parse(input);
+    const snapshot = await this.pairSnapshot(context);
+    const now = this.now();
+    const pairs = (snapshot?.pairs ?? []).filter(item => !query.underlying || item.underlyingId === query.underlying)
+      .sort((a, b) => a.underlyingId.localeCompare(b.underlyingId) || a.strategy.localeCompare(b.strategy) || a.buy.venue.localeCompare(b.buy.venue));
+    const warnings = !snapshot ? ["pair evaluations unavailable"] : now - snapshot.asOfMs > 30_000 ? ["pair evaluations stale"] : [];
+    return responseSchemas.pairs.parse(this.envelope(context, { as_of_ms: snapshot?.asOfMs ?? null, pairs },
+      Math.min(now, snapshot?.asOfMs ?? now), [], warnings, warnings.length ? "partial" : "ok"));
+  }
   envelope(context: RequestContext, result: unknown, sourceMs = this.now(), evidence: string[] = [], warnings: string[] = [], status: Envelope["status"] = "ok"): Envelope {
     if (!Number.isFinite(sourceMs) || sourceMs > this.now()) throw new ApplicationError(503, "INVALID_SOURCE_TIME");
     return EnvelopeSchema.parse({ status, as_of: new Date(sourceMs).toISOString(), freshness: { oldest_input_ms: Math.max(0, this.now() - sourceMs) },
@@ -119,6 +142,39 @@ export class RangeApplication {
       ...venues.flatMap(venue => venue.asOfMs !== null && venue.asOfMs <= this.now() ? [venue.asOfMs] : []));
     return { live, warnings, sourceMs };
   }
+  /**
+   * What a scan depends on: only a reviewed pair can produce results, so coverage is its members' venues and live books
+   * and funding, found through the reviewed mapping (a member may be filed under a venue-local underlying, such as
+   * Bitget's bitget:TSLA). Without a reviewed pair there is nothing to scan, which one warning says.
+   */
+  private async pairCoverage(context: RequestContext, underlying: string, selectedVenue?: string) {
+    const now = this.now();
+    const mapping = (await this.pairSnapshot(context))?.mappings.find(item => item.underlyingId === underlying);
+    if (!mapping) return { live: [], warnings: [`no reviewed pair for ${underlying}: only reviewed pairs are scanned`], sourceMs: now };
+    const members = mapping.members.filter(member => !selectedVenue || member.venue === selectedVenue);
+    const [observations, allVenues] = await Promise.all([
+      Promise.all([...new Set(members.map(member => member.underlyingId))].map(id => this.queries.getMarketSnapshot(context, { underlying: id })))
+        .then(lists => lists.flat().filter(item => members.some(member => member.instrumentId === item.instrumentId))),
+      this.queries.listVenues(context),
+    ]);
+    const venues = allVenues.filter(venue => members.some(member => member.venue === venue.venue));
+    const warnings = this.venueWarnings(venues);
+    for (const member of members) if (!venues.some(venue => venue.venue === member.venue)) warnings.push(`${member.venue}: venue missing`);
+    const live = observations.filter(item => {
+      const age = now - item.sourceTimestamp;
+      return age >= 0 && age <= item.freshnessBudgetMs && item.eligibility === "live";
+    });
+    for (const member of members) {
+      for (const [kind, label] of [["order_book", "book"], ["funding", "funding"]] as const) {
+        if (!live.some(item => item.instrumentId === member.instrumentId && item.payload.kind === kind)) {
+          warnings.push(`${member.venue} ${member.venueSymbol}: no live ${label}`);
+        }
+      }
+    }
+    const sourceMs = Math.min(now, ...observations.map(item => item.sourceTimestamp).filter(time => time <= now),
+      ...venues.flatMap(venue => venue.asOfMs !== null && venue.asOfMs <= now ? [venue.asOfMs] : []));
+    return { live, warnings, sourceMs };
+  }
   async getMarketSnapshot(input: unknown, context: RequestContext) {
     const query = MarketQuerySchema.parse(input);
     const { live, warnings, sourceMs } = await this.marketCoverage(context, query.underlying, query.venue);
@@ -184,7 +240,7 @@ export class RangeApplication {
   async scanOpportunities(input: unknown, context: RequestContext) {
     const query = ScanQuerySchema.parse(input);
     const [candidates, coverage] = await Promise.all([this.queries.scanOpportunities(context, query),
-      this.marketCoverage(context, query.underlying, query.venue)]);
+      this.pairCoverage(context, query.underlying, query.venue)]);
     const instruments = query.venue ? await this.queries.findInstruments(context, { underlying: query.underlying, venue: query.venue, limit: 100, offset: 0 }) : [];
     const warnings: string[] = [...coverage.warnings, ...(candidates.length >= 1000 ? ["scan truncated at 1000 current candidates"] : [])];
     const selected = candidates.filter(item => item.underlyingId === query.underlying && (!query.strategy || item.strategy === query.strategy) &&

@@ -59,7 +59,7 @@ function apiWith(...responses: Array<MarketOverviewEnvelope | Error>): Dashboard
     else marketOverview.mockResolvedValueOnce(response);
   }
   marketOverview.mockResolvedValue(responses.at(-1) instanceof Error ? overview() : responses.at(-1) ?? overview());
-  return { scanOpportunities: vi.fn(), inspectOpportunity: vi.fn(), listVenues: vi.fn(), marketOverview, subscribe: vi.fn(() => () => undefined),
+  return { scanOpportunities: vi.fn(), inspectOpportunity: vi.fn(), listVenues: vi.fn(), marketOverview, pairEvaluations: vi.fn(), subscribe: vi.fn(() => () => undefined),
     intentPreviewCapability: { available: false, reason: "test" } } as never;
 }
 

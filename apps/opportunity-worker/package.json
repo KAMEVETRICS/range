@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "benchmark": "tsx src/benchmark.ts" },
+  "scripts": {
+    "benchmark": "tsx src/benchmark.ts"
+  },
   "dependencies": {
     "@range/domain": "workspace:*",
     "@range/event-bus": "workspace:*",
@@ -13,6 +15,7 @@
     "@range/observability": "workspace:*",
     "@range/opportunity": "workspace:*",
     "@range/storage": "workspace:*",
+    "decimal.js": "^10.6.0",
     "ioredis": "^5.8.0",
     "pg": "^8.16.0"
   },

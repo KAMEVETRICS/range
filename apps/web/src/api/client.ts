@@ -123,6 +123,32 @@ export interface MarketRow {
 
 export type MarketOverviewEnvelope = Envelope<{ board_as_of_ms: number | null; matching: "ticker_unreviewed"; rows: MarketRow[] }>;
 
+export interface PairSide {
+  instrumentId: string;
+  venue: string;
+  venueSymbol: string;
+  averagePrice: string | null;
+}
+
+/** The latest evaluation of one reviewed pair, strategy, and direction; rejected ones included. */
+export interface PairEvaluation {
+  underlyingId: string;
+  strategy: "perp_spread" | "spot_perp_basis" | "funding_differential";
+  buy: PairSide;
+  sell: PairSide;
+  status: string;
+  grossSpreadBps: string;
+  expectedFundingBps: string;
+  costsBps: string;
+  netEdgeBps: string;
+  capacityUsd: string;
+  requestedNotionalUsd: string;
+  rejectionReasons: string[];
+  evaluatedAtMs: number;
+}
+
+export type PairsEnvelope = Envelope<{ as_of_ms: number | null; pairs: PairEvaluation[] }>;
+
 export interface OpportunityFilters {
   underlying: string;
   strategy?: string;
@@ -142,6 +168,7 @@ export interface DashboardApi {
   inspectOpportunity(id: string): Promise<OpportunityDetailEnvelope>;
   listVenues(): Promise<VenueEnvelope>;
   marketOverview(): Promise<MarketOverviewEnvelope>;
+  pairEvaluations(): Promise<PairsEnvelope>;
   subscribe(underlying: string, handler: (event: DashboardStreamEvent) => void | Promise<void>): () => void;
   intentPreviewCapability: { available: false; reason: string };
 }
@@ -173,6 +200,7 @@ export function createDashboardApi(options: { baseUrl?: string; readToken?: stri
     inspectOpportunity: (id) => request<OpportunityDetailEnvelope>(`/v1/opportunities/${encodeURIComponent(id)}`),
     listVenues: () => request<VenueEnvelope>("/v1/venues?limit=100&offset=0"),
     marketOverview: () => request<MarketOverviewEnvelope>("/v1/markets/overview"),
+    pairEvaluations: () => request<PairsEnvelope>("/v1/pairs"),
     subscribe: (underlying, handler) => subscribeToRangeStream({ url: `${baseUrl}/v1/stream?underlying=${encodeURIComponent(underlying)}`, headers: headers(), handler }),
     intentPreviewCapability: {
       available: false,

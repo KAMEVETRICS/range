@@ -4116,7 +4116,7 @@
                                       },
                                       "settlementCount": {
                                         "type": "integer",
-                                        "exclusiveMinimum": 0,
+                                        "minimum": 0,
                                         "maximum": 9007199254740991
                                       },
                                       "positionSide": {
@@ -4287,7 +4287,7 @@
                                       },
                                       "settlementCount": {
                                         "type": "integer",
-                                        "exclusiveMinimum": 0,
+                                        "minimum": 0,
                                         "maximum": 9007199254740991
                                       },
                                       "positionSide": {
@@ -5392,7 +5392,7 @@
                                             },
                                             "settlementCount": {
                                               "type": "integer",
-                                              "exclusiveMinimum": 0,
+                                              "minimum": 0,
                                               "maximum": 9007199254740991
                                             },
                                             "positionSide": {
@@ -5748,7 +5748,7 @@
                                             },
                                             "settlementCount": {
                                               "type": "integer",
-                                              "exclusiveMinimum": 0,
+                                              "minimum": 0,
                                               "maximum": 9007199254740991
                                             },
                                             "positionSide": {
@@ -6107,7 +6107,7 @@
                                             },
                                             "settlementCount": {
                                               "type": "integer",
-                                              "exclusiveMinimum": 0,
+                                              "minimum": 0,
                                               "maximum": 9007199254740991
                                             },
                                             "positionSide": {
@@ -7238,7 +7238,7 @@
                                           },
                                           "settlementCount": {
                                             "type": "integer",
-                                            "exclusiveMinimum": 0,
+                                            "minimum": 0,
                                             "maximum": 9007199254740991
                                           },
                                           "positionSide": {
@@ -7594,7 +7594,7 @@
                                           },
                                           "settlementCount": {
                                             "type": "integer",
-                                            "exclusiveMinimum": 0,
+                                            "minimum": 0,
                                             "maximum": 9007199254740991
                                           },
                                           "positionSide": {
@@ -7953,7 +7953,7 @@
                                           },
                                           "settlementCount": {
                                             "type": "integer",
-                                            "exclusiveMinimum": 0,
+                                            "minimum": 0,
                                             "maximum": 9007199254740991
                                           },
                                           "positionSide": {
@@ -8211,6 +8211,892 @@
                         "opportunity",
                         "rejection_history",
                         "quote_timestamps"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Rejected request; no current result is implied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "event_id": {
+                            "type": "string",
+                            "pattern": "^evt_[A-Za-z0-9_.:-]+$"
+                          }
+                        },
+                        "required": [
+                          "event_id"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trace_id": {
+                      "type": "string",
+                      "pattern": "^rng_trace_[A-Za-z0-9-]+$"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "as_of",
+                    "freshness",
+                    "result",
+                    "evidence",
+                    "warnings",
+                    "trace_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/pairs": {
+      "get": {
+        "operationId": "getPairEvaluations",
+        "security": [
+          {
+            "rangeToken": []
+          }
+        ],
+        "x-required-scopes": [
+          "opportunity:read"
+        ],
+        "parameters": [
+          {
+            "name": "underlying",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "pattern": "^[A-Za-z][A-Za-z0-9_-]*:[A-Za-z0-9_.-]+$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Source-aligned Range response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "partial",
+                        "rejected"
+                      ]
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "oldest_input_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "oldest_input_ms"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "as_of_ms": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "pairs": {
+                          "maxItems": 2000,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "underlyingId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "strategy": {
+                                "type": "string",
+                                "enum": [
+                                  "perp_spread",
+                                  "spot_perp_basis",
+                                  "funding_differential"
+                                ]
+                              },
+                              "buy": {
+                                "type": "object",
+                                "properties": {
+                                  "instrumentId": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "venue": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "venueSymbol": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "averagePrice": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "instrumentId",
+                                  "venue",
+                                  "venueSymbol",
+                                  "averagePrice"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "sell": {
+                                "type": "object",
+                                "properties": {
+                                  "instrumentId": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "venue": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "venueSymbol": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "averagePrice": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "instrumentId",
+                                  "venue",
+                                  "venueSymbol",
+                                  "averagePrice"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "observed",
+                                  "validated",
+                                  "actionable",
+                                  "rejected",
+                                  "intent_ready",
+                                  "expired"
+                                ]
+                              },
+                              "grossSpreadBps": {
+                                "type": "string",
+                                "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                              },
+                              "expectedFundingBps": {
+                                "type": "string",
+                                "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                              },
+                              "costsBps": {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                              },
+                              "netEdgeBps": {
+                                "type": "string",
+                                "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                              },
+                              "capacityUsd": {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                              },
+                              "requestedNotionalUsd": {
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d*)(?:\\.\\d+)?$"
+                              },
+                              "rejectionReasons": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "evaluatedAtMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "underlyingId",
+                              "strategy",
+                              "buy",
+                              "sell",
+                              "status",
+                              "grossSpreadBps",
+                              "expectedFundingBps",
+                              "costsBps",
+                              "netEdgeBps",
+                              "capacityUsd",
+                              "requestedNotionalUsd",
+                              "rejectionReasons",
+                              "evaluatedAtMs"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "as_of_ms",
+                        "pairs"
                       ],
                       "additionalProperties": false
                     },
@@ -11700,7 +12586,7 @@
                                     },
                                     "settlementCount": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
+                                      "minimum": 0,
                                       "maximum": 9007199254740991
                                     },
                                     "positionSide": {
@@ -12056,7 +12942,7 @@
                                     },
                                     "settlementCount": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
+                                      "minimum": 0,
                                       "maximum": 9007199254740991
                                     },
                                     "positionSide": {
@@ -12415,7 +13301,7 @@
                                     },
                                     "settlementCount": {
                                       "type": "integer",
-                                      "exclusiveMinimum": 0,
+                                      "minimum": 0,
                                       "maximum": 9007199254740991
                                     },
                                     "positionSide": {

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Redis from "ioredis-mock";
 import { CurrentStateStore } from "@range/storage";
-import { OpportunitySchema, EvidenceBundleSchema, VenueHealthSchema, ObservationEnvelopeSchema, type Opportunity } from "@range/domain";
+import { OpportunitySchema, EvidenceBundleSchema, VenueHealthSchema, ObservationEnvelopeSchema, PairEvaluationSnapshotSchema, type Opportunity,
+  type PairEvaluationSnapshot } from "@range/domain";
 import { RangeApplication, type ApplicationQueries, type RequestContext } from "@range/application";
 import { buildServer } from "./server.js";
 import { hashClientToken } from "./auth.js";
@@ -33,8 +34,21 @@ export function opportunity(): Opportunity {
     freshness: { oldestInputMs: 10, synchronized: true, eligibility: "live", qualityFlags: [] } });
 }
 
+/** A reviewed TSLA pair: scans cover its members' venues and live inputs only. */
+function reviewedPairs(): PairEvaluationSnapshot {
+  return PairEvaluationSnapshotSchema.parse({ asOfMs: now - 1_000, mappings: [{ underlyingId: "equity:TSLA", members: [
+    { instrumentId: "ins_bitget_tsla", venue: "extended", venueSymbol: "TSLA-USD", underlyingId: "equity:TSLA" },
+    { instrumentId: "ins_hl_tsla", venue: "hyperliquid_hip3", venueSymbol: "xyz:TSLA", underlyingId: "equity:TSLA" }] }],
+    pairs: [{ underlyingId: "equity:TSLA", strategy: "perp_spread", status: "rejected",
+      buy: { instrumentId: "ins_bitget_tsla", venue: "extended", venueSymbol: "TSLA-USD", averagePrice: "100" },
+      sell: { instrumentId: "ins_hl_tsla", venue: "hyperliquid_hip3", venueSymbol: "xyz:TSLA", averagePrice: "100.05" },
+      grossSpreadBps: "5", expectedFundingBps: "0", costsBps: "17", netEdgeBps: "-12", capacityUsd: "2500", requestedNotionalUsd: "2500",
+      rejectionReasons: ["NET_EDGE_BELOW_THRESHOLD"], evaluatedAtMs: now - 1_500 }] });
+}
+
 async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
   let clock = now, revision = 7, outage = false;
+  const pairs: PairEvaluationSnapshot | undefined = reviewedPairs();
   const redis = new Redis();
   close.push(() => redis.disconnect());
   const current = new CurrentStateStore(redis, { read: async () => { if (outage) throw new Error(`db failed ${token}`); return revision; } },
@@ -57,6 +71,7 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
     async readEvents(context) { check(context); return []; },
     async latestEventOrdinal(context) { check(context); return 0; },
     async getMarketBoard(context) { check(context); return undefined; },
+    async getPairEvaluations(context) { check(context); return pairs; },
   };
   const application = new RangeApplication(queries, () => clock);
   const app = buildServer({ application, pepper, clients: [{ id: "reader", tokenHash: hashClientToken(token, pepper), scopes }],
@@ -181,8 +196,28 @@ describe("REST application boundary", () => {
     f.queries.scanOpportunities = async () => [];
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
     expect(body.status).toBe("partial");
-    expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue degraded", "extended: market data missing"]));
+    expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue degraded", "hyperliquid_hip3: venue missing",
+      "extended TSLA-USD: no live book", "extended TSLA-USD: no live funding", "hyperliquid_hip3 xyz:TSLA: no live book"]));
     expect(body.result.items).toEqual([]);
+  });
+
+  it("answers a scan without a reviewed pair with one warning, not a list of every venue", async () => {
+    const f = await fixture();
+    f.queries.scanOpportunities = async () => [];
+    const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:NVDA", headers: auth })).json();
+    expect(body.status).toBe("partial");
+    expect(body.warnings).toEqual(["no reviewed pair for equity:NVDA: only reviewed pairs are scanned"]);
+  });
+
+  it("serves the latest evaluation of each reviewed pair, rejected ones included", async () => {
+    const f = await fixture();
+    const body = (await f.app.inject({ method: "GET", url: "/v1/pairs?underlying=equity:TSLA", headers: auth })).json();
+    expect(body.status).toBe("ok");
+    expect(body.result.as_of_ms).toBe(now - 1_000);
+    expect(body.result.pairs).toEqual([expect.objectContaining({ underlyingId: "equity:TSLA", status: "rejected", netEdgeBps: "-12",
+      rejectionReasons: ["NET_EDGE_BELOW_THRESHOLD"] })]);
+    const other = (await f.app.inject({ method: "GET", url: "/v1/pairs?underlying=equity:NVDA", headers: auth })).json();
+    expect(other.result.pairs).toEqual([]);
   });
 
   it("names stale venue and excluded observation inputs in scan diagnostics", async () => {
@@ -198,7 +233,7 @@ describe("REST application boundary", () => {
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
     expect(body.status).toBe("partial");
     expect(body.freshness.oldest_input_ms).toBe(60_001);
-    expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue stale", "extended: stale or reference input excluded", "extended: market data missing"]));
+    expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue stale", "extended TSLA-USD: no live book"]));
     expect(JSON.stringify(body)).not.toContain("private-locator");
   });
 
@@ -417,7 +452,7 @@ describe("OpenAPI contracts", () => {
     const f = await fixture();
     const urls: Record<string, string> = { "/v1/venues": "/v1/venues", "/v1/instruments": "/v1/instruments",
       "/v1/markets/snapshot": "/v1/markets/snapshot?underlying=equity:TSLA", "/v1/funding/compare": "/v1/funding/compare?underlying=equity:TSLA&notional_usd=100&holding_horizon_ms=3600000", "/v1/opportunities": "/v1/opportunities?underlying=equity:TSLA",
-      "/v1/opportunities/{id}": "/v1/opportunities/opp_1", "/v1/markets/overview": "/v1/markets/overview" };
+      "/v1/opportunities/{id}": "/v1/opportunities/opp_1", "/v1/markets/overview": "/v1/markets/overview", "/v1/pairs": "/v1/pairs" };
     for (const [path, url] of Object.entries(urls)) {
       const response = await f.app.inject({ method: "GET", url, headers: auth });
       expect(response.statusCode).toBe(200);
@@ -444,6 +479,6 @@ describe("OpenAPI contracts", () => {
     }
     const json = JSON.stringify(document);
     expect(json).not.toMatch(/privateKey|apiSecret|rawPayloadRefOrHash|signedTransaction/);
-    expect(Object.keys(document.paths)).toHaveLength(10);
+    expect(Object.keys(document.paths)).toHaveLength(11);
   }, 15_000);
 });
