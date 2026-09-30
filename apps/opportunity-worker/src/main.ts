@@ -107,6 +107,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     const own = registry.identityOf(instrumentId)?.underlyingId;
     return [...new Set([...(own ? [own] : []), ...registry.mappingsContaining(instrumentId)])];
   };
+  /**
+   * The underlyings a market update can change a result for: only those with a reviewed mapping can ever be
+   * actionable, so books and funding elsewhere (most of the stream) cost no durable revision or evaluation.
+   */
+  const reviewedTargets = (instrumentId: string): string[] => affectedBy(instrumentId).filter(underlying => registry.hasReviewedMapping(underlying));
   const bump = async (underlyingId: string) => {
     let revision: number;
     try {
@@ -314,7 +319,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
              event.receivedTimestamp < current.receivedTimestamp)) return;
       if (!reset && current.contiguous && contiguous && current.sequence !== undefined && sequence !== undefined &&
           sequence > current.sequence + 1n) {
-        const targets = affectedBy(event.instrumentId);
+        const targets = reviewedTargets(event.instrumentId);
         await bumpMany(targets);
         if (targets.length) expireBook(event.instrumentId, "BOOK_SEQUENCE_GAP");
         books.delete(event.instrumentId);
@@ -324,7 +329,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         return;
       }
     }
-    const targets = affectedBy(event.instrumentId);
+    const targets = reviewedTargets(event.instrumentId);
     await bumpMany(targets);
     if (targets.length) expireBook(event.instrumentId);
     bookCursors.set(event.instrumentId, { eventId: event.eventId,
@@ -352,7 +357,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       } else { observations.push(event); accepted = true; }
     }
     if (!accepted) return;
-    const targets = affectedBy(event.instrumentId);
+    const targets = reviewedTargets(event.instrumentId);
     await bumpMany(targets);
     if (targets.length) expireBook(event.instrumentId);
     if (observations.length > 10_000) observations.shift();

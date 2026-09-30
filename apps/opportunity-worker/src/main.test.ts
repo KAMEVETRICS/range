@@ -644,6 +644,31 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
+  it("spends no durable revision on books and funding outside every reviewed mapping", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    registry.upsert({ ...instrument("ins_x", "venue_x"), underlyingId: "equity:X" });
+    const backing = createInMemoryRevisionAuthority();
+    const advanced: string[] = [];
+    const authority: RevisionAuthority = {
+      kind: "volatile",
+      advance: async underlyingId => { advanced.push(underlyingId); return backing.advance(underlyingId); },
+      advanceMany: async underlyingIds => { advanced.push(...underlyingIds); return backing.advanceMany(underlyingIds); },
+      read: underlyingId => backing.read(underlyingId),
+    };
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority });
+    await bus.publish("book.state.v1", "ins_x", book("ins_x", "venue_x", "100", "evt_x") as never);
+    await bus.publish("funding.observation.v1", "ins_x", { eventId: "evt_funding_x", schemaVersion: 1, venue: "venue_x", instrumentId: "ins_x",
+      transport: "websocket", sourceTimestamp: NOW - 10, receivedTimestamp: NOW - 5, freshnessBudgetMs: 2_000, qualityFlags: [],
+      rawPayloadRefOrHash: "sha256:funding", eligibility: "live", payload: { kind: "funding", rateType: "predicted", rate: "0.0001",
+        positiveRatePayer: "long", intervalMs: 28_800_000, nextSettlementMs: NOW + 1_000 } } as never);
+    await bus.publish("book.state.v1", "ins_a", book("ins_a", "venue_a", "100", "evt_a") as never);
+    await worker.flush();
+    expect(advanced).not.toContain("equity:X");
+    expect(advanced).toContain("equity:TSLA");
+    await worker.stop();
+  });
+
   it("pairs a reviewed member filed under a venue-local underlying and re-evaluates it on that member's books", async () => {
     const bus = new InMemoryEventBus();
     const registry = new InstrumentRegistry();

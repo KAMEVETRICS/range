@@ -144,6 +144,10 @@ export class InstrumentRegistry {
     return clone([...this.mappings.values()]);
   }
 
+  hasReviewedMapping(underlyingId: string): boolean {
+    return this.mappings.has(underlyingId);
+  }
+
   /**
    * Underlyings of the reviewed mappings that name this instrument. A reviewed mapping may join instruments filed
    * under venue-local underlyings (Bitget's bitget:TSLA) to a shared one (equity:TSLA), so their updates concern both.
