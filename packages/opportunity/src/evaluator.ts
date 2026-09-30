@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  ExecutableQuoteSchema, FundingProjectionSchema, OpportunitySchema, VenueHealthSchema,
+  ExecutableQuoteSchema, FILL_DUST_USD, FundingProjectionSchema, OpportunitySchema, VenueHealthSchema,
   type DataEligibility, type ExecutableQuote, type FundingProjection, type Opportunity,
   type RejectionCode, type VenueHealth,
 } from "@range/domain";
@@ -102,7 +102,7 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
     if (quote.side !== leg.side || decimal(quote.averagePrice).lessThanOrEqualTo(0) ||
         decimal(quote.requestedNotional).lessThan(input.requestedNotionalUsd) ||
         decimal(quote.capacityUsd).lessThan(quote.requestedNotional) ||
-        (quote.filledNotionalUsd !== undefined && decimal(quote.filledNotionalUsd).lessThan(quote.requestedNotional))) {
+        (quote.filledNotionalUsd !== undefined && decimal(quote.requestedNotional).minus(quote.filledNotionalUsd).greaterThan(FILL_DUST_USD))) {
       reasons.add("INSUFFICIENT_DEPTH");
     }
     if (quote.ageMs > budget) reasons.add("STALE_INPUT");

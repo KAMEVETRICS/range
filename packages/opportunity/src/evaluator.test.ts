@@ -187,6 +187,15 @@ describe("evaluateOpportunity", () => {
     expect(result.rejectionReasons).toContain("INSUFFICIENT_DEPTH");
   });
 
+  it("counts a fill short of its request only by rounding dust as complete", () => {
+    const dust = candidate();
+    dust.legs[0]!.quote!.filledNotionalUsd = `999.${"9".repeat(79)}` as never;
+    expect(evaluateOpportunity(dust).status).toBe("actionable");
+    const short = candidate();
+    short.legs[0]!.quote!.filledNotionalUsd = "999.99" as never;
+    expect(evaluateOpportunity(short).rejectionReasons).toContain("INSUFFICIENT_DEPTH");
+  });
+
   it("rejects reverse spot-perp without observed borrow cost and capacity", () => {
     const input = candidate({ strategy: "spot_perp_basis" }, "tokenized_spot");
     input.legs[0]!.side = "sell";

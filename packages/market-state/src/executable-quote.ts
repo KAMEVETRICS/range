@@ -1,5 +1,5 @@
 import { Decimal } from "decimal.js";
-import { ExecutableQuoteSchema, PartialQuoteSchema, type ExecutableQuote, type PartialQuote } from "@range/domain";
+import { ExecutableQuoteSchema, FILL_DUST_USD, PartialQuoteSchema, type ExecutableQuote, type PartialQuote } from "@range/domain";
 import { bookAgeMs, isFreshBook } from "./freshness.js";
 import { OrderBook, type BookSide } from "./order-book.js";
 
@@ -118,7 +118,8 @@ export function quoteAtNotional(book: OrderBook, side: BookSide, notionalUsd: st
     sourceEventIds: [...sourceEventIds],
     ageMs: oldestAgeMs,
   };
-  if (remaining.greaterThan(0)) {
+  // Only rounding dust can remain once every level needed was eligible and capacity covered the request.
+  if (remaining.greaterThan(FILL_DUST_USD)) {
     return PartialQuoteSchema.parse({
       ...quoteFields,
       status: "partial_fill",
