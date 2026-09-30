@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DashboardApi, MarketCell, MarketFunding, MarketRow } from "../api/client.js";
+import { pollWhileIdle } from "../api/poll.js";
 
 type View = "funding" | "price";
 type Period = "1h" | "8h" | "1d" | "apr";
@@ -152,11 +153,7 @@ export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: D
     }
   }, [api]);
 
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), refreshMs);
-    return () => clearInterval(timer);
-  }, [load, refreshMs]);
+  useEffect(() => pollWhileIdle(load, refreshMs), [load, refreshMs]);
 
   const venues = useMemo(() => {
     const present = new Set((rows ?? []).flatMap((row) => row.cells.map((cell) => cell.venue)));

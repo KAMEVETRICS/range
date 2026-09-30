@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DashboardApi, DashboardStreamEvent, Opportunity, OpportunityDetailEnvelope, OpportunityFilters, QuoteTimestamp, VenueView } from "../api/client.js";
+import { pollWhileIdle } from "../api/poll.js";
 import { OpportunityDetail } from "../components/OpportunityDetail.js";
 import { OpportunityTable } from "../components/OpportunityTable.js";
 import { ReviewedPairs } from "../components/ReviewedPairs.js";
@@ -45,11 +46,9 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
   }, [api]);
 
   useEffect(() => { void loadOpportunities(filters); }, [filters, loadOpportunities]);
-  useEffect(() => {
-    if (scanRefreshMs <= 0) return;
-    const timer = setInterval(() => { if (!document.hidden) void loadOpportunities(filters); }, scanRefreshMs);
-    return () => clearInterval(timer);
-  }, [filters, loadOpportunities, scanRefreshMs]);
+  useEffect(() => scanRefreshMs > 0
+    ? pollWhileIdle(() => loadOpportunities(filters), scanRefreshMs, { immediate: false, skip: () => document.hidden })
+    : undefined, [filters, loadOpportunities, scanRefreshMs]);
   useEffect(() => {
     let active = true;
     void api.listVenues().then((response) => { if (active) { setVenues(response.result.items); setVenueWarnings(response.warnings); } })

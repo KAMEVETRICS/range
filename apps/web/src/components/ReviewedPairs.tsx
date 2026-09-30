@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardApi, PairEvaluation } from "../api/client.js";
+import { pollWhileIdle } from "../api/poll.js";
 
 const VENUE_LABELS: Record<string, string> = { bitget: "Bitget", hyperliquid_hip3: "trade.xyz" };
 const STRATEGY_LABELS: Record<string, string> = { perp_spread: "Price spread", funding_differential: "Funding", spot_perp_basis: "Spot–perp basis" };
@@ -60,9 +61,8 @@ export function ReviewedPairs({ api, onSelectUnderlying, now = () => Date.now() 
     const load = () => api.pairEvaluations()
       .then(response => { if (active) { setPairs(response.result.pairs); setError(undefined); } })
       .catch(() => { if (active) setError("Pair evaluations are unavailable."); });
-    void load();
-    const timer = setInterval(load, 5_000);
-    return () => { active = false; clearInterval(timer); };
+    const stop = pollWhileIdle(load, 5_000);
+    return () => { active = false; stop(); };
   }, [api]);
   const rows = useMemo(() => bestDirections(pairs ?? []), [pairs]);
   const actionable = rows.filter(row => row.status === "actionable").length;
