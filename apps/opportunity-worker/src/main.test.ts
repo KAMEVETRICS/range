@@ -116,6 +116,7 @@ describe("opportunity worker", () => {
     await worker.flush();
     const before = underlyings.map(underlying => worker.currentRevision(underlying));
     calls.advance.length = 0;
+    calls.advanceMany.length = 0;
 
     await bus.publish("venue.health.v1", "venue_x", { venue: "venue_x", connectionState: "degraded", lastEventAgeMs: 10,
       clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
@@ -640,6 +641,36 @@ describe("opportunity worker", () => {
     await worker.flush();
     // It can never be actionable (UNKNOWN_INSTRUMENT_EQUIVALENCE), so it is not published at all.
     expect(published).toEqual([]);
+    await worker.stop();
+  });
+
+  it("pairs a reviewed member filed under a venue-local underlying and re-evaluates it on that member's books", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = new InstrumentRegistry();
+    registry.upsert({ ...instrument("ins_a", "venue_a"), underlyingId: "venue_a:TSLA" });
+    registry.upsert(instrument("ins_b", "venue_b"));
+    const members = [registry.getCurrent("ins_a")!, registry.getCurrent("ins_b")!];
+    registry.addReviewedMapping({
+      underlyingId: "equity:TSLA", mappingVersion: 1, compatibleExposure: "one share", reviewer: "reviewer",
+      reviewedAt: "2026-09-20T00:00:00.000Z",
+      members: members.map(item => ({ instrumentId: item.instrument.instrumentId, instrumentVersion: item.version, metadataHash: item.metadataHash })),
+      proof: { contractMultiplier: "checked", settlementAsset: "checked", collateralAsset: "checked", tradingSchedule: "checked", economicExposure: "checked" },
+    });
+    expect(registry.mappingsContaining("ins_a")).toEqual(["equity:TSLA"]);
+    const published: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "venue-local-member", async event => { published.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const actionable = published.find(item => item.status === "actionable");
+    expect(actionable).toMatchObject({ underlyingId: "equity:TSLA" });
+    expect(actionable!.legs.map(leg => leg.instrumentId).sort()).toEqual(["ins_a", "ins_b"]);
+
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_book_a_ref"), eligibility: "reference_only" } as never);
+    await worker.flush();
+    const expired = published.find(item => item.opportunityId === actionable!.opportunityId && item.status === "expired");
+    expect(expired).toBeDefined();
+    expect(expired!.stateRevision).toBe(worker.currentRevision("equity:TSLA"));
     await worker.stop();
   });
 

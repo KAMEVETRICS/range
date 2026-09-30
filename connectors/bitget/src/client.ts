@@ -64,10 +64,16 @@ function snapshotChannel(data: string): string | undefined {
 
 /** Full books5 snapshots avoid incremental-book reconstruction and resync ambiguity. */
 export function createBitgetPublicWebSocket(makeSocket: SocketFactory = url => new WebSocket(url),
-  options: { tickerIntervalMs?: number; bookIntervalMs?: number; nowMs?: () => number } = {}): BitgetWebSocketPort {
+  options: { tickerIntervalMs?: number; bookIntervalMs?: number; fastBookSymbols?: ReadonlySet<string>; fastBookIntervalMs?: number;
+    nowMs?: () => number } = {}): BitgetWebSocketPort {
   const intervals: Record<string, number> = { ticker: options.tickerIntervalMs ?? 0, books5: options.bookIntervalMs ?? 0 };
   const nowMs = options.nowMs ?? Date.now;
-  const intervalOf = (channel: string) => intervals[channel.split(":")[1] ?? ""] ?? 0;
+  // Executable books must stay inside the evaluator's 2 s quote budget, so their symbols refresh faster.
+  const intervalOf = (channel: string) => {
+    const [, topic = "", symbol = ""] = channel.split(":");
+    if (topic === "books5" && options.fastBookSymbols?.has(symbol)) return options.fastBookIntervalMs ?? 0;
+    return intervals[topic] ?? 0;
+  };
   return {
     async *stream(subscriptions, signal) {
       if (signal.aborted || !subscriptions.length) return;

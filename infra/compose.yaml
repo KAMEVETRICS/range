@@ -245,8 +245,9 @@ services:
       REDIS_URL: redis://redis:6379
       REDPANDA_BROKERS: redpanda:9092
       RANGE_MAPPING_CONFIG: /app/config/instrument-mappings.json
-      RANGE_FEES_BPS_JSON: '{}'
-      RANGE_SLIPPAGE_BPS_JSON: '{}'
+      # Taker fees of the reviewed pairs: Bitget stock perps 0.06%; trade.xyz standard 0.09% (growth mode, when on, is lower).
+      RANGE_FEES_BPS_JSON: '{"bitget":"6","hyperliquid_hip3":"9"}'
+      RANGE_SLIPPAGE_BPS_JSON: '{"bitget":"1","hyperliquid_hip3":"1"}'
       RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-24}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { InstrumentSchema } from "@range/domain";
-import { SeedConfigSchema } from "@range/instruments";
+import { InstrumentRegistry, SeedConfigSchema } from "@range/instruments";
 import { createReviewedMappingSeeder } from "./mapping-seeder.js";
 
 const instrument = InstrumentSchema.parse({
@@ -9,6 +9,35 @@ const instrument = InstrumentSchema.parse({
   productType: "tokenized_spot", contractMultiplier: "1", tickSize: "0.01", lotSize: "0.0001", minimumNotional: "1",
   tradingSchedule: { timezone: "UTC", sessions: [{ daysOfWeek: [1], opensAt: "00:00", closesAt: "23:59" }] },
   capabilities: ["spot"], metadataVersion: 1, effectiveFrom: "2026-09-17T09:15:17.243Z",
+});
+
+it("waits through earlier versions on replay and publishes a review once its members reach the reviewed versions", async () => {
+  const perp = (id: string, venue: string, capabilities: string[], effectiveFrom: string) => InstrumentSchema.parse({
+    ...instrument, instrumentId: id, venue, venueFamily: undefined, venueSymbol: id, productType: "perpetual", underlyingId: `${venue}:TSLA`,
+    fundingInterval: 3_600_000, capabilities, effectiveFrom });
+  const aBefore = perp("ins_a", "venue_a", ["perpetual", "trading_schedule_unverified"], "2026-09-20T00:00:00.000Z");
+  const aReviewed = perp("ins_a", "venue_a", ["perpetual"], "2026-09-29T00:00:00.000Z");
+  const b = perp("ins_b", "venue_b", ["perpetual"], "2026-09-20T00:00:00.000Z");
+  const expected = new InstrumentRegistry();
+  for (const item of [aBefore, aReviewed, b]) expected.upsert(item);
+  const member = (id: string, venue: string) => {
+    const current = expected.getCurrent(id)!;
+    return { venue, venueSymbol: id, instrumentVersion: current.version, metadataHash: current.metadataHash };
+  };
+  const published: Array<{ mapping: { members: Array<{ instrumentId: string; instrumentVersion: number }> } }> = [];
+  const seeder = createReviewedMappingSeeder(SeedConfigSchema.parse({ schemaVersion: 1, refusedCandidates: [], mappings: [{
+    underlyingId: "equity:TSLA", mappingVersion: 1, compatibleExposure: "one share", reviewer: "reviewer",
+    reviewedAt: "2026-09-29T00:00:00.000Z", members: [member("ins_a", "venue_a"), member("ins_b", "venue_b")],
+    proof: { contractMultiplier: "1", settlementAsset: "USD", collateralAsset: "USD", tradingSchedule: "24/7", economicExposure: "TSLA" },
+  }] }), async (_underlyingId, event) => { published.push(event as never); });
+
+  await seeder({ kind: "upsert", instrument: aBefore });
+  await expect(seeder({ kind: "upsert", instrument: b })).resolves.toBeUndefined();
+  expect(published).toEqual([]);
+  await seeder({ kind: "upsert", instrument: aReviewed });
+  await seeder({ kind: "upsert", instrument: b });
+  expect(published.map(event => event.mapping.members.map(item => [item.instrumentId, item.instrumentVersion])))
+    .toEqual([[["ins_a", 2], ["ins_b", 1]]]);
 });
 
 it("skips a metadata change reported at an unchanged effective time instead of crash-looping", async () => {

@@ -102,6 +102,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     return result;
   };
   const revisionOf = (underlyingId: string) => generations.get(underlyingId) ?? 0;
+  /** An instrument's own underlying and those of the reviewed mappings that name it. */
+  const affectedBy = (instrumentId: string): string[] => {
+    const own = registry.identityOf(instrumentId)?.underlyingId;
+    return [...new Set([...(own ? [own] : []), ...registry.mappingsContaining(instrumentId)])];
+  };
   const bump = async (underlyingId: string) => {
     let revision: number;
     try {
@@ -139,25 +144,27 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const queuePublish = (opportunity: Opportunity) => {
     publishing = publishing.then(() => publish(opportunity));
   };
-  const expireInstrument = (instrumentId: string, revision: number) => {
+  // Expired results carry their own underlying's revision, which callers advance first: a reviewed mapping can join
+  // an instrument filed under a venue-local underlying to a shared one, so the two need not match.
+  const expireInstrument = (instrumentId: string) => {
     for (const [id, lifecycle] of active) {
       const before = lifecycle.current(now());
       if (before.status !== "actionable") continue;
       const after = lifecycle.onCapabilityWithdrawal(instrumentId);
       if (after.status === "expired") {
         expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
-        queuePublish({ ...after, stateRevision: revision });
+        queuePublish({ ...after, stateRevision: revisionOf(after.underlyingId) });
       }
     }
   };
-  const expireBook = (instrumentId: string, revision: number, reason: "STALE_INPUT" | "BOOK_SEQUENCE_GAP" = "STALE_INPUT") => {
+  const expireBook = (instrumentId: string, reason: "STALE_INPUT" | "BOOK_SEQUENCE_GAP" = "STALE_INPUT") => {
     for (const [id, lifecycle] of active) {
       if (lifecycle.current(now()).status !== "actionable") continue;
       const after = reason === "BOOK_SEQUENCE_GAP"
         ? lifecycle.onSequenceGap(instrumentId) : lifecycle.onQuoteWithdrawal(instrumentId);
       if (after.status === "expired") {
         expiryTimers.get(id)?.(); expiryTimers.delete(id); active.delete(id);
-        queuePublish({ ...after, stateRevision: revision });
+        queuePublish({ ...after, stateRevision: revisionOf(after.underlyingId) });
       }
     }
   };
@@ -178,9 +185,10 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     const at = now();
     // Only members of a current reviewed mapping are paired. Any other pair can never be actionable
     // (UNKNOWN_INSTRUMENT_EQUIVALENCE); publishing those rejections swamped the worker and its history writers.
+    // A member may be filed under a venue-local underlying (Bitget's bitget:TSLA); the review is what joins it here.
     const reviewed = new Set<string>(registry.resolveEquivalentInstruments(underlyingId).map(item => item.instrument.instrumentId));
     const instruments = [...books.keys()]
-      .filter(id => reviewed.has(id) && registry.identityOf(id)?.underlyingId === underlyingId)
+      .filter(id => reviewed.has(id))
       .flatMap(id => { const current = registry.getCurrent(id)?.instrument; return current ? [current] : []; });
     for (let left = 0; left < instruments.length; left++) for (let right = left + 1; right < instruments.length; right++) {
       const a = instruments[left]!;
@@ -306,19 +314,19 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
              event.receivedTimestamp < current.receivedTimestamp)) return;
       if (!reset && current.contiguous && contiguous && current.sequence !== undefined && sequence !== undefined &&
           sequence > current.sequence + 1n) {
-        const underlying = registry.identityOf(event.instrumentId)?.underlyingId;
-        const revision = underlying ? await bump(underlying) : undefined;
-        if (revision !== undefined) expireBook(event.instrumentId, revision, "BOOK_SEQUENCE_GAP");
+        const targets = affectedBy(event.instrumentId);
+        await bumpMany(targets);
+        if (targets.length) expireBook(event.instrumentId, "BOOK_SEQUENCE_GAP");
         books.delete(event.instrumentId);
         bookCursors.set(event.instrumentId, { eventId: event.eventId, sourceTimestamp: event.sourceTimestamp,
           receivedTimestamp: event.receivedTimestamp, sequencePresent, sequence, contiguous: true, gapped: true });
-        if (underlying) schedule(underlying);
+        for (const target of targets) schedule(target);
         return;
       }
     }
-    const underlying = registry.identityOf(event.instrumentId)?.underlyingId;
-    const revision = underlying ? await bump(underlying) : undefined;
-    if (revision !== undefined) expireBook(event.instrumentId, revision);
+    const targets = affectedBy(event.instrumentId);
+    await bumpMany(targets);
+    if (targets.length) expireBook(event.instrumentId);
     bookCursors.set(event.instrumentId, { eventId: event.eventId,
       sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
       // An opaque sequence invalidates the book but cannot erase the last
@@ -326,7 +334,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       sequencePresent, sequence: sequence ?? current?.sequence, contiguous, gapped: false });
     book.applySnapshot(event);
     books.set(event.instrumentId, book);
-    if (underlying) schedule(underlying);
+    for (const target of targets) schedule(target);
   })));
   unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", event => acceptInput(async () => {
     const observations = funding.get(event.instrumentId) ?? [];
@@ -344,19 +352,18 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       } else { observations.push(event); accepted = true; }
     }
     if (!accepted) return;
-    const underlying = registry.identityOf(event.instrumentId)?.underlyingId;
-    const revision = underlying ? await bump(underlying) : undefined;
-    if (revision !== undefined) expireBook(event.instrumentId, revision);
+    const targets = affectedBy(event.instrumentId);
+    await bumpMany(targets);
+    if (targets.length) expireBook(event.instrumentId);
     if (observations.length > 10_000) observations.shift();
     funding.set(event.instrumentId, observations);
-    if (underlying) schedule(underlying);
+    for (const target of targets) schedule(target);
   })));
   unsubscribe.push(await bus.subscribe("venue.health.v1", "opportunity-worker-health", event => acceptInput(async () => {
     health.set(event.venue, event);
     const affected = new Set<string>();
     for (const id of books.keys()) {
-      const identity = registry.identityOf(id);
-      if (identity?.venue === event.venue) affected.add(identity.underlyingId);
+      if (registry.identityOf(id)?.venue === event.venue) for (const target of affectedBy(id)) affected.add(target);
     }
     for (const lifecycle of active.values()) {
       const current = lifecycle.current(now());
@@ -388,13 +395,14 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       try { result = registry.upsert(event.instrument); }
       catch { return; }
       if (result.status === "stale" || result.status === "unchanged") return;
-      const revision = await bump(event.instrument.underlyingId);
+      const targets = affectedBy(event.instrument.instrumentId);
+      await bumpMany(targets);
       if (result.status === "versioned") {
         books.delete(event.instrument.instrumentId);
         funding.delete(event.instrument.instrumentId);
-        expireInstrument(event.instrument.instrumentId, revision);
+        expireInstrument(event.instrument.instrumentId);
       }
-      schedule(event.instrument.underlyingId);
+      for (const target of targets) schedule(target);
     } else {
       // A rejected or replayed review is a no-op, not a poisoned consumer
       // offset that Redpanda retries forever.

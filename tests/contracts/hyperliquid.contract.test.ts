@@ -130,7 +130,7 @@ it("keeps current and realized funding explicitly research-only and out of runti
   expect(context.adapter.researchFundingEvidence()).toEqual(history);
   const book = await context.adapter.snapshot(instruments[0]!, signal());
   expect(book.payload.kind).toBe("order_book");
-  expect(book.payload).toMatchObject({ capacityUsd: "0" });
+  expect(book.payload).toMatchObject({ capacityUsd: expect.stringMatching(/^\d+(?:\.\d{1,2})?$/) });
   expect(JSON.stringify(book.payload)).not.toContain("impactPxs");
   expect(JSON.stringify(book.payload)).not.toContain("midPx");
   expect(instruments[0]?.capabilities).not.toEqual(expect.arrayContaining(["funding_current", "funding_history", "open_interest"]));

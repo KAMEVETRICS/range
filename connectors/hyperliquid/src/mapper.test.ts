@@ -78,9 +78,11 @@ it("builds executable depth only from actual l2Book levels", () => {
       { price: "464.930000000000001", quantity: "1.500000000000001" },
       { price: "464.940000000000001", quantity: "4.25" },
     ],
-    capacityUsd: "0",
+    // The smaller side's visible notional: asks 464.93 x 1.5 + 464.94 x 4.25, rounded down to cents.
+    capacityUsd: "2673.39",
   });
-  expect(book.qualityFlags).toContain("capacity_usd_uncomputed");
+  // xyz:TSLA is a reviewed market, so its book carries no quality flags.
+  expect(book.qualityFlags).toEqual([]);
   expect(JSON.stringify(book.payload)).not.toContain("impactPxs");
   expect(JSON.stringify(book.payload)).not.toContain("midPx");
 });

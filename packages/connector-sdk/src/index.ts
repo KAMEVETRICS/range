@@ -1,4 +1,5 @@
 export * from "./bulk-poll.js";
+export * from "./capacity.js";
 export * from "./clock.js";
 export * from "./periodic.js";
 export * from "./fixture-harness.js";

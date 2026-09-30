@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CanonicalObservationPayloadSchema, InstrumentSchema, type Instrument } from "@range/domain";
-import { ConnectorDiagnosticError, type RawVenueEvent } from "@range/connector-sdk";
+import { ConnectorDiagnosticError, visibleCapacityUsd, type RawVenueEvent } from "@range/connector-sdk";
 import { z } from "zod";
 
 const decimal = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/);
@@ -9,6 +9,15 @@ const positive = nonnegative.refine(value => /[1-9]/.test(value));
 const text = z.string().trim().min(1);
 const epochMs = z.number().int().safe().min(1_000_000_000_000);
 const equityCategories = new Set(["equity", "equities", "stock", "stocks"]);
+
+/**
+ * trade.xyz equity perpetuals reviewed against its specifications (docs/reviews/2026-09-30-bitget-hyperliquid.md):
+ * USDC collateral, size in shares, continuous trading (external prices Sunday 8 PM to Friday 8 PM ET, the venue's
+ * own book otherwise), and Hyperliquid's $10 minimum order. Their books carry no quality flags.
+ */
+export const REVIEWED_EQUITY_PERPS: ReadonlySet<string> = new Set([
+  "xyz:NVDA", "xyz:TSLA", "xyz:AAPL", "xyz:MSFT", "xyz:META", "xyz:AMZN", "xyz:GOOGL", "xyz:COIN", "xyz:MSTR", "xyz:HOOD",
+]);
 
 const categoryRows = z.array(z.tuple([text, text]));
 const universeRow = z.object({
@@ -135,6 +144,7 @@ export function mapMetaAndContexts(
         evidenceSource: "perpCategories",
         collateralTokenIndex: meta.collateralToken,
       };
+      const reviewed = REVIEWED_EQUITY_PERPS.has(row.name);
       const capabilities = [
         "perpetual",
         "orderbook",
@@ -143,8 +153,7 @@ export function mapMetaAndContexts(
         `perp_category=${category}`,
         "stock_underlying_evidence=perpCategories",
         "dynamic_tick_size",
-        "minimum_notional_unverified",
-        "trading_schedule_unverified",
+        ...(reviewed ? ["reviewed_equity_perp", "trading_schedule=continuous_venue_stated"] : ["minimum_notional_unverified", "trading_schedule_unverified"]),
         `collateral_token_index=${meta.collateralToken}`,
       ];
       const canonical = InstrumentSchema.parse({
@@ -162,7 +171,8 @@ export function mapMetaAndContexts(
         // increment allowed by szDecimals and is explicitly flagged as dynamic.
         tickSize: decimalStep(Math.max(0, 6 - row.szDecimals)),
         lotSize: decimalStep(row.szDecimals),
-        minimumNotional: "0",
+        // Hyperliquid rejects orders under $10; only reviewed markets state it, the rest keep it unverified.
+        minimumNotional: reviewed ? "10" : "0",
         tradingSchedule: {
           timezone: "UTC",
           sessions: [{ daysOfWeek: [1, 2, 3, 4, 5, 6, 7], opensAt: "00:00", closesAt: "23:59" }],
@@ -258,13 +268,15 @@ function rawEvent(
   transport: RawVenueEvent["transport"],
 ): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
+  // A reviewed market's book carries no flags: its schedule is verified, and tick size does not affect a quote.
+  const reviewed = instrument.capabilities.includes("reviewed_equity_perp");
   return {
     eventId: `evt_hyperliquid_${instrument.instrumentId}_${payload.kind}_${sourceTimestampMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
     instrumentId: instrument.instrumentId,
     sourceTimestampMs,
     transport,
     freshnessBudgetMs: 5_000,
-    qualityFlags: ["capacity_usd_uncomputed", "dynamic_tick_size", "trading_schedule_unverified"],
+    qualityFlags: reviewed ? [] : ["dynamic_tick_size", "trading_schedule_unverified"],
     rawPayloadRefOrHash,
     eligibility: "live",
     payload: CanonicalObservationPayloadSchema.parse(payload),
@@ -280,12 +292,9 @@ export function mapHyperliquidBook(
     const row = book.parse(input);
     if (row.coin !== instrument.venueSymbol) throw new Error();
     const levels = (rows: z.infer<typeof bookLevel>[]) => rows.map(level => ({ price: level.px, quantity: level.sz }));
-    return rawEvent(instrument, input, row.time, {
-      kind: "order_book",
-      bids: levels(row.levels[0]),
-      asks: levels(row.levels[1]),
-      capacityUsd: "0",
-    }, transport);
+    const bids = levels(row.levels[0]);
+    const asks = levels(row.levels[1]);
+    return rawEvent(instrument, input, row.time, { kind: "order_book", bids, asks, capacityUsd: visibleCapacityUsd(bids, asks) }, transport);
   });
 }
 

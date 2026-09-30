@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CanonicalObservationPayloadSchema, InstrumentSchema, type Instrument } from "@range/domain";
-import { ConnectorDiagnosticError, isEpochMilliseconds, type RawVenueEvent } from "@range/connector-sdk";
+import { ConnectorDiagnosticError, isEpochMilliseconds, visibleCapacityUsd, type RawVenueEvent } from "@range/connector-sdk";
 import { z } from "zod";
 
 const decimal = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/);
@@ -43,6 +43,17 @@ function precisionStep(value: string): string {
 export function bitgetCategory(instrument: Instrument): BitgetCategory {
   return category.parse(instrument.venueFamily);
 }
+/**
+ * USDT stock perpetuals reviewed against Bitget's own specifications (docs/reviews/2026-09-30-bitget-hyperliquid.md):
+ * USDT margin and settlement, quantity in shares, 24/7 trading with no scheduled closures. Their books are executable
+ * inputs; every other Bitget listing stays reference-only.
+ */
+export const REVIEWED_STOCK_PERPS: ReadonlySet<string> = new Set([
+  "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "MSFTUSDT", "METAUSDT", "AMZNUSDT", "GOOGLUSDT", "COINUSDT", "MSTRUSDT", "HOODUSDT",
+]);
+export function isReviewedStockPerp(instrument: Instrument): boolean {
+  return instrument.capabilities.includes("reviewed_stock_perp");
+}
 export function isReality(instrument: Instrument): boolean {
   return instrument.capabilities.includes("isReality=yes");
 }
@@ -72,8 +83,10 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
     // Without a launch time, metadata is effective only from when it was observed.
     const effectiveFromMs = row.launchTime ?? body.requestTime;
     if (effectiveFromMs === undefined) return [];
-    const capabilities = [spot ? "spot" : "perpetual", "underlying_unverified", "trading_schedule_unverified"];
-    if (row.launchTime === undefined) capabilities.push("launch_time_unknown");
+    const reviewed = row.category === "USDT-FUTURES" && !spot && REVIEWED_STOCK_PERPS.has(row.symbol);
+    const capabilities = [spot ? "spot" : "perpetual", ...(reviewed
+      ? ["reviewed_stock_perp", "trading_schedule=continuous_venue_stated"] : ["underlying_unverified", "trading_schedule_unverified"])];
+    if (row.launchTime === undefined && !reviewed) capabilities.push("launch_time_unknown");
     if (row.isRwa === "YES") capabilities.push("isRwa=YES", "tokenized_stock");
     if (row.symbolType === "stock") capabilities.push("symbolType=stock", "tokenized_stock");
     if (row.isReality === "yes") capabilities.push("isReality=yes", "tokenized_stock", "reality_raw_book=access_pending");
@@ -98,11 +111,13 @@ export function mapBitgetInstruments(input: unknown): Instrument[] {
 function event(instrument: Instrument, raw: unknown, sourceTimestampMs: number,
   payload: RawVenueEvent["payload"], transport: RawVenueEvent["transport"], qualityFlags: string[] = [], sequence?: string): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
+  // Only a reviewed stock perpetual's book is executable; its funding and index stay reference-only for now.
+  const executable = payload.kind === "order_book" && isReviewedStockPerp(instrument);
   return {
     eventId: `evt_bitget_${instrument.instrumentId}_${payload.kind}_${sourceTimestampMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
     instrumentId: instrument.instrumentId, sourceTimestampMs, transport, freshnessBudgetMs: 5_000,
-    qualityFlags: ["underlying_unverified", "trading_schedule_unverified", ...qualityFlags],
-    rawPayloadRefOrHash, eligibility: "reference_only", payload: CanonicalObservationPayloadSchema.parse(payload),
+    qualityFlags: executable ? qualityFlags : ["underlying_unverified", "trading_schedule_unverified", ...qualityFlags],
+    rawPayloadRefOrHash, eligibility: executable ? "live" : "reference_only", payload: CanonicalObservationPayloadSchema.parse(payload),
     ...(sequence === undefined ? {} : { sequence }),
   };
 }
@@ -114,8 +129,10 @@ export function mapBitgetBook(input: unknown, instrument: Instrument, transport:
   return safe(() => {
     const row = bookRow.parse(response.parse(input).data);
     const levels = (values: [string, string][]) => values.map(([price, quantity]) => ({ price, quantity }));
-    return event(instrument, input, row.ts, { kind: "order_book", asks: levels(row.a), bids: levels(row.b), capacityUsd: "0" },
-      transport, ["capacity_usd_uncomputed", ...(isReality(instrument) ? ["reality_raw_book=access_pending"] : [])], row.seq);
+    const asks = levels(row.a);
+    const bids = levels(row.b);
+    return event(instrument, input, row.ts, { kind: "order_book", asks, bids, capacityUsd: visibleCapacityUsd(bids, asks) },
+      transport, isReality(instrument) ? ["reality_raw_book=access_pending"] : [], row.seq);
   });
 }
 

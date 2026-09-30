@@ -16,15 +16,29 @@ it("uses explicit RWA evidence, retains category identity and excludes lookalike
 
 it("accepts the live unknown launchTime \"0\" without inventing a launch date", () => {
   const input = fixture("instruments");
-  input.data[1].launchTime = "0";
+  Object.assign(input.data[1], { launchTime: "0", symbol: "RDDTUSDT", baseCoin: "RDDT" });
   const result = mapBitgetInstruments(input);
-  const perp = result.find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_AAPLUSDT")!;
+  const perp = result.find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_RDDTUSDT")!;
   expect(perp.effectiveFrom).toBe(new Date(input.requestTime).toISOString());
   expect(perp.capabilities).toContain("launch_time_unknown");
   expect(result).toHaveLength(3);
 
   delete input.requestTime;
-  expect(mapBitgetInstruments(input).map(i => i.instrumentId)).not.toContain("ins_bitget_USDT-FUTURES_AAPLUSDT");
+  expect(mapBitgetInstruments(input).map(i => i.instrumentId)).not.toContain("ins_bitget_USDT-FUTURES_RDDTUSDT");
+});
+
+it("marks reviewed stock perpetuals verified, and makes only their books executable", () => {
+  const input = fixture("instruments");
+  input.data[1].launchTime = "0";
+  const reviewed = mapBitgetInstruments(input).find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_AAPLUSDT")!;
+  expect(reviewed.capabilities).toEqual(expect.arrayContaining(["reviewed_stock_perp", "trading_schedule=continuous_venue_stated"]));
+  expect(reviewed.capabilities.filter(capability => /unverified|unknown/.test(capability))).toEqual([]);
+  expect(mapBitgetBook(fixture("orderbook"), reviewed)).toMatchObject({ eligibility: "live", qualityFlags: [] });
+
+  Object.assign(input.data[1], { symbol: "RDDTUSDT", baseCoin: "RDDT" });
+  const other = mapBitgetInstruments(input).find(i => i.instrumentId === "ins_bitget_USDT-FUTURES_RDDTUSDT")!;
+  expect(mapBitgetBook(fixture("orderbook"), other)).toMatchObject({ eligibility: "reference_only",
+    qualityFlags: ["underlying_unverified", "trading_schedule_unverified"] });
 });
 
 it("skips a live listing whose symbol cannot form a Range instrument ID instead of failing discovery", () => {
@@ -66,12 +80,12 @@ it("emits canonical WS funding only when an explicit settlement time is present"
   expect(funding?.transport).toBe("websocket");
 });
 
-it("parses actual V3 a/b depth and retains precision without inventing USD capacity", () => {
+it("parses actual V3 a/b depth, retains precision, and sizes capacity from the visible levels only", () => {
   const instrument = mapBitgetInstruments(fixture("instruments"))[1]!;
   const book = mapBitgetBook(fixture("orderbook"), instrument);
   expect(book.sourceTimestampMs).toBe(1770531248000);
-  expect(book.payload).toEqual({kind:"order_book",asks:[{price:"200.11",quantity:"3"},{price:"200.12",quantity:"4"}],bids:[{price:"200.09",quantity:"2"},{price:"200.08",quantity:"5"}],capacityUsd:"0"});
-  expect(book.qualityFlags).toContain("capacity_usd_uncomputed");
+  // The smaller side: bids 200.09 x 2 + 200.08 x 5 = 1,400.58 against asks of 1,400.81.
+  expect(book.payload).toEqual({kind:"order_book",asks:[{price:"200.11",quantity:"3"},{price:"200.12",quantity:"4"}],bids:[{price:"200.09",quantity:"2"},{price:"200.08",quantity:"5"}],capacityUsd:"1400.58"});
 });
 
 it("uses full snapshot books5 and ticker messages and rejects malformed/incremental frames", () => {
