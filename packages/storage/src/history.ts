@@ -132,6 +132,7 @@ export class HistoryStore {
         // Otherwise identical, or the same venue observation received again: the first receipt stays authoritative.
       });
       if (fresh.length) {
+        await this.assertCitedRecorded(client, fresh.map(item => item.event));
         // The singleton UPDATE holds a row lock through COMMIT/ROLLBACK. A second appender cannot allocate
         // later ordinals and commit first. This uses the pool's ordinary READ COMMITTED isolation level.
         const cursor = await client.query("UPDATE event_log_cursor SET last_ordinal = last_ordinal + $1 WHERE singleton = true RETURNING last_ordinal",
@@ -210,6 +211,33 @@ export class HistoryStore {
       }
     }
     return deleted;
+  }
+
+  /**
+   * Evidence cites source events and a result cites its evidence; the foreign keys refuse either until what it cites is
+   * recorded. Checked before the event-log cursor is taken, a batch that must wait fails at once instead of holding the
+   * lock every other writer needs while it writes rows it then rolls back: those retries kept the book writer, which
+   * records the sources, from catching up.
+   */
+  private async assertCitedRecorded(sql: SqlClient, events: readonly StoredEvent[]): Promise<void> {
+    const missing = async (table: "event_log" | "evidence", column: "event_id" | "evidence_hash", wanted: readonly string[]) => {
+      const ids = [...new Set(wanted)];
+      if (!ids.length) return false;
+      const found = new Set((await sql.query(`SELECT ${column} FROM ${table} WHERE ${column} IN (${ids.map((_, index) => `$${index + 1}`).join(", ")})`,
+        ids)).rows.map(row => String(row[column])));
+      return ids.some(id => !found.has(id));
+    };
+    const batchIds = new Set(events.map(event => event.eventId));
+    const bundles = events.flatMap(event => event.topic === "evidence.bundle.v1" && "sourceEventIds" in event.payload ? [event.payload] : []);
+    const batchHashes = new Set(bundles.map(bundle => bundle.evidenceHash));
+    if (await missing("event_log", "event_id", bundles.flatMap(bundle => bundle.sourceEventIds).filter(id => !batchIds.has(id)))) {
+      throw new Error("Evidence sources are not yet recorded");
+    }
+    const cited = events.flatMap(event => event.topic === "opportunity.v1" && "stateRevision" in event.payload && event.payload.evidenceHash
+      ? [event.payload.evidenceHash] : []);
+    if (await missing("evidence", "evidence_hash", cited.filter(hash => !batchHashes.has(hash)))) {
+      throw new Error("Cited evidence is not yet recorded");
+    }
   }
 
   private async materialize(sql: SqlClient, event: StoredEvent): Promise<void> {

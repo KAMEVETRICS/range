@@ -327,6 +327,37 @@ describe("history retention", () => {
     await pool.end();
   });
 
+  it("refuses evidence until its sources are recorded, without taking the event-log cursor", async () => {
+    const { pool, history } = await store();
+    const statements: string[] = [];
+    const connect = pool.connect.bind(pool);
+    vi.spyOn(pool, "connect").mockImplementation(async () => {
+      const client = await connect();
+      const query = client.query.bind(client);
+      client.query = ((sql: string, values?: unknown[]) => { statements.push(sql); return query(sql, values); }) as typeof client.query;
+      return client;
+    });
+    await expect(history.append(evidence(["evt_book_later"], now))).rejects.toThrow(/not yet recorded/);
+    expect(statements.some(sql => sql.includes("event_log_cursor"))).toBe(false);
+    await history.append(book("evt_book_later", now));
+    await history.append(evidence(["evt_book_later"], now));
+    expect((await pool.query("SELECT evidence_hash FROM evidence")).rows).toHaveLength(1);
+    await pool.end();
+  });
+
+  it("refuses a result until the evidence it cites is recorded", async () => {
+    const { pool, history } = await store();
+    const result = { eventId: "evt_result", topic: "opportunity.v1" as const, key: "equity:TSLA", underlyingId: "equity:TSLA",
+      acceptedAtMs: now, archiveId: "archive1", calculationVersion: "calc.v1",
+      payload: OpportunitySchema.parse({ ...opportunity(1, now + 1000), evidenceHash: `sha256:${"b".repeat(64)}` }) };
+    await expect(history.append(result)).rejects.toThrow(/not yet recorded/);
+    await history.append(book("evt_book_cited", now));
+    await history.append(evidence(["evt_book_cited"], now));
+    await history.append(result);
+    expect((await pool.query("SELECT opportunity_id FROM opportunities")).rows).toHaveLength(1);
+    await pool.end();
+  });
+
   it("rejects an invalid cutoff or batch bound", async () => {
     const { pool, history } = await store();
     await expect(history.pruneObservations(Number.NaN)).rejects.toThrow(/cutoff/i);
