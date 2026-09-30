@@ -776,6 +776,31 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
+  it("skips a reference-only book for an instrument it holds no book for, and applies one for a held book", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const backing = createInMemoryRevisionAuthority();
+    const advanced: string[] = [];
+    const authority: RevisionAuthority = {
+      kind: "volatile",
+      advance: async underlyingId => { advanced.push(underlyingId); return backing.advance(underlyingId); },
+      advanceMany: async underlyingIds => { advanced.push(...underlyingIds); return backing.advanceMany(underlyingIds); },
+      read: underlyingId => backing.read(underlyingId),
+    };
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority });
+    const reference = (eventId: string, sourceTimestamp: number) =>
+      ({ ...book("ins_a", "venue_a", "100", eventId), eligibility: "reference_only", sourceTimestamp } as never);
+    await bus.publish("book.state.v1", "ins_a", reference("evt_reference_unheld", NOW - 30));
+    await worker.flush();
+    expect(advanced).toEqual([]);
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_live"), sourceTimestamp: NOW - 20 } as never);
+    await bus.publish("book.state.v1", "ins_a", reference("evt_reference_held", NOW - 10));
+    await worker.flush();
+    // The live book and the reference book that invalidates it each advance the reviewed underlying.
+    expect(advanced).toEqual(["equity:TSLA", "equity:TSLA"]);
+    await worker.stop();
+  });
+
   it("pairs a reviewed member filed under a venue-local underlying and re-evaluates it on that member's books", async () => {
     const bus = new InMemoryEventBus();
     const registry = new InstrumentRegistry();

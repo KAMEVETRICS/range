@@ -340,6 +340,10 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
     }, debounceMs));
   };
   unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", event => acceptInput(async () => {
+    // A book that is not live is never quoted, so one for an instrument without a held book is skipped: rebuilding every
+    // reference book (about 85 a second across twelve venues) kept this queue seconds behind, and quotes were stale
+    // before they were evaluated. For a held book it still applies, and invalidates that book.
+    if (event.eligibility !== "live" && !books.has(event.instrumentId)) return;
     const book = books.get(event.instrumentId) ?? new OrderBook();
     const current = bookCursors.get(event.instrumentId);
     const sequence = bookSequence(event.sequence);
