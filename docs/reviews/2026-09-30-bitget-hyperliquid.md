@@ -38,3 +38,19 @@
 Approved by kongclaves on 2026-09-30 at 08:37:41 UTC, accepting the differences above (USDT against USDC, split and dividend handling, off-hours pricing). Each mapping pins both members at instrument version 2 with the metadata hashes `scripts/reviewed-mapping-members.ts` read from the live registry; a dry run of the seeder and registry against the live registry accepted all ten before deployment.
 
 A listing whose metadata changes moves to a new version, which takes it out of its mapping (fail-closed) until the mapping is re-pinned at a higher `mappingVersion`.
+
+## Funding review (pending approval)
+
+Every perpetual leg needs live funding: the evaluator projects funding over the holding horizon (8 hours) for any strategy, so without it even a pure price spread is rejected with `FUNDING_SEMANTICS_UNKNOWN`.
+
+| Field | Bitget | trade.xyz (Hyperliquid) |
+| --- | --- | --- |
+| Who pays | Positive rate: longs pay shorts. [Bitget: What is the funding rate](https://www.bitget.com/support/articles/12560603817108) | Positive rate: longs pay shorts. [Hyperliquid funding](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding) |
+| Settlement | Every 8 hours at 00:00, 08:00, 16:00 UTC (same page); each ticker states the next settlement (`nextFundingTime`) | Every hour (Hyperliquid funding); settled history shows exactly on the hour (05:00:00, 06:00:00, ... on 2026-09-30) |
+| Rate formula | Interest rate plus premium index (same page); cash dividends pass through funding at T-1 (TradFi overview) | F = 0.5 x [average premium + clamp(interest - premium, -0.0005, 0.0005)]; the 0.5 is the market's funding multiplier. [trade.xyz mechanics](https://docs.trade.xyz/perpetuals/mechanics) |
+| Published rate vs settled rate | Recorded ticker rate seconds before settlement equals Bitget's settled history: NVDA 0.000253 (09-29 16:00), 0.000326 (09-30 00:00), 0 (09-30 08:00); TSLA 0.000625, 0.000813, 0 | Recorded `metaAndAssetCtxs` rate before the hour equals Hyperliquid's settled `fundingHistory`: NVDA 0.0000179305 and TSLA 0.0000209914 at 05:00 exactly; later hours within the final minute's drift. So the published rate already includes the 0.5 multiplier |
+| Observation time | The ticker's own time | Receipt time: the response carries none; the rate is Hyperliquid's current estimate for the hour |
+
+Observed: Bitget's 08:00 UTC settlement (outside US hours) was 0 for both NVDA and TSLA on 09-29 and 09-30, while its 16:00 and 00:00 settlements were not.
+
+Proposed if approved: funding for the ten reviewed listings becomes live with no quality flags, stating that longs pay on a positive rate. Bitget's funding freshness budget becomes 60 s (tickers every 10 s); trade.xyz's stays 120 s (read every 60 s).
