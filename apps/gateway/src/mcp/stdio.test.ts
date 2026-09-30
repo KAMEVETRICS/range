@@ -109,7 +109,8 @@ describe("local stdio executable", () => {
     const started = new Promise<void>(resolve => entered = resolve);
     const queries: ApplicationQueries = {
       listVenues: async () => { entered(); await blocked; return []; }, findInstruments: async () => [], getMarketSnapshot: async () => [],
-      scanOpportunities: async () => [], inspectOpportunity: async () => undefined, getEvidence: async () => undefined,
+      scanOpportunities: async () => [], inspectOpportunity: async () => undefined,
+      liveOpportunities: async () => [], recentOpportunity: async () => undefined, getEvidence: async () => undefined,
       getSourceTimestamps: async () => [], getOpportunityHistory: async () => [], getAcceptedRevision: async () => undefined,
       readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined, getPairEvaluations: async () => undefined,
     };
@@ -146,7 +147,8 @@ describe("local stdio executable", () => {
   it("applies the client operation rate budget to stdio tool calls", async () => {
     const queries: ApplicationQueries = {
       listVenues: async () => [], findInstruments: async () => [], getMarketSnapshot: async () => [],
-      scanOpportunities: async () => [], inspectOpportunity: async () => undefined, getEvidence: async () => undefined,
+      scanOpportunities: async () => [], inspectOpportunity: async () => undefined,
+      liveOpportunities: async () => [], recentOpportunity: async () => undefined, getEvidence: async () => undefined,
       getSourceTimestamps: async () => [], getOpportunityHistory: async () => [], getAcceptedRevision: async () => undefined,
       readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined, getPairEvaluations: async () => undefined,
     };

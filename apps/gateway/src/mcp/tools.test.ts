@@ -10,6 +10,7 @@ const pepper = "test-pepper-012345678901234567890123456789";
 const queries: ApplicationQueries = {
   listVenues: async () => [], findInstruments: async () => [], getMarketSnapshot: async () => [],
   scanOpportunities: async () => [], inspectOpportunity: async () => undefined,
+      liveOpportunities: async () => [], recentOpportunity: async () => undefined,
   getEvidence: async () => undefined, getSourceTimestamps: async () => [], getOpportunityHistory: async () => [],
   getAcceptedRevision: async () => undefined, readEvents: async () => [], latestEventOrdinal: async () => 0, getMarketBoard: async () => undefined, getPairEvaluations: async () => undefined,
 };

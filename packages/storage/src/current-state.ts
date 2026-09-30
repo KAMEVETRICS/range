@@ -1,10 +1,16 @@
-import { isCurrentAtRevision, OpportunitySchema, type Opportunity } from "@range/domain";
+import { EvidenceBundleSchema, isCurrentAtRevision, OpportunitySchema, type EvidenceBundle, type Opportunity } from "@range/domain";
 
 export interface RedisCommands {
   eval(script: string, numberOfKeys: number, ...args: (string | number)[]): Promise<unknown>;
   get(key: string): Promise<string | null>;
+  mget(...keys: string[]): Promise<(string | null)[]>;
+  set(key: string, value: string, mode: "PX", milliseconds: number): Promise<unknown>;
   zrangebyscore(key: string, min: string | number, max: string | number, ...args: (string | number)[]): Promise<string[]>;
 }
+export type ObservationTime = { eventId: string; sourceTimestampMs: number; receivedTimestampMs: number };
+
+/** How long a published result, its evidence and its sources' times stay readable after publication. */
+const RECENT_MS = 300_000;
 export interface VersionedState<T = unknown> {
   version: number;
   expiresAt: number;
@@ -31,6 +37,7 @@ else
   redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
   redis.call('ZADD', KEYS[3], ARGV[6], ARGV[3])
 end
+redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', '(' .. ARGV[7])
 return 1
 `;
 
@@ -50,7 +57,7 @@ export class CurrentStateStore {
     }
     return Number(await this.redis.eval(CAS, 3, this.key("data", key), this.key("fence", key),
       this.key("index", record.underlyingId ?? "all"), JSON.stringify(record),
-      Math.max(0, record.expiresAt - this.now()), key, record.version, record.terminal ? "1" : "0", record.expiresAt)) === 1;
+      Math.max(0, record.expiresAt - this.now()), key, record.version, record.terminal ? "1" : "0", record.expiresAt, this.now())) === 1;
   }
 
   async get<T = unknown>(key: string): Promise<VersionedState<T> | undefined> {
@@ -68,10 +75,14 @@ export class CurrentStateStore {
       item.state !== undefined && item.state.underlyingId === underlyingId);
   }
 
+  /**
+   * Keeps every published result, current or not: the dashboard shows each pair's newest actionable result while it is
+   * fresh, and any result stays inspectable for five minutes. Readers that need the accepted revision (getOpportunity,
+   * and so intents) still check it on every read.
+   */
   async putOpportunity(input: Opportunity): Promise<boolean> {
     const opportunity = OpportunitySchema.parse(input);
-    const revision = await this.authority.read(opportunity.underlyingId);
-    if (revision !== opportunity.stateRevision) return false;
+    await this.redis.set(this.key("recent", opportunity.opportunityId), JSON.stringify(opportunity), "PX", RECENT_MS);
     return this.put(`opportunity:${opportunity.opportunityId}`, {
       version: opportunity.stateRevision, expiresAt: Date.parse(opportunity.expiresAt),
       underlyingId: opportunity.underlyingId, terminal: opportunity.status === "expired", value: opportunity,
@@ -86,7 +97,53 @@ export class CurrentStateStore {
     return isCurrentAtRevision(opportunity, revision, this.now()) ? opportunity : undefined;
   }
 
+  /** A published result's latest version, current or not, for five minutes after it was published. */
+  async getRecentOpportunity(opportunityId: string): Promise<Opportunity | undefined> {
+    const data = await this.redis.get(this.key("recent", opportunityId));
+    return data ? OpportunitySchema.parse(JSON.parse(data)) : undefined;
+  }
+
+  /** Every stored result for an underlying that has neither expired nor ended, whatever the accepted revision. */
+  async queryLiveOpportunities(underlyingId: string, limit = 1000): Promise<Opportunity[]> {
+    return this.scanOpportunityIndex(underlyingId, limit, async id => {
+      const state = await this.get<Opportunity>(`opportunity:${id}`);
+      return state ? OpportunitySchema.parse(state.value) : undefined;
+    });
+  }
+
+  async putEvidence(bundle: EvidenceBundle): Promise<void> {
+    const evidence = EvidenceBundleSchema.parse(bundle);
+    await this.redis.set(this.key("evidence", evidence.evidenceHash), JSON.stringify(evidence), "PX", RECENT_MS);
+  }
+
+  async getEvidence(evidenceHash: string): Promise<EvidenceBundle | undefined> {
+    const data = await this.redis.get(this.key("evidence", evidenceHash));
+    return data ? EvidenceBundleSchema.parse(JSON.parse(data)) : undefined;
+  }
+
+  /** Source and receive times of observations evidence may cite, readable before history records them. */
+  async putObservationTimes(items: readonly ObservationTime[]): Promise<void> {
+    await Promise.all(items.map(item => this.redis.set(this.key("observed", item.eventId),
+      JSON.stringify([item.sourceTimestampMs, item.receivedTimestampMs]), "PX", RECENT_MS)));
+  }
+
+  async getObservationTimes(eventIds: readonly string[]): Promise<ObservationTime[]> {
+    if (!eventIds.length) return [];
+    const values = await this.redis.mget(...eventIds.map(id => this.key("observed", id)));
+    return eventIds.flatMap((eventId, index) => {
+      const value = values[index];
+      if (!value) return [];
+      const [sourceTimestampMs, receivedTimestampMs] = JSON.parse(value) as [number, number];
+      return [{ eventId, sourceTimestampMs, receivedTimestampMs }];
+    });
+  }
+
   async queryOpportunities(underlyingId: string, limit = 100): Promise<Opportunity[]> {
+    return this.scanOpportunityIndex(underlyingId, limit, id => this.getOpportunity(id));
+  }
+
+  private async scanOpportunityIndex(underlyingId: string, limit: number,
+    read: (opportunityId: string) => Promise<Opportunity | undefined>): Promise<Opportunity[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid query limit");
     const result: Opportunity[] = [];
     const batchSize = Math.max(32, limit);
@@ -101,7 +158,7 @@ export class CurrentStateStore {
       offset += keys.length;
       for (const key of keys) {
         if (!key.startsWith("opportunity:")) continue;
-        const opportunity = await this.getOpportunity(key.slice("opportunity:".length));
+        const opportunity = await read(key.slice("opportunity:".length));
         if (opportunity?.underlyingId === underlyingId) result.push(opportunity);
         if (result.length === limit) break;
       }

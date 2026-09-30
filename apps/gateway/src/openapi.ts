@@ -37,7 +37,7 @@ export function generateOpenApi() {
     responses: { "200": { description: "Immutable unsigned intent or explicit validation outcome", content: { "application/json": { schema: json(route.response) } } }, ...errors },
   } };
   paths["/v1/stream"] = { get: { operationId: "streamChanges", security: [{ rangeToken: [] }], "x-required-scopes": ["market:read", "opportunity:read"],
-    description: "SSE opportunity and health changes. IDs are evt_<durable ordinal>; Last-Event-ID resumes strictly after that cursor. No cursor starts at the current tail. Heartbeat comments every 15 seconds. Replay rechecks authoritative currentness and emits explicit invalidations for historical opportunities. Slow clients disconnect at a bounded queue; reconnect with the last received event ID.",
+    description: "SSE opportunity and health changes. IDs are evt_<durable ordinal>; Last-Event-ID resumes strictly after that cursor. No cursor starts at the current tail. Heartbeat comments every 15 seconds. Replay rechecks currentness (each pair and direction's newest actionable result, until it expires) and emits explicit invalidations for replaced or expired opportunities. Slow clients disconnect at a bounded queue; reconnect with the last received event ID.",
     parameters: [...parameters(StreamQuerySchema, "query"), { name: "Last-Event-ID", in: "header", required: false, schema: json(ResumeIdSchema) }],
     responses: { "200": { description: "SSE frames; JSON data always validates against one of the Range event envelopes",
       content: { "text/event-stream": { schema: { type: "string" } } } }, ...errors },

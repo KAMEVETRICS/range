@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "./test-setup.js";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpportunitiesPage } from "./pages/OpportunitiesPage.js";
@@ -204,7 +204,7 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     const api = apiWith([current]);
     let streamHandler: Parameters<DashboardApi["subscribe"]>[1] | undefined;
     vi.mocked(api.subscribe).mockImplementation((_underlying, handler) => { streamHandler = handler; return () => undefined; });
-    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" />);
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={0} />);
     await screen.findByRole("row", { name: /opp_nvda_spread_1|NVDA/ });
     vi.mocked(api.scanOpportunities).mockResolvedValueOnce(opportunities([current, incoming]));
 
@@ -214,6 +214,28 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
 
     expect(await screen.findByText("44.00 bps")).toBeVisible();
     expect(api.scanOpportunities).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the scanner by itself while shown", async () => {
+    const api = apiWith([opportunity()]);
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={20} />);
+    await waitFor(() => expect(vi.mocked(api.scanOpportunities).mock.calls.length).toBeGreaterThanOrEqual(3));
+  });
+
+  it("keeps a picked result on screen after it leaves the list, shown as it ended", async () => {
+    const ended = opportunity({ status: "expired", rejectionReasons: ["STALE_INPUT"] });
+    const api = apiWith([opportunity()]);
+    const user = userEvent.setup();
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={20} />);
+    await user.click(await screen.findByRole("button", { name: "NVDA" }));
+    vi.mocked(api.scanOpportunities).mockResolvedValue(opportunities([]));
+    vi.mocked(api.inspectOpportunity).mockResolvedValue({ ...opportunities([ended]), status: "partial",
+      result: { opportunity: ended, rejection_history: [], quote_timestamps: quoteTimestamps } });
+
+    expect(await screen.findByText("0 returned")).toBeVisible();
+    const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
+    expect(await within(detail).findByText(/research-only/)).toBeVisible();
+    expect(within(detail).getAllByText("opp_nvda_spread_1")[0]).toBeVisible();
   });
 
   it("labels degraded and missing venues without implying they are actionable", async () => {

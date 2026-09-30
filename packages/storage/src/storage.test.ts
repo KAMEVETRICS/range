@@ -77,15 +77,59 @@ describe("Redis current state", () => {
     redis.disconnect();
   });
 
-  it("does not promote rejected events and fails closed when the authority is unavailable", async () => {
+  it("does not promote rejected events, and a strict read fails closed when the authority is unavailable", async () => {
     const redis = new Redis();
     const now = Date.now();
     let failure = false;
     const store = new CurrentStateStore(redis, { read: async () => { if (failure) throw new Error("offline"); return 3; } }, () => now);
     await store.putOpportunity(opportunity(3, now + 1000));
     expect(await store.getOpportunity("opp_test")).toBeUndefined();
+    await store.putOpportunity(actionableOpportunity("opp_live", 3, now + 1000));
+    expect(await store.getOpportunity("opp_live")).toMatchObject({ status: "actionable" });
     failure = true;
-    await expect(store.putOpportunity(opportunity(3, now + 1000))).rejects.toThrow("offline");
+    await expect(store.getOpportunity("opp_live")).rejects.toThrow("offline");
+    redis.disconnect();
+  });
+
+  it("keeps every published result for display while strict reads still require the accepted revision", async () => {
+    const redis = new Redis();
+    const now = Date.now();
+    const store = new CurrentStateStore(redis, { read: async () => 5 }, () => now, "display_test");
+    const behind = actionableOpportunity("opp_behind", 3, now + 1_000);
+    await store.putOpportunity(behind);
+    expect(await store.getOpportunity("opp_behind")).toBeUndefined();
+    expect(await store.queryOpportunities("equity:TSLA")).toEqual([]);
+    expect(await store.queryLiveOpportunities("equity:TSLA")).toEqual([behind]);
+    expect(await store.getRecentOpportunity("opp_behind")).toEqual(behind);
+    // Ending it removes it from the live set; its last version stays inspectable.
+    const ended = OpportunitySchema.parse({ ...behind, status: "expired", stateRevision: 5, rejectionReasons: ["STALE_INPUT"] });
+    await store.putOpportunity(ended);
+    expect(await store.queryLiveOpportunities("equity:TSLA")).toEqual([]);
+    expect(await store.getRecentOpportunity("opp_behind")).toMatchObject({ status: "expired", stateRevision: 5 });
+    redis.disconnect();
+  });
+
+  it("serves evidence and observation times until history records them", async () => {
+    const redis = new Redis();
+    const store = new CurrentStateStore(redis, { read: async () => 0 }, Date.now, "evidence_test");
+    const bundle = { evidenceHash: `sha256:${"e".repeat(64)}`, calculationVersion: "calc.v1", sourceEventIds: ["evt_a"],
+      canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: [] };
+    await store.putEvidence(bundle as never);
+    expect(await store.getEvidence(bundle.evidenceHash)).toEqual(bundle);
+    expect(await store.getEvidence(`sha256:${"f".repeat(64)}`)).toBeUndefined();
+    await store.putObservationTimes([{ eventId: "evt_a", sourceTimestampMs: 10, receivedTimestampMs: 12 }]);
+    expect(await store.getObservationTimes(["evt_a", "evt_missing"])).toEqual([{ eventId: "evt_a", sourceTimestampMs: 10, receivedTimestampMs: 12 }]);
+    redis.disconnect();
+  });
+
+  it("drops index entries whose data has expired", async () => {
+    const redis = new Redis();
+    let now = Date.now();
+    const store = new CurrentStateStore(redis, { read: async () => 0 }, () => now, "prune_test");
+    await store.put("book:a", { version: 1, expiresAt: now + 1_000, underlyingId: "equity:TSLA", value: {} });
+    now += 2_000;
+    await store.put("book:b", { version: 1, expiresAt: now + 1_000, underlyingId: "equity:TSLA", value: {} });
+    expect(await redis.zrange("{prune_test}:index:equity:TSLA", 0, -1)).toEqual(["book:b"]);
     redis.disconnect();
   });
 
@@ -107,7 +151,7 @@ describe("Redis current state", () => {
     const firstPageAt = now;
     let pageReads = 0;
     const clockedRedis: RedisCommands = {
-      eval: redis.eval.bind(redis), get: redis.get.bind(redis),
+      eval: redis.eval.bind(redis), get: redis.get.bind(redis), mget: redis.mget.bind(redis), set: redis.set.bind(redis),
       zrangebyscore: async (key, min, max, ...args) => {
         const keys = await redis.zrangebyscore(key, min, max, ...args);
         if (++pageReads === 1) now += 20_000;

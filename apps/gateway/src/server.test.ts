@@ -5,7 +5,7 @@ import { OpportunitySchema, EvidenceBundleSchema, VenueHealthSchema, Observation
   type PairEvaluationSnapshot } from "@range/domain";
 import { RangeApplication, type ApplicationQueries, type RequestContext } from "@range/application";
 import { buildServer } from "./server.js";
-import { hashClientToken } from "./auth.js";
+import { ClientAuth, hashClientToken } from "./auth.js";
 import { StreamSession } from "./routes/stream.js";
 import { EventEmitter } from "node:events";
 import type { EventPageItem } from "@range/application";
@@ -64,6 +64,8 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
     async getMarketSnapshot(context) { check(context); return []; },
     async scanOpportunities(context) { check(context); return current.queryOpportunities("equity:TSLA", 1000); },
     async inspectOpportunity(context, id) { check(context); return current.getOpportunity(id); },
+    async liveOpportunities(context, underlying) { check(context); return current.queryLiveOpportunities(underlying); },
+    async recentOpportunity(context, id) { check(context); return current.getRecentOpportunity(id); },
     async getEvidence(context) { check(context); return EvidenceBundleSchema.parse({ sourceEventIds: ["evt_book"], calculationVersion: "v1", canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: ["legs are non-atomic"], evidenceHash: `sha256:${"a".repeat(64)}` }); },
     async getSourceTimestamps(context) { check(context); return [{ eventId: "evt_book", sourceTimestampMs: now - 10, receivedTimestampMs: now - 5 }]; },
     async getOpportunityHistory(context) { check(context); return []; },
@@ -78,7 +80,8 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
     now: () => clock, log: entry => logs.push(entry) });
   close.push(() => app.close());
   return { app, application, queries, contexts, logs, setRevision: (value: number) => revision = value,
-    setClock: (value: number) => clock = value, setOutage: () => outage = true };
+    setClock: (value: number) => clock = value, setOutage: () => outage = true,
+    supersede: () => current.putOpportunity(OpportunitySchema.parse({ ...opportunity(), opportunityId: "opp_newer", stateRevision: 8 })) };
 }
 
 describe("REST application boundary", () => {
@@ -167,16 +170,25 @@ describe("REST application boundary", () => {
     expect(response.json()).toMatchObject({ status: "partial", warnings: expect.arrayContaining(["extended: venue degraded"]) });
   });
 
-  it.each(["revision", "expiry", "outage"])("fails closed after authoritative %s changes", async mode => {
+  it.each(["replaced", "expired"])("shows a %s result for research, never as actionable", async mode => {
     const f = await fixture();
-    if (mode === "revision") f.setRevision(8);
-    if (mode === "expiry") f.setClock(now + 60_001);
-    if (mode === "outage") f.setOutage();
+    if (mode === "replaced") await f.supersede();
+    if (mode === "expired") f.setClock(now + 60_001);
     const response = await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
-    expect(response.statusCode).toBe(mode === "outage" ? 503 : 404);
-    expect(response.json().status).toBe("rejected");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "partial", result: { opportunity: { opportunityId: "opp_1", status: "expired" } } });
+    expect(response.json().warnings).toContain("no longer current: replaced by a newer result or expired; shown for research");
     expect(response.body).not.toContain('"status":"actionable"');
     expect(JSON.stringify(f.logs)).not.toContain(token);
+  });
+
+  it("serves the dashboard without the revision authority, whose outage still fails intents' reads closed", async () => {
+    const f = await fixture();
+    f.setOutage();
+    const response = await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().result.opportunity.status).toBe("actionable");
+    await expect(f.queries.inspectOpportunity({ traceId: "rng_trace_test", clientId: "reader" }, "opp_1")).rejects.toThrow("db failed");
   });
 
   it.each(["limit=101", "offset=-1", "underlying=", "max_age_ms=NaN", "min_edge_bps=Infinity", "unexpected=secret", "venue=not_a_venue"])("rejects bounded/unknown scan filter %s", async query => {
@@ -193,7 +205,7 @@ describe("REST application boundary", () => {
 
   it("marks an empty scan partial when its venue or market inputs are missing", async () => {
     const f = await fixture();
-    f.queries.scanOpportunities = async () => [];
+    f.queries.liveOpportunities = async () => [];
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
     expect(body.status).toBe("partial");
     expect(body.warnings).toEqual(expect.arrayContaining(["extended: venue degraded", "hyperliquid_hip3: venue missing",
@@ -203,7 +215,7 @@ describe("REST application boundary", () => {
 
   it("answers a scan without a reviewed pair with one warning, not a list of every venue", async () => {
     const f = await fixture();
-    f.queries.scanOpportunities = async () => [];
+    f.queries.liveOpportunities = async () => [];
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:NVDA", headers: auth })).json();
     expect(body.status).toBe("partial");
     expect(body.warnings).toEqual(["no reviewed pair for equity:NVDA: only reviewed pairs are scanned"]);
@@ -229,7 +241,7 @@ describe("REST application boundary", () => {
       venue: "extended", instrumentId: "ins_bitget_tsla", sourceTimestamp: now - 2000, receivedTimestamp: now - 1900,
       transport: "websocket", freshnessBudgetMs: 1000, qualityFlags: [], rawPayloadRefOrHash: "private-locator",
       eligibility: "live", payload: { kind: "order_book", bids: [], asks: [], capacityUsd: "0" } })];
-    f.queries.scanOpportunities = async () => [];
+    f.queries.liveOpportunities = async () => [];
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
     expect(body.status).toBe("partial");
     expect(body.freshness.oldest_input_ms).toBe(60_001);
@@ -246,28 +258,30 @@ describe("REST application boundary", () => {
     expect(body.status).toBe("ok");
   });
 
-  it("drops an earlier scan item when the accepted revision advances during a later item read", async () => {
+  it("lists each pair and direction's newest actionable result only", async () => {
     const f = await fixture();
-    const first = opportunity();
-    const second = OpportunitySchema.parse({ ...first, opportunityId: "opp_2" });
-    f.queries.scanOpportunities = async () => [first, second];
-    let checks = 0;
-    f.queries.inspectOpportunity = async (_context, id) => {
-      if (++checks === 2) { f.setRevision(8); return undefined; }
-      return id === first.opportunityId ? first : undefined;
-    };
+    await f.supersede();
+    const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
+    expect(body.result.items.map((item: { opportunityId: string }) => item.opportunityId)).toEqual(["opp_newer"]);
+  });
+
+  it("drops a scan item replaced by a newer result for its pair while its evidence is read", async () => {
+    const f = await fixture();
+    const read = f.queries.getEvidence;
+    f.queries.getEvidence = async (context, hash) => { const result = await read(context, hash); await f.supersede(); return result; };
     const body = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).json();
     expect(body.result.items).toEqual([]);
     expect(body.status).toBe("partial");
     expect(body.warnings).toContain("opportunity changed during read; excluded");
   });
 
-  it("does not return actionable data if the authority advances while evidence is being loaded", async () => {
+  it("does not show a result as actionable when a newer one for its pair arrives while its evidence loads", async () => {
     const f = await fixture();
     const read = f.queries.getEvidence;
-    f.queries.getEvidence = async (context, hash) => { const result = await read(context, hash); f.setRevision(8); return result; };
+    f.queries.getEvidence = async (context, hash) => { const result = await read(context, hash); await f.supersede(); return result; };
     const response = await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().result.opportunity.status).toBe("expired");
     expect(response.body).not.toContain('"status":"actionable"');
   });
 
@@ -334,11 +348,28 @@ describe("REST application boundary", () => {
     expect(hashClientToken(token, pepper)).not.toBe(hashClientToken(token, `${pepper}x`));
   });
 
-  it("rate limits scans per authenticated client and operation", async () => {
+  it("lets a dashboard poll its scan and inspect results beyond the default 60 requests a minute", async () => {
     const { app } = await fixture();
-    for (let i = 0; i < 10; i++) expect((await app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).statusCode).toBe(200);
-    expect((await app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).statusCode).toBe(429);
-    expect((await app.inject({ method: "GET", url: "/v1/venues", headers: auth })).statusCode).toBe(200);
+    const codes = new Set<number>();
+    for (let i = 0; i < 61; i++) {
+      codes.add((await app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth })).statusCode);
+      codes.add((await app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth })).statusCode);
+    }
+    expect([...codes]).toEqual([200]);
+  });
+
+  it("rate limits each client and operation a minute at a time", () => {
+    let clock = now;
+    const limiter = new ClientAuth([], pepper, () => clock);
+    const client = { id: "reader", tokenHash: "0".repeat(64), scopes: ["market:read"] };
+    const allowed = (operation: string) => { try { limiter.limit(client, operation); return true; } catch { return false; } };
+    for (let i = 0; i < 600; i++) expect(allowed("scanOpportunities")).toBe(true);
+    expect(allowed("scanOpportunities")).toBe(false);
+    expect(allowed("inspectOpportunity")).toBe(true);
+    for (let i = 0; i < 60; i++) expect(allowed("listVenues")).toBe(true);
+    expect(allowed("listVenues")).toBe(false);
+    clock += 60_000;
+    expect(allowed("scanOpportunities")).toBe(true);
   });
 });
 
@@ -386,7 +417,7 @@ describe("SSE currentness and bounded delivery", () => {
   });
   it("resumes by event ID and replaces historical actionable state with an explicit invalidation", async () => {
     const f = await fixture();
-    f.setRevision(8);
+    await f.supersede();
     const events = [event(1), event(2)];
     f.queries.readEvents = async (_context, after, limit) => events.filter(item => item.ordinal > after).slice(0, limit);
     const sink = new Sink();
@@ -409,7 +440,7 @@ describe("SSE currentness and bounded delivery", () => {
     await session.poll();
     events = [event(2), event(3)];
     await session.poll();
-    f.setRevision(8); sink.blocked = false;
+    await f.supersede(); sink.blocked = false;
     await session.drain();
     expect(sink.chunks.slice(1).join("")).toContain('"current":false');
     expect(sink.chunks.slice(1).join("")).not.toContain('"status":"actionable"');
@@ -419,7 +450,7 @@ describe("SSE currentness and bounded delivery", () => {
     expect(sink.ended).toBe(true);
   });
 
-  it("emits health IDs and heartbeat comments, and closes on authority outages", async () => {
+  it("emits health IDs and heartbeat comments, and closes when current state is unavailable", async () => {
     const f = await fixture();
     const health = (await f.queries.listVenues({ traceId: "rng_trace_stream", clientId: "reader" }))[0]!.health!;
     f.queries.readEvents = async () => [{ ...event(1), event: { ...event(1).event, topic: "venue.health.v1", payload: health } }];
@@ -429,7 +460,8 @@ describe("SSE currentness and bounded delivery", () => {
     session.heartbeat(); await session.poll();
     expect(sink.chunks.join("")).toContain(": heartbeat\n\n");
     expect(sink.chunks.join("")).toContain("id: evt_1\nevent: health");
-    f.queries.readEvents = async () => [event(2)]; f.setOutage();
+    f.queries.readEvents = async () => [event(2)];
+    f.queries.liveOpportunities = async () => { throw new Error("current state unavailable"); };
     await session.poll();
     expect(sink.ended).toBe(true);
   });
@@ -472,7 +504,7 @@ describe("OpenAPI contracts", () => {
     expect(responseSchemas.opportunity.safeParse(stream!.body).success).toBe(true);
     const streamSchemas = document.paths["/v1/stream"]!.get!["x-event-envelopes"] as Record<string, Record<string, unknown>>;
     const invalidationContext = { traceId: "rng_trace_contract", clientId: "reader" };
-    f.setRevision(8);
+    await f.supersede();
     const invalidation = await f.application.streamEvent(event(2), invalidationContext);
     const venueHealth = (await f.queries.listVenues(invalidationContext))[0]!.health!;
     const health = await f.application.streamEvent({ ...event(3), event: { ...event(3).event,

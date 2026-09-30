@@ -11736,7 +11736,7 @@
           "market:read",
           "opportunity:read"
         ],
-        "description": "SSE opportunity and health changes. IDs are evt_<durable ordinal>; Last-Event-ID resumes strictly after that cursor. No cursor starts at the current tail. Heartbeat comments every 15 seconds. Replay rechecks authoritative currentness and emits explicit invalidations for historical opportunities. Slow clients disconnect at a bounded queue; reconnect with the last received event ID.",
+        "description": "SSE opportunity and health changes. IDs are evt_<durable ordinal>; Last-Event-ID resumes strictly after that cursor. No cursor starts at the current tail. Heartbeat comments every 15 seconds. Replay rechecks currentness (each pair and direction's newest actionable result, until it expires) and emits explicit invalidations for replaced or expired opportunities. Slow clients disconnect at a bounded queue; reconnect with the last received event ID.",
         "parameters": [
           {
             "name": "underlying",

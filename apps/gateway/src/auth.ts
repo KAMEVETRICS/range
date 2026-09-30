@@ -8,6 +8,8 @@ export function hashClientToken(token: string, pepper: string) {
   if (pepper.length < 32) throw new Error("Client token pepper must contain at least 32 characters");
   return createHmac("sha256", pepper).update(token).digest("hex");
 }
+const DASHBOARD_OPERATIONS = new Set(["getMarketOverview", "getPairEvaluations", "scanOpportunities", "inspectOpportunity"]);
+
 export class ClientAuth {
   private readonly clients: ClientRecord[];
   private readonly budgets = new Map<string, { count: number; start: number }>();
@@ -33,8 +35,9 @@ export class ClientAuth {
     return result;
   }
   limit(client: ClientRecord, operation: string) {
-    // The market overview is served from a board cached for a second, so dashboards may refresh it often.
-    const limit = operation === "scanOpportunities" ? 10 : operation === "getMarketOverview" || operation === "getPairEvaluations" ? 600 : 60;
+    // Dashboards refresh these often, and all their visitors share one client: the market overview and pair view are
+    // cached for a second, and scans and inspections read only current state, polled every two seconds while shown.
+    const limit = DASHBOARD_OPERATIONS.has(operation) ? 600 : 60;
     const key = `${client.id}:${operation}`;
     let budget = this.budgets.get(key);
     if (!budget || this.now() - budget.start >= 60_000) { budget = { count: 0, start: this.now() }; this.budgets.set(key, budget); }

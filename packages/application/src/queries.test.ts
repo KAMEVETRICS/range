@@ -12,7 +12,9 @@ describe("storage query adapter", () => {
       received_timestamp: "1790164799995",
     }] }));
     const adapter = new StorageQueries(
-      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined),
+        queryLiveOpportunities: vi.fn(async () => []), getRecentOpportunity: vi.fn(async () => undefined),
+        getEvidence: vi.fn(async () => undefined), getObservationTimes: vi.fn(async () => []) },
       { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
       { query }, [],
     );
@@ -31,7 +33,9 @@ describe("storage query adapter", () => {
       underlyingId: "equity:AAPL", productType: "perpetual" }] };
     const get = vi.fn(async (key: string) => key === "market-board" ? { version: 1, expiresAt: 2, value: board } : undefined);
     const adapter = new StorageQueries(
-      { get: get as never, query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { get: get as never, query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined),
+        queryLiveOpportunities: vi.fn(async () => []), getRecentOpportunity: vi.fn(async () => undefined),
+        getEvidence: vi.fn(async () => undefined), getObservationTimes: vi.fn(async () => []) },
       { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
       { query: vi.fn(async () => ({ rows: [] })) }, [],
     );
@@ -45,7 +49,9 @@ describe("storage query adapter", () => {
   it("rejects timestamp batches above the storage query limit before issuing SQL", async () => {
     const query = vi.fn(async () => ({ rows: [] }));
     const adapter = new StorageQueries(
-      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined),
+        queryLiveOpportunities: vi.fn(async () => []), getRecentOpportunity: vi.fn(async () => undefined),
+        getEvidence: vi.fn(async () => undefined), getObservationTimes: vi.fn(async () => []) },
       { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
       { query }, [],
     );
@@ -62,7 +68,9 @@ describe("storage query adapter", () => {
     const query = vi.fn(async (statement: string) => ({ rows: statement.includes("MAX(ordinal)") ? [{ ordinal: "7" }] : [] }));
     const trace = vi.fn();
     const adapter = new StorageQueries(
-      { get, query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity },
+      { get, query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity,
+        queryLiveOpportunities: vi.fn(async () => []), getRecentOpportunity: vi.fn(async () => undefined),
+        getEvidence: vi.fn(async () => undefined), getObservationTimes: vi.fn(async () => []) },
       { getEvidence: vi.fn(async () => undefined), readPage },
       { query },
       [{ venue: "extended", capabilities: ["orderbook"], freshnessBudgetMs: 1000 }], trace,
@@ -86,7 +94,9 @@ describe("storage query adapter", () => {
   it("selects the latest instrument version before applying filters and page bounds", async () => {
     const query = vi.fn(async (_statement: string, _values?: unknown[]) => ({ rows: [] }));
     const adapter = new StorageQueries(
-      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined),
+        queryLiveOpportunities: vi.fn(async () => []), getRecentOpportunity: vi.fn(async () => undefined),
+        getEvidence: vi.fn(async () => undefined), getObservationTimes: vi.fn(async () => []) },
       { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
       { query }, [],
     );
@@ -101,7 +111,9 @@ describe("storage query adapter", () => {
   it("reads the final accepted revision from the durable authority", async () => {
     const query = vi.fn(async () => ({ rows: [{ revision: "8" }] }));
     const adapter = new StorageQueries(
-      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined) },
+      { get: vi.fn(async () => undefined), query: vi.fn(async () => []), queryOpportunities: vi.fn(async () => []), getOpportunity: vi.fn(async () => undefined),
+        queryLiveOpportunities: vi.fn(async () => []), getRecentOpportunity: vi.fn(async () => undefined),
+        getEvidence: vi.fn(async () => undefined), getObservationTimes: vi.fn(async () => []) },
       { getEvidence: vi.fn(async () => undefined), readPage: vi.fn(async () => []) },
       { query }, [],
     );

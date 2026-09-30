@@ -41,6 +41,11 @@ export interface ApplicationQueries {
   getMarketSnapshot(context: RequestContext, filter: z.infer<typeof MarketQuerySchema>): Promise<ObservationEnvelope[]>;
   scanOpportunities(context: RequestContext, filter: ScanQuery): Promise<Opportunity[]>;
   inspectOpportunity(context: RequestContext, id: string): Promise<Opportunity | undefined>;
+  /** For display, never authority: every result for an underlying that has neither expired nor ended, whatever the
+   * accepted revision. */
+  liveOpportunities(context: RequestContext, underlying: string): Promise<Opportunity[]>;
+  /** For display, never authority: a published result's latest version for a few minutes, current or not. */
+  recentOpportunity(context: RequestContext, id: string): Promise<Opportunity | undefined>;
   getEvidence(context: RequestContext, hash: string): Promise<EvidenceBundle | undefined>;
   getSourceTimestamps(context: RequestContext, eventIds: string[]): Promise<ObservationTimestamp[]>;
   getOpportunityHistory(context: RequestContext, id: string): Promise<Opportunity[]>;
@@ -56,7 +61,8 @@ export interface ApplicationQueries {
 /** Storage-backed adapter; venue configuration is a public capability manifest,
  * never connector configuration (which may contain access credentials). */
 export class StorageQueries implements ApplicationQueries {
-  constructor(private readonly current: Pick<CurrentStateStore, "get" | "query" | "queryOpportunities" | "getOpportunity">,
+  constructor(private readonly current: Pick<CurrentStateStore, "get" | "query" | "queryOpportunities" | "getOpportunity" |
+      "queryLiveOpportunities" | "getRecentOpportunity" | "getEvidence" | "getObservationTimes">,
     private readonly history: Pick<HistoryStore, "getEvidence" | "readPage">, private readonly sql: SqlClient,
     private readonly venues: Array<Pick<VenueView, "venue" | "capabilities" | "freshnessBudgetMs">>,
     private readonly trace: (entry: { trace_id: string; operation: string }) => void = () => {}) {
@@ -98,18 +104,30 @@ export class StorageQueries implements ApplicationQueries {
     this.audit(context, "storage.currentness");
     return this.current.getOpportunity(id);
   }
+  async liveOpportunities(context: RequestContext, underlying: string) {
+    this.audit(context, "storage.live-results");
+    return this.current.queryLiveOpportunities(underlying, 1000);
+  }
+  async recentOpportunity(context: RequestContext, id: string) {
+    this.audit(context, "storage.recent-result");
+    return this.current.getRecentOpportunity(id);
+  }
+  /** Evidence is content-addressed, so Redis (from publication) and history (once recorded) hold the same bundle. */
   async getEvidence(context: RequestContext, hash: string) {
     this.audit(context, "storage.evidence");
-    const evidence = await this.history.getEvidence(hash);
+    const evidence = await this.current.getEvidence(hash) ?? await this.history.getEvidence(hash);
     return evidence ? EvidenceBundleSchema.parse(evidence) : undefined;
   }
+  /** Times held in Redis since the observations arrived, then history's for the rest. */
   async getSourceTimestamps(context: RequestContext, ids: string[]) {
     this.audit(context, "storage.source-times");
     const boundedIds = z.array(z.string().max(200).regex(/^evt_[A-Za-z0-9_.:-]+$/)).max(1000).parse([...new Set(ids)]);
-    const result = await this.sql.query(`SELECT event_id, source_time, payload->>'receivedTimestamp' AS received_timestamp
-      FROM observations WHERE event_id = ANY($1::text[]) ORDER BY event_id LIMIT 1000`, [boundedIds]);
-    return result.rows.map(row => {
-      const timestamp = { eventId: row.event_id, sourceTimestampMs: new Date(row.source_time).getTime(), receivedTimestampMs: Number(row.received_timestamp) };
+    const held = await this.current.getObservationTimes(boundedIds);
+    const missing = boundedIds.filter(id => !held.some(item => item.eventId === id));
+    const recorded = missing.length ? (await this.sql.query(`SELECT event_id, source_time, payload->>'receivedTimestamp' AS received_timestamp
+      FROM observations WHERE event_id = ANY($1::text[]) ORDER BY event_id LIMIT 1000`, [missing])).rows.map(row =>
+      ({ eventId: String(row.event_id), sourceTimestampMs: new Date(row.source_time).getTime(), receivedTimestampMs: Number(row.received_timestamp) })) : [];
+    return [...held, ...recorded].map(timestamp => {
       if (!Number.isSafeInteger(timestamp.sourceTimestampMs) || timestamp.sourceTimestampMs < 0 ||
         !Number.isSafeInteger(timestamp.receivedTimestampMs) || timestamp.receivedTimestampMs < timestamp.sourceTimestampMs) {
         throw new Error("Invalid observation timestamps");

@@ -22,6 +22,10 @@ export async function startPersistentOpportunityWorker(
   const stopCurrent = await bus.subscribe("opportunity.v1", "current-state-storage", async opportunity => {
     await current.putOpportunity(opportunity);
   });
+  // A result's evidence is readable from Redis as soon as it is published, not only once history records it.
+  const stopEvidence = await bus.subscribe("evidence.bundle.v1", "current-evidence", async bundle => {
+    await current.putEvidence(bundle);
+  });
   let worker: OpportunityWorker;
   try {
     worker = await startOpportunityWorker(bus, registry, {
@@ -29,10 +33,11 @@ export async function startPersistentOpportunityWorker(
     });
   } catch (error) {
     await stopCurrent();
+    await stopEvidence();
     throw error;
   }
   return {
     worker, current,
-    async stop() { await worker.stop(); await stopCurrent(); },
+    async stop() { await worker.stop(); await stopCurrent(); await stopEvidence(); },
   };
 }

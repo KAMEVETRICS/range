@@ -114,15 +114,20 @@ async function main() {
   }, { deleteGroupOnStop: true }));
   // Batched: only each instrument's newest event is applied and stored, in parallel. One awaited Redis write per event
   // fell minutes behind whenever a burst arrived (after a worker restart, about 40,000 books).
+  // Evidence cites live books and funding by event; their times are kept here for as long as a result stays inspectable,
+  // so reading a result does not wait for history to record its sources.
+  const observationTimes = (events: ReadonlyArray<{ eventId: string; eligibility: string; sourceTimestamp: number; receivedTimestamp: number }>) =>
+    current.putObservationTimes(events.filter(event => event.eligibility === "live").map(event =>
+      ({ eventId: event.eventId, sourceTimestampMs: event.sourceTimestamp, receivedTimestampMs: event.receivedTimestamp })));
   stops.push(await bus.subscribeBatch("book.state.v1", "current-books", async events => {
     const newest = newestPerInstrument(events);
     for (const event of newest) board.applyBook(event);
-    await Promise.all(newest.map(event => storeObservation("book.state.v1", event)));
+    await Promise.all([...newest.map(event => storeObservation("book.state.v1", event)), observationTimes(events)]);
   }));
   stops.push(await bus.subscribeBatch("funding.observation.v1", "current-funding", async events => {
     const newest = newestPerInstrument(events);
     for (const event of newest) board.applyFunding(event);
-    await Promise.all(newest.map(event => storeObservation("funding.observation.v1", event)));
+    await Promise.all([...newest.map(event => storeObservation("funding.observation.v1", event)), observationTimes(events)]);
   }));
   // Connectors republish unchanged health at least every 30 s while their venue sends events, so a record lives for
   // three of those intervals: a venue reads as missing only once its feed or connector has stopped. Readers judge

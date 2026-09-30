@@ -49,6 +49,31 @@ export class ApplicationError extends Error {
 /** Refusals that mean a result's evidence is not (yet) readable from history. */
 const EVIDENCE_PENDING = new Set(["EVIDENCE_UNAVAILABLE", "SOURCE_TIMES_UNAVAILABLE"]);
 
+/** A result's pair and direction, from its quoted legs; one with no leg quoted cannot be placed. */
+function directionOf(opportunity: Opportunity): string | undefined {
+  if (!opportunity.legs.length) return undefined;
+  const legs = opportunity.legs.map(leg => `${leg.side}:${leg.instrumentId}`).sort().join(",");
+  return `${opportunity.underlyingId}|${opportunity.strategy}|${legs}`;
+}
+
+/** Each pair and direction's newest published result. */
+export function newestPerDirection(results: readonly Opportunity[]): Opportunity[] {
+  const newest = new Map<string, Opportunity>();
+  for (const result of results) {
+    const direction = directionOf(result);
+    if (!direction) continue;
+    const held = newest.get(direction);
+    if (!held || result.stateRevision > held.stateRevision ||
+        result.stateRevision === held.stateRevision && Date.parse(result.expiresAt) > Date.parse(held.expiresAt)) newest.set(direction, result);
+  }
+  return [...newest.values()];
+}
+
+/** How the worker's lifecycle ends an actionable result whose inputs changed or went stale. */
+function ended(opportunity: Opportunity): Opportunity {
+  return OpportunitySchema.parse({ ...opportunity, status: "expired", rejectionReasons: [...opportunity.rejectionReasons, "STALE_INPUT"] });
+}
+
 export class RangeApplication {
   constructor(readonly queries: ApplicationQueries, private readonly now: () => number = Date.now) {}
   private overview?: { readAtMs: number; asOfMs: number | null; rows: MarketOverviewRow[] };
@@ -234,17 +259,26 @@ export class RangeApplication {
     const quoteTimestamps = quoteTimes.map(item => ({ event_id: item.eventId, source_timestamp_ms: item.sourceTimestampMs, received_timestamp_ms: item.receivedTimestampMs }));
     return { sourceMs, evidence, quoteTimestamps, opportunity: OpportunitySchema.parse({ ...opportunity, freshness: { ...opportunity.freshness, oldestInputMs: this.now() - sourceMs } }) };
   }
-  private async current(context: RequestContext, candidate: Opportunity) {
-    const current = await this.queries.inspectOpportunity(context, candidate.opportunityId);
-    return current && current.status === "actionable" && current.stateRevision === candidate.stateRevision &&
-      current.evidenceHash === candidate.evidenceHash && this.now() < Date.parse(current.expiresAt) ? OpportunitySchema.parse(current) : undefined;
+  /**
+   * The dashboard's currentness: a result is current while it is actionable, unexpired and the newest published result
+   * for its pair and direction. Every book update advances a stock's accepted revision (about four times a second), so a
+   * result was almost never still at it once read, and the scanner could not show one. Intents keep the accepted-revision
+   * rule (queries.inspectOpportunity).
+   */
+  private async liveCurrent(context: RequestContext, candidate: Opportunity): Promise<Opportunity | undefined> {
+    if (candidate.status !== "actionable" || this.now() >= Date.parse(candidate.expiresAt)) return undefined;
+    const newest = newestPerDirection(await this.queries.liveOpportunities(context, candidate.underlyingId));
+    const current = newest.find(item => item.opportunityId === candidate.opportunityId);
+    return current?.status === "actionable" && current.evidenceHash === candidate.evidenceHash &&
+      this.now() < Date.parse(current.expiresAt) ? current : undefined;
   }
   async scanOpportunities(input: unknown, context: RequestContext) {
     const query = ScanQuerySchema.parse(input);
-    const [candidates, coverage] = await Promise.all([this.queries.scanOpportunities(context, query),
+    const [live, coverage] = await Promise.all([this.queries.liveOpportunities(context, query.underlying),
       this.pairCoverage(context, query.underlying, query.venue)]);
+    const candidates = newestPerDirection(live).filter(item => item.status === "actionable" && this.now() < Date.parse(item.expiresAt));
     const instruments = query.venue ? await this.queries.findInstruments(context, { underlying: query.underlying, venue: query.venue, limit: 100, offset: 0 }) : [];
-    const warnings: string[] = [...coverage.warnings, ...(candidates.length >= 1000 ? ["scan truncated at 1000 current candidates"] : [])];
+    const warnings: string[] = [...coverage.warnings, ...(live.length >= 1000 ? ["scan truncated at 1000 current candidates"] : [])];
     const selected = candidates.filter(item => item.underlyingId === query.underlying && (!query.strategy || item.strategy === query.strategy) &&
       (!query.min_edge_bps || new Decimal(item.netEdgeBps).gte(query.min_edge_bps)) && (!query.min_capacity_usd || new Decimal(item.capacityUsd).gte(query.min_capacity_usd)) &&
       (!query.venue || item.legs.some(leg => instruments.some(instrument => instrument.instrumentId === leg.instrumentId))));
@@ -263,18 +297,11 @@ export class RangeApplication {
       valid.push(detail);
     }
     const page = valid.slice(query.offset, query.offset + query.limit);
-    const checked: typeof page = [];
-    for (const detail of page) {
-      if (!await this.current(context, detail.opportunity)) { warnings.push("opportunity changed during read; excluded"); continue; }
-      checked.push(detail);
-    }
-    let verified = checked;
-    if (checked.length) {
-      const revision = await this.queries.getAcceptedRevision(context, query.underlying);
-      if (revision === undefined) throw new ApplicationError(503, "REVISION_UNAVAILABLE");
-      verified = checked.filter(detail => detail.opportunity.stateRevision === revision);
-      if (verified.length !== checked.length) warnings.push("opportunity changed during read; excluded");
-    }
+    // Read again after the evidence reads: a result replaced or ended meanwhile is left out.
+    const newest = page.length ? newestPerDirection(await this.queries.liveOpportunities(context, query.underlying)) : [];
+    const verified = page.filter(detail => newest.some(item => item.opportunityId === detail.opportunity.opportunityId &&
+      item.status === "actionable" && this.now() < Date.parse(item.expiresAt)));
+    if (verified.length !== page.length) warnings.push("opportunity changed during read; excluded");
     const items = verified.map(detail => detail.opportunity);
     const evidence = verified.flatMap(detail => detail.evidence.sourceEventIds);
     const times = verified.map(detail => detail.sourceMs);
@@ -286,22 +313,27 @@ export class RangeApplication {
   }
   async inspectOpportunity(input: unknown, context: RequestContext) {
     const { id } = OpportunityParamsSchema.parse(input);
-    const current = await this.queries.inspectOpportunity(context, id);
-    const history = await this.queries.getOpportunityHistory(context, id);
-    // Rejected calculations remain inspectable for research. Only the durable
-    // current-state path can supply an actionable calculation.
-    const opportunity = current ?? (history[0]?.status === "rejected" ? history[0] : undefined);
-    if (!opportunity) throw new ApplicationError(404, "OPPORTUNITY_NOT_CURRENT");
+    const [recent, history] = await Promise.all([this.queries.recentOpportunity(context, id), this.queries.getOpportunityHistory(context, id)]);
+    // A result stays inspectable for research after it stops being current: an actionable one is then shown as the
+    // worker's lifecycle ends it, expired. Only a current result is shown as actionable.
+    const found = [recent, history[0]].filter((item): item is Opportunity => item !== undefined)
+      .sort((left, right) => right.stateRevision - left.stateRevision)[0];
+    if (!found) throw new ApplicationError(404, "OPPORTUNITY_NOT_CURRENT");
+    let opportunity = found.status === "actionable" && !await this.liveCurrent(context, found) ? ended(found) : found;
     const detail = await this.details(context, opportunity);
-    if (opportunity.status === "actionable" && !await this.current(context, opportunity)) throw new ApplicationError(404, "OPPORTUNITY_NOT_CURRENT");
+    // Checked again after the evidence reads, which take time.
+    if (opportunity.status === "actionable" && !await this.liveCurrent(context, opportunity)) opportunity = ended(opportunity);
+    const shown = OpportunitySchema.parse({ ...opportunity, freshness: detail.opportunity.freshness });
+    const warnings = [...detail.evidence.warnings, ...(shown.status === "expired" && found.status === "actionable"
+      ? ["no longer current: replaced by a newer result or expired; shown for research"] : [])];
     const rejection_history = history.map(item => ({ state_revision: item.stateRevision, status: item.status === "actionable" ? "historical" : item.status, rejection_reasons: item.rejectionReasons }));
-    return responseSchemas.opportunity.parse(this.envelope(context, { opportunity: detail.opportunity, rejection_history, quote_timestamps: detail.quoteTimestamps }, detail.sourceMs, detail.evidence.sourceEventIds,
-      detail.evidence.warnings, opportunity.status === "rejected" ? "rejected" : "ok"));
+    return responseSchemas.opportunity.parse(this.envelope(context, { opportunity: shown, rejection_history, quote_timestamps: detail.quoteTimestamps }, detail.sourceMs, detail.evidence.sourceEventIds,
+      warnings, shown.status === "actionable" ? "ok" : shown.status === "rejected" ? "rejected" : "partial"));
   }
   async streamEvent(item: EventPageItem, context: RequestContext): Promise<{ event: "opportunity" | "health"; body: Envelope } | undefined> {
     if (item.event.topic === "opportunity.v1") {
       const candidate = OpportunitySchema.parse(item.event.payload);
-      const current = await this.current(context, candidate);
+      const current = await this.liveCurrent(context, candidate);
       if (!current) return { event: "opportunity", body: responseSchemas.invalidation.parse(this.envelope(context,
         { opportunity_id: candidate.opportunityId, current: false }, this.now(), [], ["historical or expired opportunity; not current"], "partial")) };
       // Reuse REST inspection, including a second currentness check after evidence reads.

@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DashboardApi, DashboardStreamEvent, Opportunity, OpportunityDetailEnvelope, OpportunityFilters, QuoteTimestamp, VenueView } from "../api/client.js";
 import { OpportunityDetail } from "../components/OpportunityDetail.js";
 import { OpportunityTable } from "../components/OpportunityTable.js";
 import { ReviewedPairs } from "../components/ReviewedPairs.js";
 import { VenueHealth } from "../components/VenueHealth.js";
 
-export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { api: DashboardApi; initialUnderlying?: string }) {
+/** Actionable results live a second or two, so the scanner refreshes itself while shown; the live stream only nudges it. */
+const SCAN_REFRESH_MS = 2_000;
+
+export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scanRefreshMs = SCAN_REFRESH_MS }: {
+  api: DashboardApi; initialUnderlying?: string; /** 0 turns the refresh off. */ scanRefreshMs?: number;
+}) {
   const [draft, setDraft] = useState({ underlying: initialUnderlying, strategy: "", minEdge: "", notional: "", maxAge: "5000" });
   const [filters, setFilters] = useState<OpportunityFilters>({ underlying: initialUnderlying, max_age_ms: 5000 });
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -14,6 +19,9 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
   const [warnings, setWarnings] = useState<string[]>([]);
   const [venueWarnings, setVenueWarnings] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
+  // A result the viewer picked stays selected after it leaves the list, and is shown as it ended; otherwise the first
+  // listed result is selected.
+  const picked = useRef(false);
   const [detail, setDetail] = useState<OpportunityDetailEnvelope>();
   const [invalidatedIds, setInvalidatedIds] = useState<Set<string>>(new Set());
   const [liveMessage, setLiveMessage] = useState("Connecting to live updates…");
@@ -26,7 +34,8 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
       setOpportunities(response.result.items);
       setQuoteTimestamps(response.result.quote_timestamps);
       setWarnings(response.warnings);
-      setSelectedId((current) => current && response.result.items.some((item) => item.opportunityId === current) ? current : response.result.items[0]?.opportunityId);
+      setSelectedId((current) => current && (picked.current || response.result.items.some((item) => item.opportunityId === current))
+        ? current : response.result.items[0]?.opportunityId);
       setError(undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Opportunity data is unavailable.");
@@ -37,19 +46,28 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
 
   useEffect(() => { void loadOpportunities(filters); }, [filters, loadOpportunities]);
   useEffect(() => {
+    if (scanRefreshMs <= 0) return;
+    const timer = setInterval(() => { if (!document.hidden) void loadOpportunities(filters); }, scanRefreshMs);
+    return () => clearInterval(timer);
+  }, [filters, loadOpportunities, scanRefreshMs]);
+  useEffect(() => {
     let active = true;
     void api.listVenues().then((response) => { if (active) { setVenues(response.result.items); setVenueWarnings(response.warnings); } })
       .catch(() => { if (active) setVenueWarnings(["Venue coverage is unavailable."]); });
     return () => { active = false; };
   }, [api]);
 
+  // The detail is read again once the selected result stops being current (it left the list or the stream invalidated
+  // it), when the server shows it as it ended.
+  const listed = opportunities.some((item) => item.opportunityId === selectedId);
+  const invalidatedSelection = selectedId !== undefined && invalidatedIds.has(selectedId);
   useEffect(() => {
-    if (!selectedId || invalidatedIds.has(selectedId)) { setDetail(undefined); return; }
+    if (!selectedId) { setDetail(undefined); return; }
     let active = true;
     void api.inspectOpportunity(selectedId).then((response) => { if (active) setDetail(response); })
       .catch(() => { if (active) setDetail(undefined); });
     return () => { active = false; };
-  }, [api, invalidatedIds, selectedId]);
+  }, [api, invalidatedSelection, listed, selectedId]);
 
   const onStreamEvent = useCallback(async (event: DashboardStreamEvent) => {
     setLiveMessage(event.message);
@@ -68,9 +86,13 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
 
   useEffect(() => api.subscribe(filters.underlying, onStreamEvent), [api, filters.underlying, onStreamEvent]);
 
-  const selected = useMemo(() => opportunities.find((item) => item.opportunityId === selectedId), [opportunities, selectedId]);
+  const selected = useMemo(() => opportunities.find((item) => item.opportunityId === selectedId) ??
+    (detail?.result.opportunity.opportunityId === selectedId ? detail?.result.opportunity : undefined), [detail, opportunities, selectedId]);
+  const select = (id: string) => { picked.current = true; setSelectedId(id); };
+  const unpick = () => { picked.current = false; setSelectedId(undefined); };
   const applyFilters = (event: FormEvent) => {
     event.preventDefault();
+    unpick();
     setFilters({
       underlying: draft.underlying.trim(),
       strategy: draft.strategy || undefined,
@@ -91,6 +113,7 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
       <p className="disclaimer"><strong>Intelligence, not guaranteed profit.</strong> Values are application-service outputs from synchronized source evidence; Range does not submit orders, sign, hold assets, or manage wallets.</p>
       <VenueHealth venues={venues} warnings={venueWarnings} />
       <ReviewedPairs api={api} onSelectUnderlying={(underlying) => {
+        unpick();
         setDraft((current) => ({ ...current, underlying }));
         setFilters((current) => ({ ...current, underlying }));
       }} />
@@ -108,9 +131,10 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA" }: { 
           </form>
           {warnings.length > 0 && <div className="inline-warning" role="status"><strong>Partial coverage</strong><p>{warnings.join(" · ")}</p></div>}
           {error && <div className="error-state" role="alert"><strong>Results unavailable</strong><p>{error}</p></div>}
-          {loading ? <p className="loading">Loading application-service results…</p> : <OpportunityTable opportunities={opportunities} quoteTimestamps={quoteTimestamps} selectedId={selectedId} invalidatedIds={invalidatedIds} onSelect={setSelectedId} />}
+          {loading ? <p className="loading">Loading application-service results…</p> : <OpportunityTable opportunities={opportunities} quoteTimestamps={quoteTimestamps} selectedId={selectedId} invalidatedIds={invalidatedIds} onSelect={select} />}
         </div>
-        {selected ? <OpportunityDetail opportunity={selected} quoteTimestamps={quoteTimestamps} detail={detail} invalidated={invalidatedIds.has(selected.opportunityId)} intentPreviewCapability={api.intentPreviewCapability} /> : <aside className="detail-panel placeholder"><p>Select a current result to inspect economics, depth, freshness, and evidence lineage.</p></aside>}
+        {selected ? <OpportunityDetail opportunity={selected} quoteTimestamps={quoteTimestamps} detail={detail}
+          invalidated={invalidatedIds.has(selected.opportunityId) || (!listed && selected.status === "actionable")} intentPreviewCapability={api.intentPreviewCapability} /> : <aside className="detail-panel placeholder"><p>Select a current result to inspect economics, depth, freshness, and evidence lineage.</p></aside>}
       </section>
     </main>
   );
