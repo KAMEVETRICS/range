@@ -644,6 +644,26 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
+  it("does not republish a rejection whose reasons are unchanged", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const published: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "rejections", async event => { published.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const rejected = () => published.filter(item => item.status === "rejected").length;
+    const first = rejected();
+    expect(first).toBeGreaterThan(0);
+
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_book_a_again"), sourceTimestamp: NOW - 20,
+      receivedTimestamp: NOW - 10, payload: { kind: "order_book", bids: [{ price: "99", quantity: "20" }], asks: [{ price: "100", quantity: "20" }],
+        capacityUsd: "2000" } } as never);
+    await worker.flush();
+    expect(rejected()).toBe(first);
+    await worker.stop();
+  });
+
   it("spends no durable revision on books and funding outside every reviewed mapping", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();

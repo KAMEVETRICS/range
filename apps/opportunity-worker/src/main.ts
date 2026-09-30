@@ -183,6 +183,11 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       }
     }
   };
+  // A reviewed pair is re-evaluated on every book update, and its rejected results mostly repeat unchanged (about 80 a
+  // second for the first ten pairs), flooding history and current state. A rejection is republished only when its
+  // reasons change, or every 30 s so readers keep a current one.
+  const REJECTION_REFRESH_MS = 30_000;
+  const lastRejection = new Map<string, { reasons: string; atMs: number }>();
   const evaluateUnlocked = async (underlyingId: string) => {
     await accepting;
     assertAuthority();
@@ -270,6 +275,13 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           }, delay);
           expiryTimers.set(versioned.opportunityId, timer);
         }
+        const directionKey = `${underlyingId}|${strategy}|${pair[buyIndex]!.instrumentId}`;
+        if (versioned.status === "rejected") {
+          const reasons = [...versioned.rejectionReasons].sort().join(",");
+          const last = lastRejection.get(directionKey);
+          if (last && last.reasons === reasons && at - last.atMs < REJECTION_REFRESH_MS) continue;
+          lastRejection.set(directionKey, { reasons, atMs: at });
+        } else lastRejection.delete(directionKey);
         await publish(versioned);
         await accepting;
         assertAuthority();
