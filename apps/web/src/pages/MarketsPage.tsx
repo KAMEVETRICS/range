@@ -7,11 +7,11 @@ type Period = "1h" | "8h" | "1d" | "apr";
 /** Bitget is the primary venue: every other venue is shown next to its spread against Bitget. */
 const PRIMARY = "bitget";
 const HOUR_MS = 3_600_000;
-const VENUE_ORDER = ["binance", "hyperliquid_hip3", "bybit", "lighter", "qfex", "aster", "pacifica", "extended", "variational", "ondo_perps"];
+const VENUE_ORDER = ["binance", "hyperliquid_hip3", "bybit", "lighter", "qfex", "aster", "pacifica", "nado", "extended", "variational", "ondo_perps"];
 const VENUES: Record<string, { label: string; mono: string }> = {
   bitget: { label: "Bitget", mono: "BG" }, binance: { label: "Binance", mono: "BN" }, hyperliquid_hip3: { label: "Hyperliquid", mono: "HL" }, extended: { label: "Extended", mono: "EX" },
   ondo_perps: { label: "Ondo", mono: "ON" }, bybit: { label: "Bybit", mono: "BY" }, aster: { label: "Aster", mono: "AS" },
-  lighter: { label: "Lighter", mono: "LI" }, qfex: { label: "QFEX", mono: "QF" }, pacifica: { label: "Pacifica", mono: "PA" }, variational: { label: "Variational", mono: "VA" },
+  lighter: { label: "Lighter", mono: "LI" }, qfex: { label: "QFEX", mono: "QF" }, nado: { label: "Nado", mono: "NA" }, pacifica: { label: "Pacifica", mono: "PA" }, variational: { label: "Variational", mono: "VA" },
 };
 const PERIODS: Array<{ id: Period; label: string }> = [{ id: "1h", label: "1H" }, { id: "8h", label: "8H" }, { id: "1d", label: "1D" }, { id: "apr", label: "APR" }];
 

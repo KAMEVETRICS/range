@@ -1,0 +1,28 @@
+{
+  "2": {
+    "product_id": 2,
+    "funding_rate_x18": "49528002044390",
+    "update_time": "1790740355",
+    "premium_x18": "-1450471997955609"
+  },
+  "112": {
+    "product_id": 112,
+    "funding_rate_x18": "-27398421696702",
+    "update_time": "1790740355"
+  },
+  "114": {
+    "product_id": 114,
+    "funding_rate_x18": "749039677072513",
+    "update_time": "1790740355"
+  },
+  "158": {
+    "product_id": 158,
+    "funding_rate_x18": "1188990239431144",
+    "update_time": "1790740355"
+  },
+  "164": {
+    "product_id": 164,
+    "funding_rate_x18": "2043609704974180",
+    "update_time": "1790740355"
+  }
+}

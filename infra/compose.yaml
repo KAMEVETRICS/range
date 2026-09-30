@@ -228,6 +228,14 @@ services:
     healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
     deploy: *bulk-connector-resources
 
+  connector-nado:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/nado/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
   opportunity-worker:
     <<: *range-service
     command: [node, --import, tsx, apps/opportunity-worker/src/service.ts]
@@ -261,7 +269,7 @@ services:
       RANGE_API_TOKEN_PEPPER: ${RANGE_API_TOKEN_PEPPER:?set RANGE_API_TOKEN_PEPPER to at least 32 characters}
       RANGE_DEMO_API_TOKEN: ${RANGE_DEMO_API_TOKEN:?set RANGE_DEMO_API_TOKEN to at least 24 characters}
       RANGE_DASHBOARD_READ_TOKEN: ${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN to at least 24 characters}
-      RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","capabilities":["orderbook","funding_current"],"freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","capabilities":["orderbook"],"freshnessBudgetMs":2000},{"venue":"extended","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"ondo_perps","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"bybit","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"aster","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"binance","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"pacifica","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"lighter","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"variational","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"qfex","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000}]'
+      RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","capabilities":["orderbook","funding_current"],"freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","capabilities":["orderbook"],"freshnessBudgetMs":2000},{"venue":"extended","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"ondo_perps","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"bybit","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"aster","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"binance","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"pacifica","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"lighter","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"variational","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"qfex","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"nado","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000}]'
       RANGE_ALLOWED_HOSTS: localhost,127.0.0.1,gateway
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       PORT: "8080"

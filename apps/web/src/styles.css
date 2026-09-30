@@ -235,6 +235,7 @@ main.markets { width: min(100%, 1720px); margin: 0 auto; padding: 22px 24px 40px
 .venue-icon[data-venue="aster"] { color: #2a1a05; background: #f4c77d; }
 .venue-icon[data-venue="lighter"] { color: #0b0b0b; background: #e5e7eb; }
 .venue-icon[data-venue="qfex"] { color: #fff; background: #ef4444; }
+.venue-icon[data-venue="nado"] { color: #fff; background: #0f766e; }
 .venue-icon[data-venue="pacifica"] { color: #051b2b; background: #56b8f5; }
 .venue-icon[data-venue="variational"] { color: #fff; background: #a78bfa; }
 .markets-table tbody th, .markets-table tbody td { padding: 15px 14px; border-right: 1px solid #141e28; border-bottom: 1px solid #141e28; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }

@@ -29,7 +29,7 @@ function retryAfterMs(header: string | null, nowMs: number): number {
 }
 
 /**
- * Unauthenticated GETs of JSON market data from one venue: a fixed origin and path allowlist, no credentials or
+ * Unauthenticated reads of JSON market data from one venue: a fixed origin and path allowlist, no credentials or
  * redirects, requests spaced apart, rate limits honored, and bounded response size. Errors carry no venue content.
  */
 export class PublicJsonClient {
@@ -42,7 +42,18 @@ export class PublicJsonClient {
     this.paths = new Set(options.paths);
   }
 
-  async get(path: string, query: Record<string, string>, signal: AbortSignal): Promise<unknown> {
+  get(path: string, query: Record<string, string>, signal: AbortSignal): Promise<unknown> {
+    const search = new URLSearchParams(query);
+    return this.request(path, `${path}${search.size ? `?${search}` : ""}`, { method: "GET", headers: { Accept: "application/json" } }, signal);
+  }
+
+  /** For venues whose public read endpoints take a JSON query body. */
+  post(path: string, body: unknown, signal: AbortSignal): Promise<unknown> {
+    return this.request(path, path, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body) }, signal);
+  }
+
+  private async request(path: string, target: string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
     if (!this.paths.has(path)) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
     const previous = this.tail;
     let release!: () => void;
@@ -55,10 +66,8 @@ export class PublicJsonClient {
         await waitForRetry(Math.min(this.nextRequestAt - now(), MAX_TIMER_MS), { signal, sleep: this.options.sleep });
       }
       this.nextRequestAt = Math.max(now(), this.nextRequestAt) + (this.options.minIntervalMs ?? 250);
-      const search = new URLSearchParams(query);
-      const response = await (this.options.fetch ?? fetch)(`${this.options.origin}${path}${search.size ? `?${search}` : ""}`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
+      const response = await (this.options.fetch ?? fetch)(`${this.options.origin}${target}`, {
+        ...init,
         credentials: "omit",
         redirect: "error",
         signal: AbortSignal.any([signal, AbortSignal.timeout(this.options.timeoutMs ?? 15_000)]),

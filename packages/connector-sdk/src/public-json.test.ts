@@ -21,6 +21,17 @@ it("reads allowed paths on its fixed origin, spacing requests apart", async () =
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
+it("posts a JSON query body to an allowed path", async () => {
+  const fetch = vi.fn(async (_url: string, _init: RequestInit) => json({ status: "success" }));
+  const client = new PublicJsonClient({ origin: "https://api.example.test", paths: ["/query"], fetch });
+
+  await expect(client.post("/query", { type: "symbols" }, new AbortController().signal)).resolves.toEqual({ status: "success" });
+  expect(fetch.mock.calls[0]![0]).toBe("https://api.example.test/query");
+  expect(fetch.mock.calls[0]![1]).toMatchObject({ method: "POST", body: "{\"type\":\"symbols\"}", credentials: "omit",
+    headers: { "Content-Type": "application/json" } });
+  await expect(client.post("/other", {}, new AbortController().signal)).rejects.toMatchObject({ code: "ADAPTER_FAILURE" });
+});
+
 it("reports rate limits with the venue's retry-after and holds later requests until then", async () => {
   let now = 1_000;
   const waits: number[] = [];
