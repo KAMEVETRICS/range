@@ -13,10 +13,10 @@ it("omits an absent underlyingId so health, book and registry records can be can
   expect(() => hashCanonical(record)).not.toThrow();
 });
 
-it("keeps books in history except display-only top-of-book snapshots", () => {
-  expect(keptInHistory({ qualityFlags: [] })).toBe(true);
-  expect(keptInHistory({ qualityFlags: ["client_receipt_timestamp"] })).toBe(true);
-  expect(keptInHistory({ qualityFlags: ["top_of_book_only", "client_receipt_timestamp"] })).toBe(false);
+it("keeps executable books in history and leaves reference-only display books out", () => {
+  expect(keptInHistory({ eligibility: "live" })).toBe(true);
+  expect(keptInHistory({ eligibility: "reference_only" })).toBe(false);
+  expect(keptInHistory({ eligibility: "stale" })).toBe(false);
 });
 
 it("keeps a present underlyingId and the calculation version on opportunity records", () => {

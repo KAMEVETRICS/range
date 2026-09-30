@@ -17,11 +17,12 @@ function underlying(event: unknown): string | undefined {
 }
 
 /**
- * Top-of-book snapshots from the bulk-read venues are display-only: they feed the market board, never opportunities or
- * evidence, and were about a quarter of stored books, so history does not keep them.
+ * History keeps executable books only. Reference-only books (every bulk-read venue, and Bitget listings outside the
+ * reviewed set) are display data: they feed the market board, never opportunities or evidence, and were most of the
+ * books written to Postgres.
  */
-export function keptInHistory(book: { readonly qualityFlags: readonly string[] }): boolean {
-  return !book.qualityFlags.includes("top_of_book_only");
+export function keptInHistory(book: { readonly eligibility: string }): boolean {
+  return book.eligibility === "live";
 }
 
 /** The record is canonically hashed, so an absent optional field is omitted rather than set to undefined. */

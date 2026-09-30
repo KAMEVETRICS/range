@@ -19,7 +19,7 @@ On the VPS the dashboard is served at `https://range.datatides.xyz` by the host'
 
 ## Reference venues on the Markets page
 
-The Markets page compares Bitget with every other venue by ticker. Besides the Bitget, Hyperliquid, Extended, and Ondo Perps connectors, eight reference-only connectors read public market data in bulk, one top-of-book level per market and funding, and never feed opportunities. Their books are not kept in Postgres history (display only); their funding is:
+The Markets page compares Bitget with every other venue by ticker. Besides the Bitget, Hyperliquid, Extended, and Ondo Perps connectors, eight reference-only connectors read public market data in bulk, one top-of-book level per market and funding, and never feed opportunities. Postgres history keeps executable (`live`) books only, so their books, and Bitget's outside the reviewed set, are not stored; funding is:
 
 | Connector | Source | Cadence | Stock listings |
 | --- | --- | --- | --- |
