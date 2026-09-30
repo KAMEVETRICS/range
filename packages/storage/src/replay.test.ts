@@ -69,7 +69,8 @@ describe("deterministic replay", () => {
     const second = await new ReplayRunner(testPolicy).run(replayFixture(), "calc.v1");
     expect(second.opportunities).toEqual(first.opportunities);
     expect(second.evidence.map(item => item.evidenceHash)).toEqual(first.evidence.map(item => item.evidenceHash));
-    expect(first.evidence.length).toBe(2);
+    // $100 fills none of the fixture's prices exactly; every leg still quotes, so each result carries evidence.
+    expect(first.evidence.length).toBe(4);
     // The reviewed pair is evaluated on its merits, not rejected as an unknown equivalence.
     expect(first.opportunities).toHaveLength(4);
     expect(first.opportunities.some(item => item.rejectionReasons.includes("UNKNOWN_INSTRUMENT_EQUIVALENCE"))).toBe(false);
@@ -83,7 +84,7 @@ describe("deterministic replay", () => {
     const result = await new ReplayRunner(testPolicy).run(fixture, "calc.v1");
     expect(result.drift).toHaveLength(1);
     expect(result.drift[0]?.expected).toEqual([`sha256:${"0".repeat(64)}`]);
-    expect(result.drift[0]?.actual).toHaveLength(2);
+    expect(result.drift[0]?.actual).toHaveLength(4);
   });
 
   it("rejects time regression instead of changing the recorded acceptance order", async () => {
@@ -116,8 +117,9 @@ describe("deterministic replay", () => {
     const together = await new ReplayRunner(testPolicy).run([...original, ...other, checkpoint], "calc.v1");
     const expiry = (opportunities: typeof together.opportunities) => Date.parse(opportunities.find(
       item => item.underlyingId === "equity:OTHER" && item.strategy === "perp_spread")!.expiresAt);
-    expect(expiry(alone.opportunities)).toBe(at + 10 + 25 + 2_000);
-    expect(expiry(together.opportunities)).toBe(at + 10 + 25 + 2_000);
+    // A quoted opportunity lives until its oldest book is 2 s old; these books were sourced at `at`.
+    expect(expiry(alone.opportunities)).toBe(at + 2_000);
+    expect(expiry(together.opportunities)).toBe(at + 2_000);
   });
 
   it("advances due timers to the --to bound without flushing future work", async () => {
@@ -127,6 +129,6 @@ describe("deterministic replay", () => {
     const full = await new ReplayRunner(testPolicy).run(events, "calc.v1");
     const bounded = await new ReplayRunner(testPolicy).run(events, "calc.v1", { toMs: at + 50 });
     expect(bounded.opportunities).toEqual(full.opportunities);
-    expect(Date.parse(bounded.opportunities.find(item => item.strategy === "perp_spread")!.expiresAt)).toBe(at + 25 + 2_000);
+    expect(Date.parse(bounded.opportunities.find(item => item.strategy === "perp_spread")!.expiresAt)).toBe(at - 10 + 2_000);
   });
 });

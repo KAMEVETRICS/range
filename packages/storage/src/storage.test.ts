@@ -311,6 +311,22 @@ describe("history retention", () => {
     await pool.end();
   });
 
+  it("writes a batch's observation rows in one statement", async () => {
+    const { pool, history, ids } = await store();
+    const statements: string[] = [];
+    const connect = pool.connect.bind(pool);
+    vi.spyOn(pool, "connect").mockImplementation(async () => {
+      const client = await connect();
+      const query = client.query.bind(client);
+      client.query = ((sql: string, values?: unknown[]) => { statements.push(sql); return query(sql, values); }) as typeof client.query;
+      return client;
+    });
+    await history.appendMany([1, 2, 3].map(index => book(`evt_book_${index}`, now - index)));
+    expect(await ids("observations")).toEqual(["evt_book_1", "evt_book_2", "evt_book_3"]);
+    expect(statements.filter(sql => sql.includes("INSERT INTO observations"))).toHaveLength(1);
+    await pool.end();
+  });
+
   it("rejects an invalid cutoff or batch bound", async () => {
     const { pool, history } = await store();
     await expect(history.pruneObservations(Number.NaN)).rejects.toThrow(/cutoff/i);

@@ -68,6 +68,17 @@ function isRepeatedObservation(stored: unknown, incoming: StoredEvent): boolean 
   return before !== undefined && before === venueData(incoming.payload);
 }
 
+/** A book or funding observation's time-series row. event_log.record already holds the whole observation; this row
+ * keeps only what its readers use, the receive time, so a book is stored once. */
+function observationRow(event: StoredEvent): unknown[] | undefined {
+  const payload = event.payload;
+  if (event.topic !== "instrument.registry.v1" && "sourceTimestamp" in payload && "instrumentId" in payload) {
+    return [new Date(payload.sourceTimestamp), event.eventId, payload.instrumentId, payload.venue,
+      JSON.stringify({ receivedTimestamp: payload.receivedTimestamp })];
+  }
+  return undefined;
+}
+
 export class HistoryStore {
   constructor(private readonly pool: SqlPool) {}
 
@@ -133,13 +144,26 @@ export class HistoryStore {
           fresh.flatMap(({ event, contentHash }, row) => [last - fresh.length + 1 + row, event.eventId, event.topic,
             event.underlyingId ?? null, event.acceptedAtMs, event.archiveId, event.calculationVersion ?? null, contentHash, JSON.stringify(event)]));
         const written = new Set(inserted.rows.map(row => String(row.event_id)));
+        // Observations are most of the volume, so their rows go in one statement per batch: one round trip each held
+        // the book writer below the rate books arrive.
+        const observations: unknown[][] = [];
         for (const { event, contentHash } of fresh) {
-          if (written.has(event.eventId)) { await this.materialize(client, event); continue; }
+          if (written.has(event.eventId)) {
+            const row = observationRow(event);
+            if (row) observations.push(row);
+            else await this.materialize(client, event);
+            continue;
+          }
           // A concurrent appender committed this eventId after the check above; accept only an equivalent record.
           const raced = await client.query("SELECT content_hash, record FROM event_log WHERE event_id = $1", [event.eventId]);
           if (raced.rows[0]?.content_hash !== contentHash && !isRepeatedObservation(raced.rows[0]?.record, event)) {
             throw new Error("Event is immutable");
           }
+        }
+        if (observations.length) {
+          await client.query(`INSERT INTO observations(source_time, event_id, instrument_id, venue, payload)
+            VALUES ${observations.map((_, row) => `(${Array.from({ length: 5 }, (_, column) => `$${row * 5 + column + 1}`).join(",")})`).join(", ")}
+            ON CONFLICT DO NOTHING`, observations.flat());
         }
       }
       await client.query("COMMIT");
@@ -195,12 +219,6 @@ export class HistoryStore {
       const instrument = payload.instrument;
       await sql.query(`INSERT INTO instruments(instrument_id, metadata_version, underlying_id, event_id, payload)
         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [instrument.instrumentId, instrument.metadataVersion, instrument.underlyingId, event.eventId, JSON.stringify(instrument)]);
-    } else if ("sourceTimestamp" in payload && "instrumentId" in payload) {
-      // event_log.record already holds the whole observation. This time-series row keeps only what its readers use,
-      // the receive time, so a book is stored once.
-      await sql.query(`INSERT INTO observations(source_time, event_id, instrument_id, venue, payload)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [new Date(payload.sourceTimestamp), event.eventId, payload.instrumentId, payload.venue,
-        JSON.stringify({ receivedTimestamp: payload.receivedTimestamp })]);
     } else if (event.topic === "evidence.bundle.v1" && "sourceEventIds" in payload) {
       if (payload.calculationVersion !== event.calculationVersion) throw new Error("Evidence calculation version mismatch");
       await sql.query(`INSERT INTO evidence(evidence_hash, calculation_version, archive_id, event_id, payload)
