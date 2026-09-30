@@ -729,19 +729,25 @@ describe("opportunity worker", () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
     const published: Opportunity[] = [];
+    const evidence: string[] = [];
     await bus.subscribe("opportunity.v1", "rejections", async event => { published.push(event); });
+    await bus.subscribe("evidence.bundle.v1", "rejection-evidence", async event => { evidence.push(event.evidenceHash); });
     const worker = await startOpportunityWorker(bus, registry, policy);
     await publishEligibleInputs(bus);
     await worker.flush();
     const rejected = () => published.filter(item => item.status === "rejected").length;
     const first = rejected();
     expect(first).toBeGreaterThan(0);
+    // Each published result brings its own evidence, published first.
+    expect(evidence).toEqual(published.map(item => item.evidenceHash));
 
     await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_book_a_again"), sourceTimestamp: NOW - 20,
       receivedTimestamp: NOW - 10, payload: { kind: "order_book", bids: [{ price: "99", quantity: "20" }], asks: [{ price: "100", quantity: "20" }],
         capacityUsd: "2000" } } as never);
     await worker.flush();
     expect(rejected()).toBe(first);
+    // A throttled rejection's evidence would be cited by nothing, so none is published: still one bundle per result.
+    expect(evidence).toEqual(published.filter(item => item.status !== "expired").map(item => item.evidenceHash));
     await worker.stop();
   });
 

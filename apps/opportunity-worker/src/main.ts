@@ -276,11 +276,36 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           legs,
         };
         const { opportunity, evidence } = evaluateOpportunityWithEvidence(input);
-        if (evidence) await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
         await accepting;
         assertAuthority();
         if (revisionOf(underlyingId) !== generation) return;
         const versioned: Opportunity = { ...opportunity, stateRevision: generation };
+        const directionKey = `${underlyingId}|${strategy}|${pair[buyIndex]!.instrumentId}`;
+        const side = (instrument: typeof a) => ({ instrumentId: instrument.instrumentId, venue: instrument.venue,
+          venueSymbol: instrument.venueSymbol, averagePrice: legs.find(leg => leg.instrumentId === instrument.instrumentId)?.quote?.averagePrice ?? null });
+        latestEvaluations.set(directionKey, {
+          underlyingId, strategy, buy: side(pair[buyIndex]!), sell: side(pair[1 - buyIndex]!), status: versioned.status,
+          grossSpreadBps: versioned.grossSpreadBps, expectedFundingBps: versioned.expectedFundingBps,
+          costsBps: [versioned.tradingFeesBps, versioned.slippageBps, versioned.financingBps, versioned.gasAndTransferBps,
+            versioned.fxConversionBps, versioned.uncertaintyBufferBps].reduce((sum, value) => sum.plus(value), new Decimal(0)).toFixed(),
+          netEdgeBps: versioned.netEdgeBps, capacityUsd: versioned.capacityUsd, requestedNotionalUsd: policy.requestedNotionalUsd,
+          rejectionReasons: [...versioned.rejectionReasons], evaluatedAtMs: at,
+        });
+        const reasons = [...versioned.rejectionReasons].sort().join(",");
+        if (versioned.status === "rejected") {
+          const last = lastRejection.get(directionKey);
+          if (last && last.reasons === reasons && at - last.atMs < REJECTION_REFRESH_MS) continue;
+        }
+        // Evidence goes out only with a result that is published: nothing cites a throttled rejection's evidence, and
+        // publishing every evaluation's (about 175 bundles a second once quotes filled) left history hours behind.
+        if (evidence) {
+          await bus.publish("evidence.bundle.v1", opportunity.underlyingId, evidence);
+          await accepting;
+          assertAuthority();
+          if (revisionOf(underlyingId) !== generation) return;
+        }
+        if (versioned.status === "rejected") lastRejection.set(directionKey, { reasons, atMs: at });
+        else lastRejection.delete(directionKey);
         if (versioned.status === "actionable") {
           const lifecycle = activeLifecycle(versioned);
           active.set(versioned.opportunityId, lifecycle);
@@ -295,23 +320,6 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           }, delay);
           expiryTimers.set(versioned.opportunityId, timer);
         }
-        const directionKey = `${underlyingId}|${strategy}|${pair[buyIndex]!.instrumentId}`;
-        const side = (instrument: typeof a) => ({ instrumentId: instrument.instrumentId, venue: instrument.venue,
-          venueSymbol: instrument.venueSymbol, averagePrice: legs.find(leg => leg.instrumentId === instrument.instrumentId)?.quote?.averagePrice ?? null });
-        latestEvaluations.set(directionKey, {
-          underlyingId, strategy, buy: side(pair[buyIndex]!), sell: side(pair[1 - buyIndex]!), status: versioned.status,
-          grossSpreadBps: versioned.grossSpreadBps, expectedFundingBps: versioned.expectedFundingBps,
-          costsBps: [versioned.tradingFeesBps, versioned.slippageBps, versioned.financingBps, versioned.gasAndTransferBps,
-            versioned.fxConversionBps, versioned.uncertaintyBufferBps].reduce((sum, value) => sum.plus(value), new Decimal(0)).toFixed(),
-          netEdgeBps: versioned.netEdgeBps, capacityUsd: versioned.capacityUsd, requestedNotionalUsd: policy.requestedNotionalUsd,
-          rejectionReasons: [...versioned.rejectionReasons], evaluatedAtMs: at,
-        });
-        if (versioned.status === "rejected") {
-          const reasons = [...versioned.rejectionReasons].sort().join(",");
-          const last = lastRejection.get(directionKey);
-          if (last && last.reasons === reasons && at - last.atMs < REJECTION_REFRESH_MS) continue;
-          lastRejection.set(directionKey, { reasons, atMs: at });
-        } else lastRejection.delete(directionKey);
         await publish(versioned);
         await accepting;
         assertAuthority();
