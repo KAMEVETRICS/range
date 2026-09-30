@@ -3,31 +3,31 @@ import type { DashboardApi, MarketCell, MarketFunding, MarketRow } from "../api/
 
 type View = "funding" | "price";
 type Period = "1h" | "8h" | "1d" | "apr";
-type Sort = "gap" | "symbol";
 
+/** Bitget is the primary venue: every other venue is shown next to its spread against Bitget. */
+const PRIMARY = "bitget";
 const HOUR_MS = 3_600_000;
-const COLUMN_ORDER = ["bitget-perp", "bitget-spot", "hyperliquid_hip3-perp", "extended-perp", "ondo_perps-perp"];
-const COLUMN_LABELS: Record<string, string> = {
-  "bitget-perp": "Bitget perp", "bitget-spot": "Bitget spot", "hyperliquid_hip3-perp": "Hyperliquid",
-  "extended-perp": "Extended", "ondo_perps-perp": "Ondo",
+const VENUE_ORDER = ["hyperliquid_hip3", "extended", "ondo_perps", "bybit", "aster", "lighter", "pacifica", "variational"];
+const VENUES: Record<string, { label: string; mono: string }> = {
+  bitget: { label: "Bitget", mono: "BG" }, hyperliquid_hip3: { label: "Hyperliquid", mono: "HL" }, extended: { label: "Extended", mono: "EX" },
+  ondo_perps: { label: "Ondo", mono: "ON" }, bybit: { label: "Bybit", mono: "BY" }, aster: { label: "Aster", mono: "AS" },
+  lighter: { label: "Lighter", mono: "LI" }, pacifica: { label: "Pacifica", mono: "PA" }, variational: { label: "Variational", mono: "VA" },
 };
-const PERIODS: Array<{ id: Period; label: string }> = [{ id: "1h", label: "1h" }, { id: "8h", label: "8h" }, { id: "1d", label: "1d" }, { id: "apr", label: "APR" }];
-/** Multiplies an 8-hour rate or gap into the chosen period. */
-const PERIOD_FROM_8H: Record<Period, number> = { "1h": 1 / 8, "8h": 1, "1d": 3, apr: 3 * 365 };
-const PERIOD_DIGITS: Record<Period, number> = { "1h": 4, "8h": 4, "1d": 3, apr: 2 };
+const PERIODS: Array<{ id: Period; label: string }> = [{ id: "1h", label: "1H" }, { id: "8h", label: "8H" }, { id: "1d", label: "1D" }, { id: "apr", label: "APR" }];
 
-const columnKey = (cell: Pick<MarketCell, "venue" | "market">) => `${cell.venue}-${cell.market}`;
-const percent = (value: number, digits: number) => `${value.toFixed(digits)}%`;
+const venueInfo = (venue: string) => VENUES[venue] ?? { label: venue.replaceAll("_", " "), mono: venue.slice(0, 2).toUpperCase() };
 
-function fundingIn(funding: MarketFunding, period: Period): number {
-  return period === "1h" ? funding.rate_1h_pct : period === "8h" ? funding.rate_8h_pct
-    : period === "1d" ? funding.rate_1h_pct * 24 : funding.apr_pct;
+/** A percentage with about four significant digits and no trailing zeros, as funding tables show them. */
+export function formatPercent(value: number): string {
+  if (value === 0) return "0%";
+  const decimals = Math.min(8, Math.max(2, 3 - Math.floor(Math.log10(Math.abs(value)))));
+  const text = value.toFixed(decimals).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return `${text}%`;
 }
 
-function formatPrice(value: string): string {
-  const number = Number(value);
-  const digits = Math.abs(number) >= 100 ? 2 : Math.abs(number) >= 1 ? 3 : 5;
-  return number.toFixed(digits);
+function formatPrice(value: number): string {
+  const abs = Math.abs(value);
+  return value.toFixed(abs >= 100 ? 2 : abs >= 1 ? 3 : 5);
 }
 
 function formatAge(ms: number): string {
@@ -36,8 +36,54 @@ function formatAge(ms: number): string {
   return `${Math.floor(ms / HOUR_MS)} h ${Math.round((ms % HOUR_MS) / 60_000)} min`;
 }
 
-function formatInterval(ms: number): string {
-  return ms % HOUR_MS === 0 ? `${ms / HOUR_MS} h` : `${Math.round(ms / 60_000)} min`;
+const formatInterval = (ms: number) => ms % HOUR_MS === 0 ? `${ms / HOUR_MS} h` : `${Math.round(ms / 60_000)} min`;
+
+function fundingIn(funding: MarketFunding, period: Period): number {
+  return period === "1h" ? funding.rate_1h_pct : period === "8h" ? funding.rate_8h_pct
+    : period === "1d" ? funding.rate_1h_pct * 24 : funding.apr_pct;
+}
+
+const isLive = (cell: MarketCell, view: View) => view === "funding" ? cell.funding?.live === true : cell.book_live;
+
+/** The market a column shows: perpetuals first (only they fund), then spot for prices; live data before stale. */
+function pick(cells: readonly MarketCell[], view: View): MarketCell | undefined {
+  const perps = cells.filter((cell) => cell.market === "perp");
+  const pool = view === "funding" ? perps : [...perps, ...cells.filter((cell) => cell.market !== "perp")];
+  return pool.find((cell) => isLive(cell, view)) ?? pool[0];
+}
+
+function valueOf(cell: MarketCell | undefined, view: View, period: Period): number | undefined {
+  if (!cell) return undefined;
+  if (view === "funding") return cell.funding ? fundingIn(cell.funding, period) : undefined;
+  return cell.mid === null ? undefined : Number(cell.mid);
+}
+
+interface Column { venue: string; cells: MarketCell[]; shown?: MarketCell; value?: number; live: boolean; spread?: number }
+interface TableRow { ticker: string; primary: Column; others: Map<string, Column>; bestSpread?: number }
+
+function buildRow(row: MarketRow, venues: readonly string[], view: View, period: Period): TableRow {
+  const column = (venue: string): Column => {
+    const cells = row.cells.filter((cell) => cell.venue === venue);
+    const shown = pick(cells, view);
+    return { venue, cells, shown, value: valueOf(shown, view, period), live: shown ? isLive(shown, view) : false };
+  };
+  const primary = column(PRIMARY);
+  const others = new Map(venues.map((venue) => {
+    const other = column(venue);
+    // Spreads use live values only: Bitget minus the venue (funding), or Bitget's premium over the venue (price).
+    if (primary.live && other.live && primary.value !== undefined && other.value !== undefined) {
+      other.spread = view === "funding" ? primary.value - other.value : (primary.value / other.value - 1) * 100;
+    }
+    return [venue, other] as const;
+  }));
+  const spreads = [...others.values()].flatMap((item) => item.spread === undefined ? [] : [Math.abs(item.spread)]);
+  return { ticker: row.ticker, primary, others, ...(spreads.length ? { bestSpread: Math.max(...spreads) } : {}) };
+}
+
+function tickerColor(ticker: string): string {
+  let hash = 0;
+  for (const char of ticker) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return `hsl(${hash % 360} 55% 42%)`;
 }
 
 function CellDetails({ cells, now }: { cells: MarketCell[]; now: number }) {
@@ -50,8 +96,8 @@ function CellDetails({ cells, now }: { cells: MarketCell[]; now: number }) {
           {cell.book_age_ms !== null && <dd>{`Book ${formatAge(cell.book_age_ms)} old${cell.book_live ? "" : " (stale)"}`}</dd>}
           {cell.funding ? <>
             <dd>{`Funding every ${formatInterval(cell.funding.interval_ms)}`}</dd>
-            <dd>{`Rate ${percent(Number(cell.funding.rate) * 100, 5)} per interval (${cell.funding.rate_type})`}</dd>
-            <dd>{`1h ${percent(cell.funding.rate_1h_pct, 4)} · 8h ${percent(cell.funding.rate_8h_pct, 4)} · 1d ${percent(cell.funding.rate_1h_pct * 24, 3)} · APR ${percent(cell.funding.apr_pct, 2)}`}</dd>
+            <dd>{`Rate ${formatPercent(Number(cell.funding.rate) * 100)} per interval (${cell.funding.rate_type})`}</dd>
+            <dd>{`1H ${formatPercent(cell.funding.rate_1h_pct)} · 8H ${formatPercent(cell.funding.rate_8h_pct)} · 1D ${formatPercent(cell.funding.rate_1h_pct * 24)} · APR ${formatPercent(cell.funding.apr_pct)}`}</dd>
             <dd>{`Next settlement in ${formatAge(Math.max(0, cell.funding.next_settlement_ms - now))}`}</dd>
             <dd>{`Updated ${formatAge(cell.funding.age_ms)} ago${cell.funding.live ? "" : " (stale)"}`}</dd>
             {cell.funding.flags.length > 0 && <dd className="flags">{cell.funding.flags.join(", ").replaceAll("_", " ")}</dd>}
@@ -62,31 +108,26 @@ function CellDetails({ cells, now }: { cells: MarketCell[]; now: number }) {
   );
 }
 
-function MarketCellView({ row, cells, view, period, now, columnId, label }: { row: MarketRow; cells: MarketCell[]; view: View; period: Period; now: number; columnId: string; label: string }) {
-  if (!cells.length) return <td className="market-cell empty" data-testid={`cell-${columnId}`} data-label={label}>—</td>;
-  const marked = view === "funding"
-    ? [row.lowest_funding_instrument_id, row.highest_funding_instrument_id] : [row.cheapest_instrument_id, row.richest_instrument_id];
-  const primary = cells.find((cell) => marked.includes(cell.instrument_id))
-    ?? cells.find((cell) => view === "funding" ? cell.funding?.live : cell.book_live) ?? cells[0]!;
-  let value = "—";
-  if (view === "funding" && primary.funding) value = percent(fundingIn(primary.funding, period), PERIOD_DIGITS[period]);
-  if (view === "price" && primary.mid) value = formatPrice(primary.mid);
-  const badge = view === "funding"
-    ? primary.instrument_id === row.lowest_funding_instrument_id ? "Long" : primary.instrument_id === row.highest_funding_instrument_id ? "Short" : undefined
-    : primary.instrument_id === row.cheapest_instrument_id ? "Buy" : primary.instrument_id === row.richest_instrument_id ? "Sell" : undefined;
-  const classes = ["market-cell"];
-  if (!primary.book_live) classes.push("stale-book");
-  if (primary.funding && !primary.funding.live) classes.push("stale-funding");
-  if (badge) classes.push(badge === "Long" || badge === "Buy" ? "low-side" : "high-side");
+function ValueCell({ column, view, now, testId }: { column: Column; view: View; now: number; testId: string }) {
+  if (column.value === undefined) return <td className="value-cell missing" data-testid={testId}>-</td>;
+  const text = view === "funding" ? formatPercent(column.value) : formatPrice(column.value);
+  const sign = view === "funding" ? (column.value > 0 ? "positive" : column.value < 0 ? "negative" : "zero") : "neutral";
   return (
-    <td className={classes.join(" ")} data-testid={`cell-${columnId}`} data-label={label} tabIndex={0}>
-      <span className="value">{value}</span>
-      {badge && <span className="side-badge">{badge}</span>}
-      {cells.length > 1 && <span className="more">{`+${cells.length - 1}`}</span>}
-      <CellDetails cells={cells} now={now} />
+    <td className={`value-cell ${sign}${column.live ? "" : " stale"}`} data-testid={testId} tabIndex={0}>
+      <span className="value">{text}</span>
+      {column.cells.length > 1 && <span className="more">{`+${column.cells.length - 1}`}</span>}
+      <CellDetails cells={column.cells} now={now} />
     </td>
   );
 }
+
+function SpreadCell({ spread, testId }: { spread?: number; testId: string }) {
+  if (spread === undefined) return <td className="spread-cell missing" data-testid={testId}>-</td>;
+  const sign = spread > 0 ? "positive" : spread < 0 ? "negative" : "zero";
+  return <td className={`spread-cell ${sign}`} data-testid={testId}>{formatPercent(spread)}</td>;
+}
+
+const VenueIcon = ({ venue }: { venue: string }) => <span className="venue-icon" data-venue={venue} data-mono={venueInfo(venue).mono} aria-hidden="true" />;
 
 export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: DashboardApi; now?: () => number; refreshMs?: number }) {
   const [rows, setRows] = useState<MarketRow[]>();
@@ -94,9 +135,10 @@ export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: D
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string>();
   const [view, setView] = useState<View>("funding");
-  const [period, setPeriod] = useState<Period>("8h");
-  const [sort, setSort] = useState<Sort>("gap");
+  const [period, setPeriod] = useState<Period>("1h");
+  const [sort, setSort] = useState("spread");
   const [search, setSearch] = useState("");
+  const [arbOnly, setArbOnly] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -116,50 +158,53 @@ export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: D
     return () => clearInterval(timer);
   }, [load, refreshMs]);
 
-  const columns = useMemo(() => {
-    const present = new Set((rows ?? []).flatMap((row) => row.cells.map(columnKey)));
-    return [...COLUMN_ORDER.filter((key) => present.has(key)), ...[...present].filter((key) => !COLUMN_ORDER.includes(key)).sort()];
+  const venues = useMemo(() => {
+    const present = new Set((rows ?? []).flatMap((row) => row.cells.map((cell) => cell.venue)));
+    present.delete(PRIMARY);
+    return [...VENUE_ORDER.filter((venue) => present.has(venue)), ...[...present].filter((venue) => !VENUE_ORDER.includes(venue)).sort()];
   }, [rows]);
 
-  const gapOf = useCallback((row: MarketRow) => view === "funding"
-    ? row.funding_gap_8h_pct === null ? null : row.funding_gap_8h_pct * PERIOD_FROM_8H[period]
-    : row.price_gap_pct, [period, view]);
-
-  const visible = useMemo(() => {
+  const table = useMemo(() => {
     const query = search.trim().toUpperCase();
-    const filtered = (rows ?? []).filter((row) => !query || row.ticker.includes(query));
-    return [...filtered].sort((a, b) => {
-      if (sort === "symbol") return a.ticker.localeCompare(b.ticker);
-      const gapA = gapOf(a), gapB = gapOf(b);
-      if (gapA === null || gapB === null) return gapA === gapB ? a.ticker.localeCompare(b.ticker) : gapA === null ? 1 : -1;
-      return gapB - gapA || a.ticker.localeCompare(b.ticker);
+    const built = (rows ?? []).filter((row) => !query || row.ticker.includes(query))
+      .map((row) => buildRow(row, venues, view, period))
+      .filter((row) => !arbOnly || row.bestSpread !== undefined);
+    const key = (row: TableRow): number | undefined => sort === "spread" ? row.bestSpread
+      : sort === `venue:${PRIMARY}` ? row.primary.value
+      : sort.startsWith("venue:") ? row.others.get(sort.slice(6))?.value
+      : sort.startsWith("spread:") ? row.others.get(sort.slice(7))?.spread : undefined;
+    return built.sort((a, b) => {
+      if (sort === "market") return a.ticker.localeCompare(b.ticker);
+      const ka = key(a), kb = key(b);
+      if (ka === undefined || kb === undefined) return ka === kb ? a.ticker.localeCompare(b.ticker) : ka === undefined ? 1 : -1;
+      return kb - ka || a.ticker.localeCompare(b.ticker);
     });
-  }, [gapOf, rows, search, sort]);
+  }, [arbOnly, period, rows, search, sort, venues, view]);
+
+  const header = (id: string, label: string, icons: string[], className = "") => (
+    <th scope="col" key={id} className={className} aria-sort={sort === id ? (id === "market" ? "ascending" : "descending") : "none"}>
+      <button type="button" className="sort-button" onClick={() => setSort(id)}>
+        {icons.length > 0 && <span className="icons">{icons.map((venue) => <VenueIcon key={venue} venue={venue} />)}</span>}
+        <span className="label">{label}</span>
+      </button>
+    </th>
+  );
 
   const nowMs = now();
   return (
-    <main className={`markets view-${view}`}>
-      <header className="app-header">
-        <a className="brand" href="#markets" aria-label="Range markets"><span className="brand-mark">R</span><span>Range</span></a>
-        <div><p className="eyebrow">Cross-venue stock perpetuals</p><h1>Markets</h1></div>
-        <div className="live-state"><span aria-hidden="true" />
-          <p aria-live="polite">{boardAsOfMs === null ? "Waiting for market data…" : `Updated ${formatAge(nowMs - boardAsOfMs)} ago · refreshes every ${refreshMs / 1_000} s`}</p>
+    <main className="markets">
+      <header className="markets-header">
+        <div>
+          <h1>Markets</h1>
+          <p>{view === "funding" ? "Funding rate comparisons across venues, with Bitget as the primary venue." : "Price comparisons across venues, with Bitget as the primary venue."}</p>
         </div>
-      </header>
-
-      <p className="disclaimer"><strong>Reference only.</strong> Prices and funding for stocks that trade on two or more venues, matched by ticker, not reviewed: contract terms can differ between venues. Range does not trade, and this is not investment advice.</p>
-
-      <section className="results-panel markets-panel" aria-labelledby="markets-heading">
-        <div className="section-heading">
-          <div><p className="eyebrow">{view === "funding" ? "Funding arbitrage" : "Price gaps"}</p><h2 id="markets-heading">{visible.length} stocks on 2+ venues</h2></div>
-          <p className="coverage-note">{view === "funding"
-            ? "Long where funding is lowest, short where it is highest; the gap is highest minus lowest for the period."
-            : "Buy the cheapest mid price, sell the richest; the gap is richest over cheapest."}</p>
-        </div>
-        <div className="market-controls">
-          <label className="market-search"><span className="visually-hidden">Search symbol</span>
-            <input type="search" aria-label="Search symbol" placeholder="Search symbol…" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className="markets-toolbar">
+          <label className="search"><span className="visually-hidden">Search</span>
+            <input type="search" aria-label="Search" placeholder="Search" value={search} onChange={(event) => setSearch(event.target.value)} />
           </label>
+          <button type="button" role="switch" aria-checked={arbOnly} aria-label="Arb only" className="arb-switch" onClick={() => setArbOnly(!arbOnly)}>
+            <span aria-hidden="true">Arb only</span><span className="track" aria-hidden="true"><span className="thumb" /></span>
+          </button>
           <div className="segmented" role="group" aria-label="View">
             <button type="button" aria-pressed={view === "funding"} onClick={() => setView("funding")}>Funding</button>
             <button type="button" aria-pressed={view === "price"} onClick={() => setView("price")}>Price</button>
@@ -168,39 +213,50 @@ export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: D
             {PERIODS.map((item) => <button key={item.id} type="button" aria-pressed={period === item.id} onClick={() => setPeriod(item.id)}>{item.label}</button>)}
           </div>}
         </div>
-        {warnings.length > 0 && <div className="inline-warning" role="status"><strong>Partial data</strong><p>{warnings.join(" · ")}</p></div>}
-        {error && <div className="error-state" role="alert"><strong>Refresh failed</strong><p>{`${error}. Showing the last data received.`}</p></div>}
-        {rows === undefined ? <p className="loading">Loading markets…</p> : (
-          <div className="table-shell">
-            <table className="markets-table">
-              <thead>
-                <tr>
-                  <th scope="col" aria-sort={sort === "symbol" ? "ascending" : "none"}>
-                    <button type="button" className="sort-button" onClick={() => setSort("symbol")}>Symbol</button>
+      </header>
+
+      <p className="markets-note">
+        <span className="live-dot" aria-hidden="true" />
+        {boardAsOfMs === null ? "Waiting for market data… " : `Updated ${formatAge(nowMs - boardAsOfMs)} ago. `}
+        Matched by ticker, not reviewed: contract terms can differ between venues. Reference only; Range does not trade.
+        {view === "funding" ? " Spread = Bitget minus the venue for the period." : " Spread = Bitget's premium over the venue."}
+      </p>
+      {warnings.length > 0 && <div className="markets-warning" role="status">{warnings.join(" · ")}</div>}
+      {error && <div className="markets-error" role="alert"><strong>Refresh failed</strong>{` (${error}). Showing the last data received.`}</div>}
+
+      {rows === undefined ? <p className="markets-loading">Loading markets…</p> : (
+        <div className="markets-table-shell">
+          <table className="markets-table">
+            <thead>
+              <tr>
+                {header("market", "Market", [], "market-col")}
+                {header(`venue:${PRIMARY}`, venueInfo(PRIMARY).label, [PRIMARY], "primary-col")}
+                {venues.flatMap((venue) => [
+                  header(`venue:${venue}`, venueInfo(venue).label, [venue]),
+                  header(`spread:${venue}`, `${venueInfo(PRIMARY).label} / ${venueInfo(venue).label}`, [PRIMARY, venue], "spread-col"),
+                ])}
+              </tr>
+            </thead>
+            <tbody>
+              {table.map((row) => (
+                <tr key={row.ticker}>
+                  <th scope="row" className="market-col" aria-label={row.ticker}>
+                    <span className="ticker-badge" style={{ background: tickerColor(row.ticker) }} data-initial={row.ticker[0]} aria-hidden="true" />
+                    <span className="ticker-name">{row.ticker}</span>
                   </th>
-                  <th scope="col" className="numeric" aria-sort={sort === "gap" ? "descending" : "none"}>
-                    <button type="button" className="sort-button" onClick={() => setSort("gap")}>{view === "funding" ? "Max funding gap" : "Max price gap"}</button>
-                  </th>
-                  {columns.map((key) => <th scope="col" key={key} className="numeric">{COLUMN_LABELS[key] ?? key.replace("-", " ")}</th>)}
+                  <ValueCell column={row.primary} view={view} now={nowMs} testId={`cell-${PRIMARY}`} />
+                  {venues.flatMap((venue) => {
+                    const column = row.others.get(venue)!;
+                    return [<ValueCell key={venue} column={column} view={view} now={nowMs} testId={`cell-${venue}`} />,
+                      <SpreadCell key={`${venue}-spread`} spread={column.spread} testId={`cell-spread-${venue}`} />];
+                  })}
                 </tr>
-              </thead>
-              <tbody>
-                {visible.map((row) => {
-                  const gap = gapOf(row);
-                  return (
-                    <tr key={row.ticker}>
-                      <th scope="row" className="ticker">{row.ticker}</th>
-                      <td className="numeric gap" data-label={view === "funding" ? "Max funding gap" : "Max price gap"}>{gap === null ? "—" : view === "funding" ? percent(gap, PERIOD_DIGITS[period]) : percent(gap, 3)}</td>
-                      {columns.map((key) => <MarketCellView key={key} columnId={key} label={COLUMN_LABELS[key] ?? key.replace("-", " ")} row={row} view={view} period={period} now={nowMs}
-                        cells={row.cells.filter((cell) => columnKey(cell) === key)} />)}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+              ))}
+            </tbody>
+          </table>
+          {table.length === 0 && <p className="markets-empty">No markets match.</p>}
+        </div>
+      )}
     </main>
   );
 }

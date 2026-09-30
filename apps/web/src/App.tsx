@@ -14,6 +14,8 @@ export function App({ api }: { api: DashboardApi }) {
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+  // The markets page is dark; the body carries the page so the whole viewport follows it.
+  useEffect(() => { document.body.dataset.page = page; }, [page]);
   return (
     <>
       <nav className="app-tabs" aria-label="Dashboard pages">
