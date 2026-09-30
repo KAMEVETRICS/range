@@ -1,4 +1,4 @@
-import type { EventBus, SubscribeOptions, Topic, TopicPayload } from "@range/event-bus";
+import type { EventBus, KeyedEvent, SubscribeOptions, Topic, TopicPayload } from "@range/event-bus";
 import { createLogger } from "./logger.js";
 import { MetricRegistry } from "./metrics.js";
 import { createTracer, currentCorrelation, traceIdForEvent, type Correlation } from "./tracing.js";
@@ -88,6 +88,13 @@ export function instrumentEventBus(bus: EventBus, telemetry: RangeTelemetry): Ev
         span.setAttribute("topic", topic); span.setAttribute("key", key);
         recordEvent(topic, event, telemetry, connections);
         await bus.publish(topic, key, event);
+      });
+    },
+    async publishMany<T extends Topic>(topic: T, events: readonly KeyedEvent<T>[]) {
+      await telemetry.tracer.span(`event.publish ${topic}`, events.length ? correlation(events[0]!.event) : {}, async span => {
+        span.setAttribute("topic", topic); span.setAttribute("batch_size", events.length);
+        for (const { event } of events) recordEvent(topic, event, telemetry, connections);
+        await bus.publishMany(topic, events);
       });
     },
     async subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>,

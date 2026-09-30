@@ -113,3 +113,11 @@ it("delivers batch subscriptions in order, replaying from the start for a new gr
   expect(batches.flat()).toEqual([1, 2]);
   expect(batches.every(batch => batch.length > 0)).toBe(true);
 });
+
+it("publishes a batch in order to every group", async () => {
+  const bus = new InMemoryEventBus();
+  const seen: (number | string | undefined)[] = [];
+  await bus.subscribe("market.observation.v1", "many", async event => { seen.push(event.sequence); });
+  await bus.publishMany("market.observation.v1", [1, 2, 3].map(sequence => ({ key: "bitget:RAAPLUSDT", event: observation(sequence) })));
+  expect(seen).toEqual([1, 2, 3]);
+});

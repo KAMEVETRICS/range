@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { EventBus, SubscribeOptions } from "./event-bus.js";
+import type { EventBus, KeyedEvent, SubscribeOptions } from "./event-bus.js";
 import type { Topic, TopicPayload } from "./topics.js";
 import { deadLetter, decodeEvent, encodeEvent, InvalidEventError, payloadBytes } from "./validation.js";
 
@@ -32,6 +32,10 @@ export class InMemoryEventBus implements EventBus {
     this.logs.set(topic, log);
     log.push({ key, raw: Buffer.from(raw) });
     await Promise.all([...this.groups.get(topic)?.values() ?? []].map(group => this.drain(topic, group)));
+  }
+
+  async publishMany<T extends Topic>(topic: T, events: readonly KeyedEvent<T>[]): Promise<void> {
+    for (const { key, event } of events) await this.publish(topic, key, event);
   }
 
   async subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>,

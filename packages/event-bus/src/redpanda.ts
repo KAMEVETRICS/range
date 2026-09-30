@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Kafka, type ConsumerRunConfig, type KafkaConfig, type KafkaMessage, type Producer } from "kafkajs";
-import type { EventBus, SubscribeOptions } from "./event-bus.js";
+import type { EventBus, KeyedEvent, SubscribeOptions } from "./event-bus.js";
 import type { Topic, TopicPayload } from "./topics.js";
 import { deadLetter, decodeEvent, encodeEvent, InvalidEventError, payloadBytes } from "./validation.js";
 
@@ -21,17 +21,26 @@ export class RedpandaEventBus implements EventBus {
   }
 
   async publish<T extends Topic>(topic: T, key: string, event: TopicPayload[T]): Promise<void> {
+    await this.publishMany(topic, [{ key, event }]);
+  }
+
+  async publishMany<T extends Topic>(topic: T, events: readonly KeyedEvent<T>[]): Promise<void> {
     this.assertOpen();
-    let value: string;
-    try { value = encodeEvent(topic, event); }
-    catch (error) {
-      if (error instanceof InvalidEventError && topic !== "range.dead-letter.v1") {
-        await this.publish("range.dead-letter.v1", key, deadLetter(topic, key, payloadBytes(event), error));
+    if (!events.length) return;
+    const messages: Array<{ key: string; value: string; headers: Record<string, string> }> = [];
+    for (const { key, event } of events) {
+      let value: string;
+      try { value = encodeEvent(topic, event); }
+      catch (error) {
+        if (error instanceof InvalidEventError && topic !== "range.dead-letter.v1") {
+          await this.publish("range.dead-letter.v1", key, deadLetter(topic, key, payloadBytes(event), error));
+        }
+        throw error;
       }
-      throw error;
+      messages.push({ key, value, headers: { "trace-id": randomUUID() } });
     }
     await this.connect();
-    await this.producer.send({ topic, acks: -1, messages: [{ key, value, headers: { "trace-id": randomUUID() } }] });
+    await this.producer.send({ topic, acks: -1, messages });
   }
 
   subscribe<T extends Topic>(topic: T, groupId: string, handler: (event: TopicPayload[T]) => Promise<void>,

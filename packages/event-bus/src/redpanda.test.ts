@@ -203,3 +203,22 @@ it("dead-letters an invalid message between batches without reordering valid eve
   expect(JSON.stringify(broker.producer.send.mock.calls)).not.toContain("NEVER_LOG");
   await transport.close();
 });
+
+it("publishes a batch to one topic in one ordered request, and nothing when any event is invalid", async () => {
+  const transport = bus();
+  await transport.publishMany("market.observation.v1", [
+    { key: "bitget:RAAPLUSDT", event: observation(1) }, { key: "bitget:RTSLAUSDT", event: observation(2) }]);
+  expect(broker.producer.send).toHaveBeenCalledTimes(1);
+  const sent = broker.producer.send.mock.calls[0]![0];
+  expect(sent).toMatchObject({ topic: "market.observation.v1", acks: -1, messages: [{ key: "bitget:RAAPLUSDT" }, { key: "bitget:RTSLAUSDT" }] });
+  expect(sent.messages.map((message: { value: string }) => JSON.parse(message.value).sequence)).toEqual([1, 2]);
+
+  broker.producer.send.mockClear();
+  await expect(transport.publishMany("market.observation.v1", [
+    { key: "bitget:RAAPLUSDT", event: observation(3) }, { key: "bitget:RAAPLUSDT", event: { ...observation(4), eventId: "" } as never }]))
+    .rejects.toThrow();
+  expect(broker.producer.send.mock.calls.map(call => call[0].topic)).toEqual(["range.dead-letter.v1"]);
+  await transport.publishMany("market.observation.v1", []);
+  expect(broker.producer.send).toHaveBeenCalledTimes(1);
+  await transport.close();
+});

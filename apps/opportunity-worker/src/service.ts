@@ -62,11 +62,17 @@ async function main() {
   const pruneTimer = retentionHours > 0 ? setInterval(prune, 300_000) : undefined;
 
   // Canonicalization is intentionally structural only: connector adapters have
-  // already validated venue payloads into the shared observation schema.
-  stops.push(await bus.subscribe("market.observation.v1", "canonical-state-router", async event => {
-    if (event.payload.kind === "order_book") await bus.publish("book.state.v1", event.instrumentId, event as TopicPayload["book.state.v1"]);
-    if (event.payload.kind === "funding") await bus.publish("funding.observation.v1", event.instrumentId, event as TopicPayload["funding.observation.v1"]);
-  }));
+  // already validated venue payloads into the shared observation schema. Routing is batched, one broker request per
+  // topic per batch: one awaited request per event capped it below the observation rate (about 200 a second), and
+  // every book and funding reader fell minutes behind. 200 events stay well under the broker's 1 MiB request limit.
+  stops.push(await bus.subscribeBatch("market.observation.v1", "canonical-state-router", async events => {
+    const books = events.flatMap(event => event.payload.kind === "order_book"
+      ? [{ key: event.instrumentId, event: event as TopicPayload["book.state.v1"] }] : []);
+    const funding = events.flatMap(event => event.payload.kind === "funding"
+      ? [{ key: event.instrumentId, event: event as TopicPayload["funding.observation.v1"] }] : []);
+    if (books.length) await bus.publishMany("book.state.v1", books);
+    if (funding.length) await bus.publishMany("funding.observation.v1", funding);
+  }, 200));
 
   const seed = SeedConfigSchema.parse(JSON.parse(await readFile(process.env.RANGE_MAPPING_CONFIG ?? "config/instrument-mappings.json", "utf8")));
   // In-memory registry views replay the whole registry topic on every start (fresh groups, deleted on stop), like the

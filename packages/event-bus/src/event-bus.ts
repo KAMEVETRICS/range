@@ -7,8 +7,15 @@ export interface SubscribeOptions {
   readonly deleteGroupOnStop?: boolean;
 }
 
+export interface KeyedEvent<T extends Topic> {
+  readonly key: string;
+  readonly event: TopicPayload[T];
+}
+
 export interface EventBus {
   publish<T extends Topic>(topic: T, key: string, event: TopicPayload[T]): Promise<void>;
+  /** Publishes events to one topic in order, as one broker request where the transport allows. */
+  publishMany<T extends Topic>(topic: T, events: readonly KeyedEvent<T>[]): Promise<void>;
   subscribe<T extends Topic>(
     topic: T,
     groupId: string,
