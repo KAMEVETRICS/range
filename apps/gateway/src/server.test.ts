@@ -279,6 +279,11 @@ describe("REST application boundary", () => {
     expect((await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA&max_age_ms=50", headers: auth })).json().result.items).toEqual([]);
     f.queries.getEvidence = async () => undefined;
     expect((await f.app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth })).statusCode).toBe(503);
+    // A scan leaves that one result out instead of failing.
+    const scan = await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA", headers: auth });
+    expect(scan.statusCode).toBe(200);
+    expect(scan.json().result.items).toEqual([]);
+    expect(scan.json().warnings).toContain("opp_1: evidence not yet recorded; excluded");
   });
 
   it("fails closed when any evidence source timestamp is missing", async () => {

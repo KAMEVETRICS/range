@@ -46,6 +46,8 @@ export const responseSchemas = {
 export class ApplicationError extends Error {
   constructor(readonly statusCode: number, readonly code: string) { super(code); }
 }
+/** Refusals that mean a result's evidence is not (yet) readable from history. */
+const EVIDENCE_PENDING = new Set(["EVIDENCE_UNAVAILABLE", "SOURCE_TIMES_UNAVAILABLE"]);
 
 export class RangeApplication {
   constructor(readonly queries: ApplicationQueries, private readonly now: () => number = Date.now) {}
@@ -248,7 +250,13 @@ export class RangeApplication {
       (!query.venue || item.legs.some(leg => instruments.some(instrument => instrument.instrumentId === leg.instrumentId))));
     const valid = [];
     for (const item of selected) {
-      const detail = await this.details(context, item);
+      // A result reaches the scan moments before history records its evidence. Until then it cannot be verified, so it
+      // is left out, as inspection refuses it, rather than failing every other result in the scan.
+      const detail = await this.details(context, item).catch((error: unknown) => {
+        if (error instanceof ApplicationError && EVIDENCE_PENDING.has(error.code)) return undefined;
+        throw error;
+      });
+      if (!detail) { warnings.push(`${item.opportunityId}: evidence not yet recorded; excluded`); continue; }
       if (query.max_age_ms !== undefined && this.now() - detail.sourceMs > query.max_age_ms) {
         warnings.push(`${item.opportunityId}: stale opportunity excluded`); continue;
       }
