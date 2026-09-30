@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { hashCanonical } from "@range/evidence";
-import { historyRecord } from "./history-record.js";
+import { historyRecord, keptInHistory } from "./history-record.js";
 
 const context = { archiveId: "archive_test", calculationVersion: "range.calc.v1" };
 const health = { venue: "bitget", connectionState: "connected", lastEventAgeMs: 10, clockSkewMs: 0,
@@ -11,6 +11,12 @@ it("omits an absent underlyingId so health, book and registry records can be can
   expect(record).not.toHaveProperty("underlyingId");
   expect(record).not.toHaveProperty("calculationVersion");
   expect(() => hashCanonical(record)).not.toThrow();
+});
+
+it("keeps books in history except display-only top-of-book snapshots", () => {
+  expect(keptInHistory({ qualityFlags: [] })).toBe(true);
+  expect(keptInHistory({ qualityFlags: ["client_receipt_timestamp"] })).toBe(true);
+  expect(keptInHistory({ qualityFlags: ["top_of_book_only", "client_receipt_timestamp"] })).toBe(false);
 });
 
 it("keeps a present underlyingId and the calculation version on opportunity records", () => {

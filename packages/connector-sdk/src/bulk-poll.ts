@@ -37,7 +37,7 @@ export interface BulkVenue {
 }
 
 export interface BulkPollOptions {
-  /** How often the stream reads every top of book (default 5 s). */
+  /** How often the stream reads every top of book (default 10 s). */
   readonly pollMs?: number;
   /** An unchanged top of book is published again after this long, so downstream readers keep it fresh (default 30 s). */
   readonly refreshMs?: number;
@@ -76,7 +76,7 @@ function validLevel(level: PriceLevel | undefined): PriceLevel | undefined {
  */
 export function createBulkPollAdapter(venue: BulkVenue, options: BulkPollOptions = {}): ConnectorAdapter {
   const nowMs = options.nowMs ?? Date.now;
-  const pollMs = options.pollMs ?? 5_000;
+  const pollMs = options.pollMs ?? 10_000;
   const refreshMs = options.refreshMs ?? 30_000;
   const fundingMs = options.fundingMs ?? 60_000;
   let known: readonly Instrument[] = [];

@@ -16,6 +16,14 @@ function underlying(event: unknown): string | undefined {
     ? (event as { underlyingId: string }).underlyingId : undefined;
 }
 
+/**
+ * Top-of-book snapshots from the bulk-read venues are display-only: they feed the market board, never opportunities or
+ * evidence, and were about a quarter of stored books, so history does not keep them.
+ */
+export function keptInHistory(book: { readonly qualityFlags: readonly string[] }): boolean {
+  return !book.qualityFlags.includes("top_of_book_only");
+}
+
 /** The record is canonically hashed, so an absent optional field is omitted rather than set to undefined. */
 export function historyRecord<T extends Topic>(topic: T, key: string, event: TopicPayload[T],
   context: { archiveId: string; calculationVersion: string }): StoredEvent<T> {
