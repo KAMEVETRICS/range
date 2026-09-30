@@ -248,6 +248,9 @@ services:
       # Taker fees of the reviewed pairs: Bitget stock perps 0.06%; trade.xyz standard 0.09% (growth mode, when on, is lower).
       RANGE_FEES_BPS_JSON: '{"bitget":"6","hyperliquid_hip3":"9"}'
       RANGE_SLIPPAGE_BPS_JSON: '{"bitget":"1","hyperliquid_hip3":"1"}'
+      # The size each opportunity is priced at. Bitget's five visible levels hold about $5,000-$11,000 on the reviewed
+      # stocks, so $10,000 left the thinner ones permanently short of depth.
+      RANGE_REQUESTED_NOTIONAL_USD: "2500"
       RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-24}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
