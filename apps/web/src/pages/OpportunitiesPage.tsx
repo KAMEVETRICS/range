@@ -68,20 +68,32 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
     return () => { active = false; };
   }, [api, invalidatedSelection, listed, selectedId]);
 
+  // The stream handler reads the latest state through a ref, so it keeps one identity: the stream opens once per
+  // underlying, not again on every selection or result change.
+  const latest = useRef({ filters, selectedId, opportunities });
+  useEffect(() => { latest.current = { filters, selectedId, opportunities }; });
   const onStreamEvent = useCallback(async (event: DashboardStreamEvent) => {
     setLiveMessage(event.message);
+    const { filters: current, selectedId: selected, opportunities: shown } = latest.current;
+    const listed = (id: string) => shown.some((item) => item.opportunityId === id);
     if (event.kind === "invalidation") {
-      setInvalidatedIds((current) => new Set(current).add(event.opportunityId));
-      await loadOpportunities(filters);
+      // Most invalidations are rejected results, which the scan never lists; reloading for each (several a second) made
+      // one open page scan twice a second. Only a listed or selected result's invalidation changes what is shown.
+      if (!listed(event.opportunityId) && selected !== event.opportunityId) return;
+      setInvalidatedIds((ids) => new Set(ids).add(event.opportunityId));
+      await loadOpportunities(current);
     } else if (event.kind === "opportunity") {
       const updated = event.detail.result.opportunity;
-      setInvalidatedIds((current) => { const next = new Set(current); next.delete(updated.opportunityId); return next; });
-      await loadOpportunities(filters);
-      if (selectedId === updated.opportunityId) setDetail(event.detail);
+      setInvalidatedIds((ids) => {
+        if (!ids.has(updated.opportunityId)) return ids;
+        const next = new Set(ids); next.delete(updated.opportunityId); return next;
+      });
+      if (updated.status === "actionable" || listed(updated.opportunityId)) await loadOpportunities(current);
+      if (selected === updated.opportunityId) setDetail(event.detail);
     } else if (event.kind === "health") {
-      setVenues((current) => current.map((venue) => venue.venue === event.venue.venue ? event.venue : venue));
+      setVenues((venues) => venues.map((venue) => venue.venue === event.venue.venue ? event.venue : venue));
     }
-  }, [filters, loadOpportunities, selectedId]);
+  }, [loadOpportunities]);
 
   useEffect(() => api.subscribe(filters.underlying, onStreamEvent), [api, filters.underlying, onStreamEvent]);
 

@@ -216,6 +216,25 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     expect(api.scanOpportunities).toHaveBeenCalledTimes(2);
   });
 
+  it("reloads for a listed result's invalidation only, and keeps one stream while the selection changes", async () => {
+    const other = opportunity({ opportunityId: "opp_nvda_spread_2", stateRevision: 13, netEdgeBps: "44.00", evidenceHash: "evh_fedcba9876543210" });
+    const api = apiWith([opportunity(), other]);
+    let streamHandler: Parameters<DashboardApi["subscribe"]>[1] | undefined;
+    vi.mocked(api.subscribe).mockImplementation((_underlying, handler) => { streamHandler = handler; return () => undefined; });
+    const user = userEvent.setup();
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={0} />);
+    await screen.findByText("44.00 bps");
+    expect(api.scanOpportunities).toHaveBeenCalledTimes(1);
+
+    await streamHandler?.({ kind: "invalidation", opportunityId: "opp_never_listed", message: "Opportunity invalidated by live update." });
+    expect(api.scanOpportunities).toHaveBeenCalledTimes(1);
+    await streamHandler?.({ kind: "invalidation", opportunityId: "opp_nvda_spread_2", message: "Opportunity invalidated by live update." });
+    expect(api.scanOpportunities).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getAllByRole("button", { name: "NVDA" })[1]!);
+    expect(api.subscribe).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes the scanner by itself while shown", async () => {
     const api = apiWith([opportunity()]);
     render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={20} />);
