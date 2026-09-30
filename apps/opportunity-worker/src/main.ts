@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { EventBus } from "@range/event-bus";
+import type { EventBus, TopicPayload } from "@range/event-bus";
 import { Decimal } from "decimal.js";
 import { FundingProjectionSchema, isCurrentAtRevision, PairEvaluationSnapshotSchema, type ObservationEnvelope, type Opportunity,
   type PairEvaluationSnapshot, type VenueHealth } from "@range/domain";
@@ -339,60 +339,81 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       publishing = publishing.then(() => evaluate(underlyingId));
     }, debounceMs));
   };
-  unsubscribe.push(await bus.subscribe("book.state.v1", "opportunity-worker-books", event => acceptInput(async () => {
-    // A book that is not live is never quoted, so one for an instrument without a held book is skipped: rebuilding every
-    // reference book (about 85 a second across twelve venues) kept this queue seconds behind, and quotes were stale
-    // before they were evaluated. For a held book it still applies, and invalidates that book.
-    if (event.eligibility !== "live" && !books.has(event.instrumentId)) return;
-    const book = books.get(event.instrumentId) ?? new OrderBook();
-    const current = bookCursors.get(event.instrumentId);
+  type BookEvent = TopicPayload["book.state.v1"];
+  type BookStep = { event: BookEvent; kind: "cursor" | "gap" | "apply"; cursor: BookCursor };
+  /** What a book event does given its instrument's cursor as it stands after the events before it. */
+  const bookStep = (event: BookEvent, current: BookCursor | undefined): BookStep | undefined => {
     const sequence = bookSequence(event.sequence);
     const sequencePresent = event.sequence !== undefined;
     const contiguous = event.sequencePolicy === "contiguous";
     const reset = event.sequenceReset === true && contiguous && sequence !== undefined;
     if (current) {
-      if (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp) return;
-      if (reset && event.sourceTimestamp <= current.sourceTimestamp) return;
+      if (event.eventId === current.eventId || event.sourceTimestamp < current.sourceTimestamp) return undefined;
+      if (reset && event.sourceTimestamp <= current.sourceTimestamp) return undefined;
       if (current.gapped && !reset) {
         if (sequence !== undefined && (current.sequence === undefined || sequence > current.sequence)) {
-          bookCursors.set(event.instrumentId, { ...current, eventId: event.eventId,
-            sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
-            sequencePresent, sequence });
+          return { event, kind: "cursor", cursor: { ...current, eventId: event.eventId,
+            sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp, sequencePresent, sequence } };
         }
-        return;
+        return undefined;
       }
       // A sequence regression is stale even if transport receive time advances.
       // Once a feed provides sequence, an unsequenced snapshot cannot silently
       // reset it; a new feed epoch needs an explicit version/reset contract.
       if (!reset && (current.sequencePresent && !sequencePresent ||
-          current.sequence !== undefined && sequence !== undefined && sequence <= current.sequence)) return;
+          current.sequence !== undefined && sequence !== undefined && sequence <= current.sequence)) return undefined;
       if (!reset && event.sourceTimestamp === current.sourceTimestamp &&
           (current.sequencePresent !== sequencePresent ||
            current.sequencePresent && current.sequence === undefined && sequence !== undefined ||
            (current.sequence === undefined || sequence === undefined) &&
-             event.receivedTimestamp < current.receivedTimestamp)) return;
+             event.receivedTimestamp < current.receivedTimestamp)) return undefined;
       if (!reset && current.contiguous && contiguous && current.sequence !== undefined && sequence !== undefined &&
           sequence > current.sequence + 1n) {
-        const targets = reviewedTargets(event.instrumentId);
-        await bumpMany(targets);
-        if (targets.length) expireBook(event.instrumentId, "BOOK_SEQUENCE_GAP");
-        books.delete(event.instrumentId);
-        bookCursors.set(event.instrumentId, { eventId: event.eventId, sourceTimestamp: event.sourceTimestamp,
-          receivedTimestamp: event.receivedTimestamp, sequencePresent, sequence, contiguous: true, gapped: true });
-        for (const target of targets) schedule(target);
-        return;
+        return { event, kind: "gap", cursor: { eventId: event.eventId, sourceTimestamp: event.sourceTimestamp,
+          receivedTimestamp: event.receivedTimestamp, sequencePresent, sequence, contiguous: true, gapped: true } };
       }
     }
-    const targets = reviewedTargets(event.instrumentId);
-    await bumpMany(targets);
-    if (targets.length) expireBook(event.instrumentId);
-    bookCursors.set(event.instrumentId, { eventId: event.eventId,
+    return { event, kind: "apply", cursor: { eventId: event.eventId,
       sourceTimestamp: event.sourceTimestamp, receivedTimestamp: event.receivedTimestamp,
       // An opaque sequence invalidates the book but cannot erase the last
       // comparable sequence; otherwise a stale numeric snapshot could revive it.
-      sequencePresent, sequence: sequence ?? current?.sequence, contiguous, gapped: false });
-    book.applySnapshot(event);
-    books.set(event.instrumentId, book);
+      sequencePresent, sequence: sequence ?? current?.sequence, contiguous, gapped: false } };
+  };
+  // Books are accepted a batch at a time: each event's step is decided in order, then every affected underlying advances
+  // in one durable statement before any step applies. One statement per book (about 35 a second, 10-40 ms each once
+  // committed) kept this queue seconds behind, so quotes were stale before they were evaluated.
+  unsubscribe.push(await bus.subscribeBatch("book.state.v1", "opportunity-worker-books", events => acceptInput(async () => {
+    const cursors = new Map<string, BookCursor | undefined>();
+    const held = new Map<string, boolean>();
+    const steps: BookStep[] = [];
+    for (const event of events) {
+      const id = event.instrumentId;
+      // A book that is not live is never quoted, so one for an instrument without a held book is skipped: rebuilding
+      // every reference book (about 85 a second across twelve venues) cost this queue more. For a held book it still
+      // applies, and invalidates that book.
+      if (event.eligibility !== "live" && !(held.get(id) ?? books.has(id))) continue;
+      const step = bookStep(event, cursors.has(id) ? cursors.get(id) : bookCursors.get(id));
+      if (!step) continue;
+      steps.push(step);
+      cursors.set(id, step.cursor);
+      if (step.kind !== "cursor") held.set(id, step.kind === "apply");
+    }
+    const targets = [...new Set(steps.filter(step => step.kind !== "cursor").flatMap(step => reviewedTargets(step.event.instrumentId)))];
+    await bumpMany(targets);
+    for (const { event, kind, cursor } of steps) {
+      const id = event.instrumentId;
+      const affected = kind === "cursor" ? [] : reviewedTargets(id);
+      if (kind === "gap") {
+        if (affected.length) expireBook(id, "BOOK_SEQUENCE_GAP");
+        books.delete(id);
+      } else if (kind === "apply") {
+        if (affected.length) expireBook(id);
+        const book = books.get(id) ?? new OrderBook();
+        book.applySnapshot(event);
+        books.set(id, book);
+      }
+      bookCursors.set(id, cursor);
+    }
     for (const target of targets) schedule(target);
   })));
   unsubscribe.push(await bus.subscribe("funding.observation.v1", "opportunity-worker-funding", event => acceptInput(async () => {

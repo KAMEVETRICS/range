@@ -776,6 +776,43 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
+  it("advances every underlying a batch of books affects in one durable statement, then evaluates them", async () => {
+    // The in-memory bus hands a batch handler one event at a time; the book handler is captured to deliver a real batch.
+    const bus = new InMemoryEventBus();
+    let deliverBooks: ((events: never[]) => Promise<void>) | undefined;
+    const subscribeBatch = bus.subscribeBatch.bind(bus);
+    bus.subscribeBatch = ((topic: string, groupId: string, handler: (events: never[]) => Promise<void>) => {
+      if (topic === "book.state.v1") deliverBooks = handler;
+      return subscribeBatch(topic as never, groupId, handler as never);
+    }) as typeof bus.subscribeBatch;
+    const registry = reviewedRegistry();
+    const backing = createInMemoryRevisionAuthority();
+    const calls: string[][] = [];
+    const authority: RevisionAuthority = {
+      kind: "volatile",
+      advance: async underlyingId => { calls.push([underlyingId]); return backing.advance(underlyingId); },
+      advanceMany: async underlyingIds => { calls.push([...underlyingIds]); return backing.advanceMany(underlyingIds); },
+      read: underlyingId => backing.read(underlyingId),
+    };
+    const published: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "batched-books", async event => { published.push(event); });
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority });
+    // Health and funding reach the worker as usual; both books are held back and delivered as one batch.
+    const inputs = new InMemoryEventBus();
+    const books: never[] = [];
+    await inputs.subscribe("book.state.v1", "collect", async event => { books.push(event as never); });
+    await inputs.subscribe("funding.observation.v1", "forward", async event => { await bus.publish("funding.observation.v1", event.instrumentId, event as never); });
+    await inputs.subscribe("venue.health.v1", "forward", async event => { await bus.publish("venue.health.v1", event.venue, event as never); });
+    await publishEligibleInputs(inputs);
+    calls.length = 0;
+    await deliverBooks!(books);
+    expect(books).toHaveLength(2);
+    expect(calls).toEqual([["equity:TSLA"]]);
+    await worker.flush();
+    expect(published.some(item => item.status === "actionable")).toBe(true);
+    await worker.stop();
+  });
+
   it("skips a reference-only book for an instrument it holds no book for, and applies one for a held book", async () => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
