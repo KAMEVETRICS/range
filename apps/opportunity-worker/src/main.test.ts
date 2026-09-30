@@ -537,6 +537,39 @@ describe("opportunity worker", () => {
     expect(published.at(-1)?.status).not.toBe("actionable");
     await worker.stop();
   });
+
+  it("publishes a debounce that fires during a flush after the flushed result", async () => {
+    const bus = new InMemoryEventBus();
+    const registry = reviewedRegistry();
+    const published: string[] = [];
+    await bus.subscribe("opportunity.v1", "flush-order", async event => { published.push(event.status); });
+    const debounces: Array<() => void> = [];
+    let release!: () => void;
+    let reached!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const atOpportunity = new Promise<void>(resolve => { reached = resolve; });
+    const originalPublish = bus.publish.bind(bus);
+    let blocked = false;
+    bus.publish = (async (topic: Parameters<typeof originalPublish>[0], key: string, event: never) => {
+      if (topic === "opportunity.v1" && !blocked) { blocked = true; reached(); await gate; }
+      return originalPublish(topic, key, event);
+    }) as typeof bus.publish;
+    // Debounces run only when fired below; expiry timers never fire here.
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, debounceMs: 25,
+      schedule: (callback, delayMs) => { if (delayMs === 25) debounces.push(callback); return () => undefined; } });
+    await publishEligibleInputs(bus);
+    const flushing = worker.flush();
+    await atOpportunity;
+    await bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_during_flush"), eligibility: "reference_only" } as never);
+    debounces.at(-1)!();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await flushing;
+    await worker.settle();
+    expect(published[0]).toBe("actionable");
+    expect(published.at(-1)).not.toBe("actionable");
+    await worker.stop();
+  });
   it.each(["book", "funding", "health", "registry"] as const)(
     "accepts a %s invalidation awaited by a reentrant opportunity subscriber", async kind => {
     const bus = new InMemoryEventBus();

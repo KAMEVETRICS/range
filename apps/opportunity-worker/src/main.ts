@@ -488,9 +488,15 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       const affected = [...pending.keys()];
       for (const cancel of pending.values()) cancel();
       pending.clear();
-      await publishing;
-      for (const underlying of affected) await evaluate(underlying);
-      await publishing;
+      // Queued like a debounce that fired: a timer firing meanwhile evaluates after these, never alongside them, so
+      // an older result cannot be published after a newer one.
+      for (const underlying of affected) publishing = publishing.then(() => evaluate(underlying));
+      // Publications those evaluations queue (an expiry a reentrant subscriber caused, say) finish before flush does.
+      for (;;) {
+        const snapshot = publishing;
+        await snapshot;
+        if (snapshot === publishing) return;
+      }
     },
     async settle() {
       await accepting;
