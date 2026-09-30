@@ -8,6 +8,7 @@ import {
   mapHyperliquidMessage,
   mapMetaAndContexts,
   mapPerpDexs,
+  REVIEWED_EQUITY_PERPS,
   type HyperliquidDexEvidence,
   type HyperliquidFundingEvidence,
   type HyperliquidMappedInstrument,
@@ -103,8 +104,9 @@ export function createHyperliquidAdapter(
       return mapHyperliquidBook(await http.l2Book(instrument.venueSymbol, signal), instrument, "rest");
     },
 
+    // Reviewed stocks need books fresher than the 2 s spread window; the rest keep the 5 s default.
     async *stream(instruments, signal) {
-      for await (const message of ws.stream(instruments.map(instrument => instrument.venueSymbol), signal)) {
+      for await (const message of ws.stream(instruments.map(instrument => instrument.venueSymbol), signal, REVIEWED_EQUITY_PERPS)) {
         if (signal.aborted) break;
         const event = mapHyperliquidMessage(message, instruments);
         if (event) yield event;

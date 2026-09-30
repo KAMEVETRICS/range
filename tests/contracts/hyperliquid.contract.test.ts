@@ -19,6 +19,7 @@ function setup(capture: (headers: unknown) => void = () => {}) {
   const requests: { readonly url: URL; readonly init: RequestInit; readonly body: HyperliquidInfoRequest }[] = [];
   const delays: number[] = [];
   const subscriptions: string[] = [];
+  const fastCoins: string[] = [];
   let limited = false;
   let frames: unknown[] = [];
   const client = new HyperliquidPublicClient(async (url, init) => {
@@ -47,8 +48,9 @@ function setup(capture: (headers: unknown) => void = () => {}) {
     sleep: async ms => { delays.push(ms); },
   });
   const ws: HyperliquidWebSocketPort = {
-    async *stream(coins) {
+    async *stream(coins, _signal, fast) {
       subscriptions.push(...coins);
+      fastCoins.push(...coins.filter(coin => fast?.has(coin)));
       yield* frames;
     },
   };
@@ -59,6 +61,7 @@ function setup(capture: (headers: unknown) => void = () => {}) {
     requests,
     delays,
     subscriptions,
+    fastCoins,
     limit: () => { limited = true; },
     frames: (values: unknown[]) => { frames = values; },
   };
@@ -147,6 +150,7 @@ it("streams only public l2Book snapshots for discovered instruments", async () =
   const events = [];
   for await (const event of context.adapter.stream!(instruments, signal())) events.push(event);
   expect(context.subscriptions).toEqual(["xyz:TSLA"]);
+  expect(context.fastCoins).toEqual(["xyz:TSLA"]);
   expect(events).toHaveLength(1);
   expect(events[0]).toMatchObject({
     instrumentId: "ins_hyperliquid_hip3_xyz:TSLA",

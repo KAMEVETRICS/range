@@ -102,7 +102,8 @@ export class HyperliquidPublicClient {
 }
 
 export interface HyperliquidWebSocketPort {
-  stream(coins: readonly string[], signal: AbortSignal): AsyncIterable<unknown>;
+  /** `fastCoins` subscribe with `fast: true`: a book about every 0.5 s instead of every 5 s on HIP-3 dexes. */
+  stream(coins: readonly string[], signal: AbortSignal, fastCoins?: ReadonlySet<string>): AsyncIterable<unknown>;
 }
 
 type SocketFactory = (url: string) => WebSocket;
@@ -112,7 +113,7 @@ export function createHyperliquidPublicWebSocket(
   makeSocket: SocketFactory = url => new WebSocket(url),
 ): HyperliquidWebSocketPort {
   return {
-    async *stream(requestedCoins, signal) {
+    async *stream(requestedCoins, signal, fastCoins: ReadonlySet<string> = new Set<string>()) {
       const coins = [...new Set(requestedCoins)];
       if (signal.aborted || coins.length === 0) return;
       if (coins.length > 1_000) throw new ConnectorDiagnosticError("ADAPTER_FAILURE");
@@ -133,7 +134,8 @@ export function createHyperliquidPublicWebSocket(
         clearTimeout(timeout);
         try {
           for (const coin of coins) {
-            socket.send(JSON.stringify({ method: "subscribe", subscription: { type: "l2Book", coin } }));
+            const subscription = fastCoins.has(coin) ? { type: "l2Book", coin, fast: true } : { type: "l2Book", coin };
+            socket.send(JSON.stringify({ method: "subscribe", subscription }));
           }
           heartbeat = setInterval(() => {
             try { socket.send(JSON.stringify({ method: "ping" })); }
