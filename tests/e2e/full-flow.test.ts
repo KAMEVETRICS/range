@@ -25,9 +25,9 @@ describe("release telemetry and evidence", () => {
     expect(lines.join("\n")).toContain("visible");
   });
 
-  it("fails the live mapping invariant when the checked-in seed has no reviewed evidence", async () => {
+  it("fails the three-venue live mapping invariant: the checked-in TSLA review covers two venues without live evidence", async () => {
     const seed = JSON.parse(await readFile("config/instrument-mappings.json", "utf8"));
     const result = verifyLiveMappingEvidence(seed, "equity:TSLA", ["bitget", "hyperliquid_hip3", "extended"]);
-    expect(result).toEqual({ passed: false, detail: "no reviewed live mapping for equity:TSLA" });
+    expect(result).toEqual({ passed: false, detail: "mapping lacks primary timestamped evidence for extended, bitget, hyperliquid_hip3" });
   });
 });

@@ -2,7 +2,7 @@
 
 - **Scope:** NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN, MSTR, HOOD. Bitget USDT-M `<TICKER>USDT` against Hyperliquid HIP-3 dex `xyz` (trade.xyz) `xyz:<TICKER>`.
 - **Reviewer:** kongclaves.
-- **Status:** evidence gathered 2026-09-30; awaiting the reviewer's approval before `config/instrument-mappings.json` gains the mappings.
+- **Status:** approved by kongclaves on 2026-09-30 at 08:37:41 UTC. The ten mappings (mapping version 1) are in `config/instrument-mappings.json`.
 - **Mapping target:** `equity:<TICKER>`. Bitget files these instruments under `bitget:<TICKER>`; the mapping is what joins them.
 
 ## Evidence
@@ -35,4 +35,6 @@
 
 ## Approval
 
-Pending. The reviewer approves by replying in the working session; the mapping entries then record `reviewer: "kongclaves"`, the approval time as `reviewedAt`, and each member's live `instrumentVersion` and `metadataHash` from `scripts/reviewed-mapping-members.ts`.
+Approved by kongclaves on 2026-09-30 at 08:37:41 UTC, accepting the differences above (USDT against USDC, split and dividend handling, off-hours pricing). Each mapping pins both members at instrument version 2 with the metadata hashes `scripts/reviewed-mapping-members.ts` read from the live registry; a dry run of the seeder and registry against the live registry accepted all ten before deployment.
+
+A listing whose metadata changes moves to a new version, which takes it out of its mapping (fail-closed) until the mapping is re-pinned at a higher `mappingVersion`.

@@ -1,16 +1,317 @@
 {
   "schemaVersion": 1,
-  "mappings": [],
+  "mappings": [
+    {
+      "underlyingId": "equity:NVDA",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of NVIDIA (NVDA) per unit of size on both Bitget USDT-M NVDAUSDT and trade.xyz xyz:NVDA (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "NVDAUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "84693c693bbe18f7fcc8a36f407bf4f3be94e2a3983e7aeea5ae544c5813cca1"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:NVDA",
+          "instrumentVersion": 2,
+          "metadataHash": "7193b4d9ff568569217883506cf905623c7992bf0088d3be19115562718ac9e4"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in NVDA shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed NVDA share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:TSLA",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Tesla (TSLA) per unit of size on both Bitget USDT-M TSLAUSDT and trade.xyz xyz:TSLA (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "TSLAUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "3d940b196d564f1e1b6e4027b0e56dcb89bc9375789b71e3a829fe0ec5a1da29"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:TSLA",
+          "instrumentVersion": 2,
+          "metadataHash": "574236019797911ef12533204845459b16be6d3c2c72c24bd0b78e96bf195802"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in TSLA shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed TSLA share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:AAPL",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Apple (AAPL) per unit of size on both Bitget USDT-M AAPLUSDT and trade.xyz xyz:AAPL (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "AAPLUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "2bc9415d2a85d378b556be4f1b97e7fa4ce29c04a051d0c7cfe73f0d8f3ef9b4"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:AAPL",
+          "instrumentVersion": 2,
+          "metadataHash": "95d894e647b1b46d1c2e4c89f8a2616a2ff577660362df90521e9c1718adaa00"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in AAPL shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed AAPL share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:MSFT",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Microsoft (MSFT) per unit of size on both Bitget USDT-M MSFTUSDT and trade.xyz xyz:MSFT (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "MSFTUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "31fd1421d71e4780b88164729d434c3a7ba878e0c24c7849538ec7307242c707"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:MSFT",
+          "instrumentVersion": 2,
+          "metadataHash": "46b25b6b8afc7ba5555ce7976154f61b38b8d7da6439dee17a519570723480ef"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in MSFT shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed MSFT share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:META",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Meta Platforms (META) per unit of size on both Bitget USDT-M METAUSDT and trade.xyz xyz:META (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "METAUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "005253704913a81a2129f866d0004c13cd2d5d2ca64c6c5009cbe8abf7e1d7f4"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:META",
+          "instrumentVersion": 2,
+          "metadataHash": "35b76e897bc23ce847624186652f27e14b11dbf714a21557fe2d20785f13ddfe"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in META shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed META share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:AMZN",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Amazon (AMZN) per unit of size on both Bitget USDT-M AMZNUSDT and trade.xyz xyz:AMZN (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "AMZNUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "08e88be5b76e46d42eb9e01e958fe8513d56e2c5c83c41a7d239f2abd36b5d26"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:AMZN",
+          "instrumentVersion": 2,
+          "metadataHash": "70144fd6fca8e706f686c6b70422d44e0123c795ce03ff19b8d423ccee40c913"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in AMZN shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed AMZN share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:GOOGL",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Alphabet (Class A) (GOOGL) per unit of size on both Bitget USDT-M GOOGLUSDT and trade.xyz xyz:GOOGL (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "GOOGLUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "467ec4e175c36268849265a01a89ec067cd904cdce3724f72b768a9c8094d8da"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:GOOGL",
+          "instrumentVersion": 2,
+          "metadataHash": "72781abba8e14f12477912df3e2e87f14f99e3eb427ebf275a7878814a6a2654"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in GOOGL shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed GOOGL share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:COIN",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Coinbase (COIN) per unit of size on both Bitget USDT-M COINUSDT and trade.xyz xyz:COIN (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "COINUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "8ce78b995bae27d0c38ca32d964ff5d92d766dda282abb8b5539d673d8100b23"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:COIN",
+          "instrumentVersion": 2,
+          "metadataHash": "2fdc975ec6894212b7d5f4ad0c775c65c08e737974225706bc094f908cbc3bfb"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in COIN shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed COIN share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:MSTR",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Strategy (MSTR) per unit of size on both Bitget USDT-M MSTRUSDT and trade.xyz xyz:MSTR (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "MSTRUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "60e7361370e3444af4e6ad01f08716e03a73b79e74c4bb13f864e04a3258b1eb"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:MSTR",
+          "instrumentVersion": 2,
+          "metadataHash": "ff66b0cec05e63a4b6464f2b9a598b9f63ec748ba9bfc547b8686bf762316a8a"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in MSTR shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed MSTR share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    },
+    {
+      "underlyingId": "equity:HOOD",
+      "mappingVersion": 1,
+      "compatibleExposure": "One share of Robinhood (HOOD) per unit of size on both Bitget USDT-M HOODUSDT and trade.xyz xyz:HOOD (Hyperliquid HIP-3).",
+      "reviewer": "kongclaves",
+      "reviewedAt": "2026-09-30T08:37:41.307Z",
+      "members": [
+        {
+          "venue": "bitget",
+          "venueFamily": "USDT-FUTURES",
+          "venueSymbol": "HOODUSDT",
+          "instrumentVersion": 2,
+          "metadataHash": "9d81bd35e7cb21e34eb67f2faf62615588fd7df2144920b46f07fe13d9bed8b7"
+        },
+        {
+          "venue": "hyperliquid_hip3",
+          "venueFamily": "hyperliquid",
+          "venueSymbol": "xyz:HOOD",
+          "instrumentVersion": 2,
+          "metadataHash": "1c576aa9397952a867b017661fcbd5dd000684df8d3b04adf2fd1a125485d5ac"
+        }
+      ],
+      "proof": {
+        "contractMultiplier": "1 share per unit on both: Bitget quantity in HOOD shares (step 0.01, contracts API); trade.xyz size in shares (szDecimals 3, Hyperliquid meta for dex xyz). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "settlementAsset": "Bitget USDT (https://www.bitget.com/support/articles/12560603847596); trade.xyz USDC (dex xyz collateralToken 0). The USDT/USDC basis is not priced. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "collateralAsset": "Bitget USDT margin (supportMarginCoins USDT); trade.xyz USDC collateral. docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "tradingSchedule": "Both continuous: Bitget 24/7 with no closures (FAQ; offTime -1); trade.xyz external prices Sunday 8 PM to Friday 8 PM ET, its own book otherwise (https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index). docs/reviews/2026-09-30-bitget-hyperliquid.md",
+        "economicExposure": "Both track the US-listed HOOD share. Accepted differences: splits (Bitget rescales, trade.xyz settles and reopens), cash dividends (Bitget via funding at T-1, trade.xyz unpaid), off-hours pricing (Bitget smoothed Pyth/dxFeed, trade.xyz book-driven). docs/reviews/2026-09-30-bitget-hyperliquid.md"
+      }
+    }
+  ],
   "refusedCandidates": [
     {
       "venue": "bitget",
-      "venueSymbol": "stock-linked symbols",
-      "reason": "Public Bitget discovery was DNS-blocked; contract multiplier, economic exposure, and trading schedule were not verified against live primary data."
+      "venueSymbol": "stock-linked symbols other than the ten in the reviewed mappings",
+      "reason": "Only the reviewed USDT-M stock perpetuals have verified settlement, schedule, and exposure evidence; spot, Reality, and other perpetuals remain unreviewed."
     },
     {
       "venue": "hyperliquid_hip3",
-      "venueSymbol": "equity HIP-3 symbols",
-      "reason": "Live classification was observed, but collateral token identity, minimum notional, and trading schedule remain unverified."
+      "venueSymbol": "equity HIP-3 symbols other than the ten reviewed xyz markets",
+      "reason": "Collateral token identity, minimum notional, and trading schedule are verified only for the reviewed xyz markets."
     },
     {
       "venue": "extended",
