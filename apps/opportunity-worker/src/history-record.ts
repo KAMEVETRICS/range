@@ -1,6 +1,24 @@
 import { createHash } from "node:crypto";
 import type { Topic, TopicPayload } from "@range/event-bus";
-import type { StoredEvent } from "@range/storage";
+import { CitationPendingError, type StoredEvent } from "@range/storage";
+
+/**
+ * Evidence cites books and funding a second or two before their own history writers record them, and a result cites its
+ * evidence the same way. Such a batch waits and tries again here: thrown straight to the broker client, each one crashed
+ * its consumer through retries and a rebalance (about 1,600 errors an hour). Fifteen tries a second apart stay inside
+ * the broker's 30 s session timeout; after that the error goes to the broker client as before.
+ */
+export async function writeOnceCited(write: () => Promise<void>,
+  options: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<void> {
+  const { attempts = 15, delayMs = 1_000, sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)) } = options;
+  for (let attempt = 1; ; attempt++) {
+    try { return await write(); }
+    catch (error) {
+      if (!(error instanceof CitationPendingError) || attempt >= attempts) throw error;
+      await sleep(delayMs);
+    }
+  }
+}
 
 let syntheticEventSequence = 0;
 function eventId<T extends Topic>(topic: T, event: TopicPayload[T], acceptedAtMs: number): string {

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import Redis from "ioredis-mock";
 import { DataType, newDb } from "pg-mem";
 import { CurrentStateStore, type RedisCommands } from "./current-state.js";
-import { HistoryStore, PostgresRevisionAuthority } from "./history.js";
+import { CitationPendingError, HistoryStore, PostgresRevisionAuthority } from "./history.js";
 import { OpportunitySchema, type Opportunity } from "@range/domain";
 import { InMemoryEventBus, parseEvent } from "@range/event-bus";
 import { InstrumentRegistry } from "@range/instruments";
@@ -405,7 +405,7 @@ describe("history retention", () => {
       client.query = ((sql: string, values?: unknown[]) => { statements.push(sql); return query(sql, values); }) as typeof client.query;
       return client;
     });
-    await expect(history.append(evidence(["evt_book_later"], now))).rejects.toThrow(/not yet recorded/);
+    await expect(history.append(evidence(["evt_book_later"], now))).rejects.toBeInstanceOf(CitationPendingError);
     expect(statements.some(sql => sql.includes("event_log_cursor"))).toBe(false);
     await history.append(book("evt_book_later", now));
     await history.append(evidence(["evt_book_later"], now));
@@ -418,7 +418,7 @@ describe("history retention", () => {
     const result = { eventId: "evt_result", topic: "opportunity.v1" as const, key: "equity:TSLA", underlyingId: "equity:TSLA",
       acceptedAtMs: now, archiveId: "archive1", calculationVersion: "calc.v1",
       payload: OpportunitySchema.parse({ ...opportunity(1, now + 1000), evidenceHash: `sha256:${"b".repeat(64)}` }) };
-    await expect(history.append(result)).rejects.toThrow(/not yet recorded/);
+    await expect(history.append(result)).rejects.toBeInstanceOf(CitationPendingError);
     await history.append(book("evt_book_cited", now));
     await history.append(evidence(["evt_book_cited"], now));
     await history.append(result);

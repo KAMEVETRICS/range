@@ -1,6 +1,19 @@
 import { expect, it } from "vitest";
 import { hashCanonical } from "@range/evidence";
-import { historyRecord, keptInHistory } from "./history-record.js";
+import { CitationPendingError } from "@range/storage";
+import { historyRecord, keptInHistory, writeOnceCited } from "./history-record.js";
+
+it("waits for cited records instead of failing a batch, only for that reason and only so long", async () => {
+  const sleeps: number[] = [];
+  const sleep = async (ms: number) => { sleeps.push(ms); };
+  let calls = 0;
+  await writeOnceCited(async () => { if (++calls < 3) throw new CitationPendingError("Evidence sources are not yet recorded"); }, { sleep });
+  expect(calls).toBe(3);
+  expect(sleeps).toEqual([1_000, 1_000]);
+  await expect(writeOnceCited(async () => { throw new Error("Event is immutable"); }, { sleep })).rejects.toThrow("immutable");
+  await expect(writeOnceCited(async () => { throw new CitationPendingError("pending"); }, { sleep, attempts: 3 }))
+    .rejects.toBeInstanceOf(CitationPendingError);
+});
 
 const context = { archiveId: "archive_test", calculationVersion: "range.calc.v1" };
 const health = { venue: "bitget", connectionState: "connected", lastEventAgeMs: 10, clockSkewMs: 0,

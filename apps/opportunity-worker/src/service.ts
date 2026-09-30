@@ -9,7 +9,7 @@ import { createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@r
 import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersistentOpportunityWorker,
   type RedisCommands, type SqlPool } from "@range/storage";
 import { checkWorkerHealth } from "./health.js";
-import { historyRecord, keptInHistory } from "./history-record.js";
+import { historyRecord, keptInHistory, writeOnceCited } from "./history-record.js";
 import { MarketBoard, newestPerInstrument } from "./market-board.js";
 import { createReviewedMappingSeeder } from "./mapping-seeder.js";
 
@@ -38,7 +38,7 @@ async function main() {
 
   // History writers take batches: one transaction and one ordinal block per batch, not per event.
   const persist = <T extends Topic>(topic: T, keyOf: (event: TopicPayload[T]) => string) => (events: TopicPayload[T][]) =>
-    history.appendMany(events.map(event => historyRecord(topic, keyOf(event), event, { archiveId, calculationVersion })));
+    writeOnceCited(() => history.appendMany(events.map(event => historyRecord(topic, keyOf(event), event, { archiveId, calculationVersion }))));
   stops.push(await bus.subscribeBatch("instrument.registry.v1", "history-instruments", persist("instrument.registry.v1", () => "registry")));
   const persistBooks = persist("book.state.v1", event => event.instrumentId);
   stops.push(await bus.subscribeBatch("book.state.v1", "history-books", events => persistBooks(events.filter(keptInHistory))));

@@ -68,6 +68,9 @@ function isRepeatedObservation(stored: unknown, incoming: StoredEvent): boolean 
   return before !== undefined && before === venueData(incoming.payload);
 }
 
+/** A batch cites source events or evidence that history has not recorded yet; it succeeds once they are. */
+export class CitationPendingError extends Error {}
+
 /** Postgres binds at most 65,535 parameters in one statement. */
 const MAX_PARAMETERS = 65_535;
 
@@ -263,12 +266,12 @@ export class HistoryStore {
     const bundles = events.flatMap(event => event.topic === "evidence.bundle.v1" && "sourceEventIds" in event.payload ? [event.payload] : []);
     const batchHashes = new Set(bundles.map(bundle => bundle.evidenceHash));
     if (await missing("event_log", "event_id", bundles.flatMap(bundle => bundle.sourceEventIds).filter(id => !batchIds.has(id)))) {
-      throw new Error("Evidence sources are not yet recorded");
+      throw new CitationPendingError("Evidence sources are not yet recorded");
     }
     const cited = events.flatMap(event => event.topic === "opportunity.v1" && "stateRevision" in event.payload && event.payload.evidenceHash
       ? [event.payload.evidenceHash] : []);
     if (await missing("evidence", "evidence_hash", cited.filter(hash => !batchHashes.has(hash)))) {
-      throw new Error("Cited evidence is not yet recorded");
+      throw new CitationPendingError("Cited evidence is not yet recorded");
     }
   }
 
