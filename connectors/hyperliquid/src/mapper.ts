@@ -272,7 +272,9 @@ function rawEvent(
   transport: RawVenueEvent["transport"],
 ): RawVenueEvent {
   const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
-  // A reviewed market's book carries no flags: its schedule is verified, and tick size does not affect a quote.
+  // A reviewed market's book carries no flags: its schedule is verified, and tick size does not affect a quote. Like
+  // Bitget's unreviewed listings, every other market's book is reference-only: it feeds the market board, never a
+  // quote, and it stays out of history, which keeps only books evidence can cite.
   const reviewed = instrument.capabilities.includes("reviewed_equity_perp");
   return {
     eventId: `evt_hyperliquid_${instrument.instrumentId}_${payload.kind}_${sourceTimestampMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
@@ -282,7 +284,7 @@ function rawEvent(
     freshnessBudgetMs: 5_000,
     qualityFlags: reviewed ? [] : ["dynamic_tick_size", "trading_schedule_unverified"],
     rawPayloadRefOrHash,
-    eligibility: "live",
+    eligibility: reviewed ? "live" : "reference_only",
     payload: CanonicalObservationPayloadSchema.parse(payload),
   };
 }

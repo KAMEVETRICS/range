@@ -83,8 +83,16 @@ it("builds executable depth only from actual l2Book levels", () => {
   });
   // xyz:TSLA is a reviewed market, so its book carries no quality flags.
   expect(book.qualityFlags).toEqual([]);
+  expect(book.eligibility).toBe("live");
   expect(JSON.stringify(book.payload)).not.toContain("impactPxs");
   expect(JSON.stringify(book.payload)).not.toContain("midPx");
+});
+
+it("keeps an unreviewed market's book reference-only", () => {
+  const instrument = mapMetaAndContexts(fixture("meta-and-contexts"), "xyz", fixture("perp-categories"), observedAtMs).instruments[0]!;
+  const unreviewed = { ...instrument, capabilities: instrument.capabilities.filter(capability => capability !== "reviewed_equity_perp") };
+  const book = mapHyperliquidBook(fixture("l2-book"), unreviewed, "rest");
+  expect(book).toMatchObject({ eligibility: "reference_only", qualityFlags: ["dynamic_tick_size", "trading_schedule_unverified"] });
 });
 
 it("preserves realized funding timestamps and rejects malformed websocket frames", () => {
