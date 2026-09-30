@@ -19,7 +19,7 @@ On the VPS the dashboard is served at `https://range.datatides.xyz` by the host'
 
 ## Reference venues on the Markets page
 
-The Markets page compares Bitget with every other venue by ticker. Besides the Bitget, Hyperliquid, Extended, and Ondo Perps connectors, six reference-only connectors read public market data in bulk, one top-of-book level per market and funding, and never feed opportunities:
+The Markets page compares Bitget with every other venue by ticker. Besides the Bitget, Hyperliquid, Extended, and Ondo Perps connectors, seven reference-only connectors read public market data in bulk, one top-of-book level per market and funding, and never feed opportunities:
 
 | Connector | Source | Cadence | Stock listings |
 | --- | --- | --- | --- |
@@ -28,8 +28,9 @@ The Markets page compares Bitget with every other venue by ticker. Besides the B
 | `connector-pacifica` | one book read per market, prices feed for funding | 20 s (about 45 of Pacifica's 1,000 credits a minute) | reviewed list |
 | `connector-lighter` | `market_stats/all` WebSocket (REST allows 60 requests a minute) | stream, read every 5 s | reviewed list |
 | `connector-variational` | `/metadata/stats` | 10 s | reviewed list |
+| `connector-qfex` | REST `/refdata`; `bbo` and `funding` channels of `wss://mds.qfex.com` for all markets (public, no key) | stream, read every 5 s | `product_category` EQUITY, USD-quoted |
 
-Pacifica, Lighter, and Variational have no asset-class field, so their stocks are reviewed lists in each connector's `mapper.ts`; add a newly listed stock there. Lighter and Variational quotes have no sizes, and Variational's funding is stated as an annual fraction. When venues name one share differently (Aster's BBX is BlackBerry, BB), add the alias to `TICKER_ALIASES` in `packages/application/src/market-overview.ts`. A listing priced more than 1.5× from its row's median is left out as a different instrument or unit under the same ticker (Extended quotes XIAOMI near 25 where other venues quote 3.2). QFEX, Nado, and Ondo Stocks need API keys and are not connected.
+Pacifica, Lighter, and Variational have no asset-class field, so their stocks are reviewed lists in each connector's `mapper.ts`; add a newly listed stock there. Lighter and Variational quotes have no sizes, and Variational's funding is stated as an annual fraction. QFEX rounds its hourly `funding_rate` to five places, so the hourly rate comes from `annualised_funding_rate` / 8,760. When venues name one share differently (Aster's BBX is BlackBerry, BB), add the alias to `TICKER_ALIASES` in `packages/application/src/market-overview.ts`. A listing priced more than 1.5× from its row's median is left out as a different instrument or unit under the same ticker (Extended quotes XIAOMI near 25 where other venues quote 3.2). Not connected: Nado (its API answered 403) and Ondo Stocks (needs an API key).
 
 ## Correctness alerts
 
