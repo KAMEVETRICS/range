@@ -85,6 +85,28 @@ describe("opportunity worker", () => {
     await restarted.stop();
   });
 
+  it("charges a leg the taker fee its funding carries, and the venue's configured fee otherwise", async () => {
+    const bus = new InMemoryEventBus();
+    const seen: Opportunity[] = [];
+    await bus.subscribe("opportunity.v1", "fees-from-funding", async event => { seen.push(event); });
+    const worker = await startOpportunityWorker(bus, reviewedRegistry(), policy);
+    await publishEligibleInputs(bus);
+    await worker.flush();
+    const latestActionable = () => seen.filter(item => item.status === "actionable").at(-1);
+    expect(latestActionable()?.tradingFeesBps).toBe("6");
+
+    // venue_b now states its fee with its funding, as trade.xyz does for a market in growth mode.
+    await bus.publish("funding.observation.v1", "ins_b", {
+      eventId: "evt_funding_venue_b_fee", schemaVersion: 1, venue: "venue_b", instrumentId: "ins_b", transport: "rest",
+      sourceTimestamp: NOW - 8, receivedTimestamp: NOW - 4, freshnessBudgetMs: 2_000, qualityFlags: [],
+      rawPayloadRefOrHash: "sha256:funding-fee", eligibility: "live", payload: { kind: "funding", rateType: "predicted",
+        rate: "0.0001", positiveRatePayer: "long", intervalMs: 28_800_000, nextSettlementMs: NOW + 1_000, takerFeeBps: "0.5" },
+    } as never);
+    await worker.flush();
+    expect(latestActionable()?.tradingFeesBps).toBe("3.5");
+    await worker.stop();
+  });
+
   it("replays the registry under a fresh group that is deleted when the worker stops", async () => {
     const bus = new InMemoryEventBus();
     const subscribe = vi.spyOn(bus, "subscribe");

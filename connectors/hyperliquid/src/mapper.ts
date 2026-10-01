@@ -28,7 +28,32 @@ const universeRow = z.object({
   marginMode: z.string().optional(),
   onlyIsolated: z.boolean().optional(),
   growthMode: z.string().optional(),
+  deployerFeeScale: nonnegative.optional(),
 });
+
+/** Hyperliquid's base-tier taker fee on validator-operated perps, in hundredths of a basis point (0.045%). */
+const BASE_TAKER_CENTI_BPS = 450n;
+
+/**
+ * The taker fee, in bps, a base-tier account pays on a HIP-3 market, by Hyperliquid's published formula
+ * (https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees): the 0.045% base rate, scaled by the deployer fee
+ * scale (1 + scale below 1, twice the scale from 1), and cut to a tenth while the market is in growth mode. Referral
+ * and aligned-collateral discounts only lower it, so leaving them out keeps the fee on the safe side. Exact: the scale
+ * is a decimal string and the result is too.
+ */
+export function hip3TakerFeeBps(deployerFeeScale: string, growthMode: boolean): string {
+  const [whole = "0", fraction = ""] = deployerFeeScale.split(".");
+  const unit = 10n ** BigInt(fraction.length);
+  const scale = BigInt(whole) * unit + BigInt(fraction || "0");
+  const hip3 = scale < unit ? scale + unit : 2n * scale;
+  // centi-bps × hip3 × unit, then a tenth in growth mode: divide by 100 × unit (× 10) for bps.
+  const numerator = BASE_TAKER_CENTI_BPS * hip3;
+  const digits = 2 + fraction.length + (growthMode ? 1 : 0);
+  const text = numerator.toString().padStart(digits + 1, "0");
+  const integer = text.slice(0, -digits);
+  const decimals = text.slice(-digits).replace(/0+$/, "");
+  return decimals ? `${integer}.${decimals}` : integer;
+}
 const contextRow = z.object({
   funding: decimal,
   openInterest: nonnegative,
@@ -227,9 +252,11 @@ export function mapHyperliquidFunding(
       throw new Error();
     }
     const bySymbol = new Map(meta.universe.map((row, index) => [row.name, contexts[index]!]));
+    const universeBySymbol = new Map(meta.universe.map(row => [row.name, row]));
     const nextSettlementMs = (Math.floor(receivedAtMs / HOUR_MS) + 1) * HOUR_MS;
     return instruments.flatMap((instrument): RawVenueEvent[] => {
       const ctx = bySymbol.get(instrument.venueSymbol);
+      const row = universeBySymbol.get(instrument.venueSymbol);
       const asset = stripDexPrefix(instrument.venueSymbol, dex);
       if (!ctx || !asset) return [];
       const multiplier = fundingMultipliers.get(asset);
@@ -239,7 +266,12 @@ export function mapHyperliquidFunding(
       const reviewed = instrument.capabilities.includes("reviewed_equity_perp");
       const qualityFlags = reviewed ? [] : ["client_receipt_timestamp", "hourly_settlement_assumed"];
       if (!reviewed && multiplier !== undefined && Number(multiplier) !== 1) qualityFlags.push("funding_multiplier_unverified");
-      const raw = { coin: instrument.venueSymbol, funding: ctx.funding };
+      // The market's taker fee rides with its funding: the same snapshot carries what sets it, refreshed every minute,
+      // so a market leaving growth mode is charged the full fee within one refresh. Only "enabled" counts as growth mode.
+      const takerFeeBps = row?.deployerFeeScale === undefined ? undefined
+        : hip3TakerFeeBps(row.deployerFeeScale, row.growthMode === "enabled");
+      const raw = { coin: instrument.venueSymbol, funding: ctx.funding,
+        ...(row?.deployerFeeScale === undefined ? {} : { deployerFeeScale: row.deployerFeeScale, growthMode: row.growthMode ?? null }) };
       const rawPayloadRefOrHash = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
       return [{
         eventId: `evt_hyperliquid_${instrument.instrumentId}_funding_${receivedAtMs}_${rawPayloadRefOrHash.slice(0, 16)}`,
@@ -251,7 +283,7 @@ export function mapHyperliquidFunding(
         rawPayloadRefOrHash,
         eligibility: reviewed ? "live" : "reference_only",
         payload: CanonicalObservationPayloadSchema.parse({ kind: "funding", rateType: "predicted", rate: ctx.funding,
-          positiveRatePayer: "long", intervalMs: HOUR_MS, nextSettlementMs }),
+          positiveRatePayer: "long", intervalMs: HOUR_MS, nextSettlementMs, ...(takerFeeBps === undefined ? {} : { takerFeeBps }) }),
       }];
     });
   });

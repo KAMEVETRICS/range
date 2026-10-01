@@ -29,7 +29,7 @@
 
 ## Operating settings
 
-- Worker fees: Bitget 6 bps, trade.xyz 9 bps taker (standard rate; growth mode would be 0.9 bps, so edges are understated while it lasts). Slippage buffer 1 bp per leg beyond the order book walk.
+- Worker fees: Bitget 6 bps taker. trade.xyz was charged its standard 9 bps until the fee review below (2026-10-01); since then each market pays its live taker fee. Slippage buffer 1 bp per leg beyond the order book walk.
 - To stay inside the 2 s perp-spread quote budget, Bitget books for these symbols are 50-level snapshots delivered every 500 ms (other listings: 5 levels every 10 s), and trade.xyz books for them come from Hyperliquid's fast book stream, about every 0.5 s.
 - Books became executable with this approval. Funding stayed reference-only until its own review, approved later the same day (see Funding review below), which confirmed that trade.xyz's published rate already includes its 0.5 multiplier.
 
@@ -54,3 +54,17 @@ Every perpetual leg needs live funding: the evaluator projects funding over the 
 Observed: Bitget's 08:00 UTC settlement (outside US hours) was 0 for both NVDA and TSLA on 09-29 and 09-30, while its 16:00 and 00:00 settlements were not.
 
 Approved by kongclaves on 2026-09-30 at 10:23:51 UTC, accepting receipt time as trade.xyz's observation time. Funding for the ten reviewed listings is live with no quality flags and states that longs pay on a positive rate; Bitget's executable funding keeps for 60 s (tickers every 10 s), trade.xyz's for 120 s (read every 60 s).
+
+## Fee review (2026-10-01)
+
+trade.xyz runs most of its stock markets in growth mode, which cuts their fees to a tenth. Until this review Range charged every trade.xyz leg the standard taker fee, 9 bps, which understated every edge by about 8 bps.
+
+| Item | Finding |
+| --- | --- |
+| Fee table | Tier 0 taker 0.090% standard, 0.0090% in growth mode. Growth mode never applies to crypto-holding vehicles such as MSTR. [trade.xyz fees](https://docs.trade.xyz/perpetuals/mechanics/fees) |
+| Formula | Base-tier taker fee = 0.045% × HIP-3 scale × 0.1 in growth mode, where the HIP-3 scale is the deployer fee scale plus 1 below 1, otherwise twice the scale. Referral and aligned-collateral discounts only lower it. [Hyperliquid fees](https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees) |
+| Live settings | `metaAndAssetCtxs` for dex `xyz` on 2026-10-01: NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN and HOOD have `growthMode` "enabled" and `deployerFeeScale` "1.0", so 0.9 bps. MSTR has no growth mode and scale "1.0", so 9 bps. Collateral token 0 is USDC, treated as not aligned, which keeps the fee at the higher figure. |
+
+How Range applies it: the connector computes each market's taker fee from the same `metaAndAssetCtxs` snapshot it reads for funding every 60 s, and states it on the funding observation (`takerFeeBps`). The worker charges a leg the fee carried by the funding observations its projection cites, so the fee is never older than the funding (120 s budget) and the evidence cites where it came from. A market that leaves growth mode pays the full fee within a minute; a snapshot without a deployer fee scale falls back to the configured 9 bps.
+
+Approved on 2026-10-01 by the project owner, who asked for trade.xyz to be priced at its current fee.
