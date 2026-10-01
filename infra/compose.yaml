@@ -118,8 +118,11 @@ services:
         limits: { cpus: "1.0", memory: 1024M }
         reservations: { memory: 256M }
 
+  # Reserved for the raw-event archive, which nothing reads or writes yet. Docker Hub now denies pulls of this image, so
+  # MinIO starts only with `--profile archive`, and a plain `up` no longer fails on it.
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: [archive]
     logging: *logging
     restart: unless-stopped
     command: [server, /data, --console-address, ":9001"]
