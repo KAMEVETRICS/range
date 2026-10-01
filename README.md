@@ -149,11 +149,9 @@ The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The M
 
 ## Documentation
 
-- [Design](docs/superpowers/specs/2026-09-20-range-design.md) and [implementation plan](docs/superpowers/plans/2026-09-20-range-implementation.md)
+- [Design](docs/design.md)
 - [Operations runbook](docs/operations/runbook.md)
 - [Release gate and verifier status](docs/operations/demo.md)
 - [Credentials](docs/operations/credentials.md)
 - [Venue enablement](docs/operations/venue-enablement.md)
 - [Bitget and trade.xyz review](docs/reviews/2026-09-30-bitget-hyperliquid.md)
-
-[`track 3/capital-rotation.md`](<track 3/capital-rotation.md>) is a brief for a separate Track 3 project; it is not part of Range.
