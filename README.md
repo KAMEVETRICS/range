@@ -75,7 +75,7 @@ docker compose -f infra/compose.yaml --env-file ../range.env up -d --build
 
 The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
 
-The Markets page needs only the connectors, but the scanner may stay empty on a new stack. Each reviewed mapping pins its members' instrument version and metadata hash as the live deployment's registry numbered them. A new registry can number the same metadata differently, and the worker then leaves the mapping unpublished rather than guess. To evaluate the pairs on your own stack, read your registry's pins with `scripts/reviewed-mapping-members.ts` and publish the mappings again at a higher `mappingVersion`, as the runbook's "Reviewed mappings" section describes.
+The Markets page needs only the connectors. The scanner's pairs appear once both venues' connectors have published listings whose metadata matches the reviewed hashes. If a venue has changed a listing since the review, such as its lot size or trading hours, its pair stays off until the change is reviewed (fail-closed).
 
 ## Tests
 

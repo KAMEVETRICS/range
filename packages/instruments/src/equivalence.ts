@@ -49,7 +49,10 @@ export const SeedMappingSchema = ReviewedMappingSchema.omit({ members: true }).e
     venue: z.string().trim().min(1),
     venueFamily: z.string().trim().min(1).optional(),
     venueSymbol: z.string().trim().min(1),
-    instrumentVersion: z.number().int().positive(),
+    // A review pins the metadata hash, which every registry computes alike. The optional version only records what the
+    // reviewing deployment's registry numbered that metadata: registries number versions in the order they see
+    // metadata, so another one can number it differently, and matching ignores it.
+    instrumentVersion: z.number().int().positive().optional(),
     metadataHash: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict()).min(2),
   // Operational release evidence is kept beside the reviewed declaration but

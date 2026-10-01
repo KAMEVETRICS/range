@@ -1,5 +1,6 @@
-// Prints the instrument version and metadata hash a reviewed mapping must pin for each named listing, by replaying the
-// instrument registry topic the way the opportunity worker does. Feed it the topic as JSON lines:
+// Prints the metadata hash a reviewed mapping must pin for each named listing, with the version this registry numbers
+// it (recorded, not matched), by replaying the instrument registry topic the way the opportunity worker does. Feed it
+// the topic as JSON lines:
 //
 //   rpk topic consume instrument.registry.v1 -o start -n <high watermark> -f '%v\n' |
 //     pnpm tsx scripts/reviewed-mapping-members.ts bitget/USDT-FUTURES:NVDAUSDT hyperliquid_hip3/hyperliquid:xyz:NVDA

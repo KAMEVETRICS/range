@@ -42,6 +42,16 @@ describe("mapping seed", () => {
     expect(() => prepareSeed(config, [item])).toThrow(/unknown or ambiguous venue symbol/i);
   });
 
+  it("matches members by their reviewed metadata hash, whatever version this catalog numbers them", () => {
+    const config = withMapping();
+    config.mappings[0]!.members[0]!.instrumentVersion = 2;
+    expect(prepareSeed(config, [item, hip3]).reviewedMappings[0]!.members.map(member => member.instrumentVersion)).toEqual([1, 1]);
+  });
+
+  it("refuses a member whose metadata differs from the reviewed hash", () => {
+    expect(() => prepareSeed(withMapping(), [InstrumentSchema.parse({ ...item, lotSize: "1" }), hip3])).toThrow(/metadata hash mismatch/i);
+  });
+
   it("dry run prints a diff and does not create or replace output", async () => {
     const directory = await mkdtemp(join(tmpdir(), "range-seed-"));
     try {
