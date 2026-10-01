@@ -30,8 +30,8 @@
 ## Operating settings
 
 - Worker fees: Bitget 6 bps, trade.xyz 9 bps taker (standard rate; growth mode would be 0.9 bps, so edges are understated while it lasts). Slippage buffer 1 bp per leg beyond the order book walk.
-- Bitget books for these symbols refresh every 500 ms (others every 5 s) to stay inside the 2 s perp-spread quote budget.
-- Only books become executable. Funding stays reference-only, so funding-differential results remain unavailable until funding is reviewed (trade.xyz's 0.5 multiplier and its effect on the published rate still need checking).
+- To stay inside the 2 s perp-spread quote budget, Bitget books for these symbols are 50-level snapshots delivered every 500 ms (other listings: 5 levels every 10 s), and trade.xyz books for them come from Hyperliquid's fast book stream, about every 0.5 s.
+- Books became executable with this approval. Funding stayed reference-only until its own review, approved later the same day (see Funding review below), which confirmed that trade.xyz's published rate already includes its 0.5 multiplier.
 
 ## Approval
 

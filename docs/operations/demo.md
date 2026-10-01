@@ -29,6 +29,14 @@ The eight verifier lines cover connector health, reviewed multi-venue mapping, R
 
 ## Current evidence status
 
-The repository intentionally has zero reviewed live mappings. Therefore the release verifier is expected to fail the mapping invariant and cannot honestly prove actionable opportunity, intent, fault, or replay invariants yet. The Docker runtime is unavailable on the implementation host, so Compose build/up/down remains a mandatory Docker-host gate. Neither condition may be represented as a pass.
+As of 2026-09-30, ten reviewed mappings are live: Bitget USDT-M stock perpetuals against trade.xyz (Hyperliquid HIP-3) for NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN, MSTR, and HOOD. Their books were approved first and their funding later the same day; the evidence and accepted differences are in `docs/reviews/2026-09-30-bitget-hyperliquid.md`. The Compose stack runs on the VPS behind `https://range.datatides.xyz`, and every deploy first runs `pnpm test:unit` on that host, including the Redpanda container test. The development workstation still has no Docker.
+
+No verifier run against that deployment is recorded. A run would fail invariants 2, 6, 7, and 8 whatever the market does, and 4 and 5 whenever nothing is actionable:
+
+- **Mapping evidence (2):** the reviewed mappings state their proofs as prose with the sources inline and carry no `liveEvidence`, while the verifier needs every proof field and each venue's `liveEvidence` entry as an HTTPS or `sha256:` reference. Its default `RANGE_DEMO_VENUES` also includes Extended, which has no reviewed mapping; set `RANGE_DEMO_VENUES=bitget,hyperliquid_hip3`.
+- **Actionable output and intent (4, 5):** these need a current actionable opportunity. On the reviewed pairs, taker fees (Bitget 6 bps, trade.xyz 9 bps at its standard rate) and a 1 bp slippage buffer per leg come to about 17 bps. Gross spreads observed on 2026-09-30 were about 4 to 12 bps, so the pairs' results were rejected, with reasons, rather than actionable.
+- **Fault containment, replay, and redaction (6, 7, 8):** no fault controller, replay fixture, or telemetry export URL is deployed. Replay (7) also needs the evidence hash of an actionable opportunity from invariant 4.
+
+None of these may be represented as a pass.
 
 The dashboard is available at `http://127.0.0.1:4173`. Its reverse proxy injects a dedicated read-only dashboard token server-side; that principal cannot call intent POST routes, and no credential is shipped to browser JavaScript. The gateway REST/MCP endpoint is `http://127.0.0.1:8080`.

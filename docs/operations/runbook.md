@@ -2,7 +2,7 @@
 
 ## Start and verify
 
-Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN` (24+ random characters), and a different `RANGE_DASHBOARD_READ_TOKEN` (24+ random characters). The dashboard token is read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
+Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN`, and a different `RANGE_DASHBOARD_READ_TOKEN`. Each token needs 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_`, and `-` (for example `openssl rand -hex 32`): the gateway starts with 24, but rejects shorter tokens on every request. The dashboard token is read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
 
 ```powershell
 docker compose -f infra/compose.yaml up -d --build
@@ -11,11 +11,11 @@ pnpm test:e2e
 pnpm tsx scripts/verify-demo.ts
 ```
 
-The verifier is intentionally fail-closed. On the checked-in empty mapping seed it must report a failed live-mapping invariant and dependent actionable-flow failures. Do not override or hand-edit proof output to obtain eight passes.
+The verifier is intentionally fail-closed. The checked-in reviewed mappings carry prose proofs and no `liveEvidence`, so it reports a failed live-mapping invariant, and the actionable-flow invariants fail whenever nothing is actionable; `docs/operations/demo.md` lists what each invariant still needs. Do not override or hand-edit proof output to obtain eight passes.
 
 ## Public dashboard
 
-On the VPS the dashboard is served at `https://range.datatides.xyz` by the host's Caddy, which also serves other sites; its site block lives in `/etc/caddy/Caddyfile`, outside this repository. Since 2026-09-29 it is public for a hackathon: Caddy forwards to the dashboard container on `127.0.0.1:4173` without a login, and the container's nginx adds the read-only dashboard token (`market:read`, `opportunity:read`) to API calls, so the browser never holds it. Anyone can read what the dashboard shows; nothing can be changed through it. Every visitor shares the dashboard client's gateway rate limits (600 market overviews, 10 opportunity scans, and 60 of each other operation per minute), so heavy use or a bot can make the page show rate-limit errors for up to a minute. To require a login again, add a `basic_auth` block (hash from `caddy hash-password`) to the site, run `caddy validate --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`; a reload does not interrupt the other sites.
+On the VPS the dashboard is served at `https://range.datatides.xyz` by the host's Caddy, which also serves other sites; its site block lives in `/etc/caddy/Caddyfile`, outside this repository. Since 2026-09-29 it is public for a hackathon: Caddy forwards to the dashboard container on `127.0.0.1:4173` without a login, and the container's nginx adds the read-only dashboard token (`market:read`, `opportunity:read`) to API calls, so the browser never holds it. Anyone can read what the dashboard shows; nothing can be changed through it. Every visitor shares the dashboard client's gateway rate limits: 600 calls a minute each for the market overview, pair evaluations, opportunity scans, and opportunity inspections, which the page polls, and 60 a minute for every other operation. Heavy use or a bot can make the page show rate-limit errors for up to a minute. To require a login again, add a `basic_auth` block (hash from `caddy hash-password`) to the site, run `caddy validate --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`; a reload does not interrupt the other sites.
 
 ## Reference venues on the Markets page
 
