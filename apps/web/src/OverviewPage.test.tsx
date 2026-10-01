@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "./test-setup.js";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardApi, PairEvaluation, VenueView } from "./api/client.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
@@ -35,11 +35,16 @@ describe("overview", { timeout: 15_000 }, () => {
     render(<OverviewPage api={api()} now={() => NOW} />);
     const summary = await screen.findByLabelText("Live summary");
     // One row per stock, its best trade, closest to actionable first.
-    expect(await within(summary).findByText("1/2", { selector: ".kpi:first-child dd" })).toBeVisible();
-    expect(within(summary).getByText("+2.50 bps")).toHaveClass("positive");
+    const value = (index: number) => summary.querySelectorAll(".kpi-value")[index]!;
+    await waitFor(() => expect(value(0)).toHaveTextContent("1/2"));
+    expect(value(0)).toHaveClass("positive");
+    expect(summary.querySelectorAll(".kpi:first-child .capsules span")).toHaveLength(2);
+    expect(summary.querySelectorAll(".kpi:first-child .capsules .on")).toHaveLength(1);
+    expect(value(1)).toHaveTextContent("+2.50 bps");
+    expect(value(1)).toHaveClass("positive");
     expect(within(summary).getByText("TSLA · Price spread · buy Bitget")).toBeVisible();
-    expect(within(summary).getByText("16.5 bps")).toBeVisible();
-    expect(await within(summary).findByText("1/2", { selector: ".kpi:last-child dd" })).toBeVisible();
+    expect(value(2)).toHaveTextContent("16.5 bps");
+    await waitFor(() => expect(value(3)).toHaveTextContent("1/2"));
     expect(screen.getByText("Updated 1 s ago")).toBeVisible();
     const tickers = screen.getAllByRole("rowheader").map(header => header.textContent);
     expect(tickers).toEqual(["TSLA", "NVDA"]);

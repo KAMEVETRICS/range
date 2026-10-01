@@ -38,7 +38,7 @@ export function App({ api }: { api: DashboardApi }) {
   }, []);
   useEffect(() => { document.body.dataset.page = route.page; document.title = TITLES[route.page]; }, [route.page]);
   return (
-    <>
+    <div className="app-frame">
       <header className="topbar">
         <a className="brand" href="#overview" aria-label="Range overview"><BrandMark /><span>Range</span></a>
         <nav className="nav" aria-label="Dashboard pages">
@@ -51,6 +51,6 @@ export function App({ api }: { api: DashboardApi }) {
       {route.page === "overview" ? <OverviewPage api={api} />
         : route.page === "markets" ? <MarketsPage api={api} />
         : <OpportunitiesPage key={route.underlying ?? ""} api={api} {...(route.underlying ? { initialUnderlying: route.underlying } : {})} />}
-    </>
+    </div>
   );
 }

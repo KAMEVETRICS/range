@@ -22,6 +22,34 @@ function median(values: readonly number[]): number | undefined {
 
 const ageText = (ms: number) => ms < 60_000 ? `${Math.max(0, Math.round(ms / 1_000))} s` : `${Math.round(ms / 60_000)} min`;
 
+const Icon = ({ path }: { path: string }) => <svg viewBox="0 0 24 24"><path d={path} /></svg>;
+const ICONS = {
+  actionable: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17ZM8.5 12.2l2.4 2.4 4.6-5",
+  closest: "M4 16.5 9.5 11l3.5 3.5L20 7.5M14.5 7.5H20V13",
+  costs: "M6 3.5h12v17l-3-2-3 2-3-2-3 2ZM9 8.5h6M9 12h6",
+  venues: "M3 12h4l2.5-6 5 12 2.5-6h4",
+  depth: "M5 18v-6M9.5 18V8M14 18v-6M18.5 18V5",
+};
+
+/** One live figure: a large value with a small unit, and optionally a row of capsules, one per item, filled when it counts. */
+function Kpi({ label, icon, value, unit, tone, note, capsules, highlight = false }: {
+  label: string; icon: string; value: string; unit?: string; tone?: "positive" | "negative"; note: string;
+  capsules?: { filled: number; total: number }; highlight?: boolean;
+}) {
+  return (
+    <div className={`kpi${highlight ? " highlight" : ""}`}>
+      <dt><span className="kpi-icon" aria-hidden="true"><Icon path={icon} /></span>{label}</dt>
+      <dd className={`kpi-value${tone ? ` ${tone}` : ""}`}>{value}{unit && <span className="kpi-unit">{unit}</span>}</dd>
+      <dd className="kpi-note">{note}</dd>
+      {capsules && capsules.total > 0 && (
+        <dd className="capsules" aria-hidden="true">
+          {Array.from({ length: capsules.total }, (_, index) => <span key={index} className={index < capsules.filled ? "on" : undefined} />)}
+        </dd>
+      )}
+    </div>
+  );
+}
+
 /** The landing page: what Range does, how close each reviewed pair is to actionable, and whether every venue is live. */
 export function OverviewPage({ api, now = Date.now }: { api: DashboardApi; now?: () => number }) {
   const { pairs, asOfMs, error } = usePairEvaluations(api);
@@ -46,7 +74,13 @@ export function OverviewPage({ api, now = Date.now }: { api: DashboardApi; now?:
       <section className="hero" aria-labelledby="hero-heading">
         <div className="hero-copy">
           <p className="eyebrow">Tokenized-stock perpetuals · Bitget × trade.xyz</p>
-          <h1 id="hero-heading">Cross-venue stock arbitrage, <em>priced against real depth.</em></h1>
+          <h1 id="hero-heading">
+            Cross-venue{" "}
+            <span className="chip-inline" aria-hidden="true"><VenueIcon venue="bitget" /><VenueIcon venue="hyperliquid_hip3" /></span>
+            stock arbitrage, priced against{" "}
+            <span className="chip-inline lime" aria-hidden="true"><Icon path={ICONS.depth} /></span>
+            real depth.
+          </h1>
           <p>Range evaluates ten stock pairs on Bitget and trade.xyz on every order-book update, in both directions. It walks both books, nets out fees, slippage and funding, and keeps the evidence behind every result. Read-only: no keys, no orders.</p>
           <div className="hero-actions">
             <a className="button primary" href="#opportunities">Open the scanner</a>
@@ -54,26 +88,17 @@ export function OverviewPage({ api, now = Date.now }: { api: DashboardApi; now?:
           </div>
         </div>
         <dl className="kpis" aria-label="Live summary">
-          <div className="kpi">
-            <dt>Actionable now</dt>
-            <dd className={actionable ? "positive" : undefined}>{pairs ? `${actionable}/${rows.length}` : "–"}</dd>
-            <p>stocks with a trade clearing every cost</p>
-          </div>
-          <div className="kpi">
-            <dt>Closest to actionable</dt>
-            <dd className={best ? Number(best.netEdgeBps) >= 0 ? "positive" : "negative" : undefined}>{best ? formatBps(best.netEdgeBps) : "–"}</dd>
-            <p>{best ? `${tickerOf(best.underlyingId)} · ${STRATEGY_LABELS[best.strategy] ?? best.strategy} · buy ${pairVenueLabel(best.buy.venue)}` : "waiting for evaluations"}</p>
-          </div>
-          <div className="kpi">
-            <dt>Costs to clear</dt>
-            <dd>{costs === undefined ? "–" : `${costs.toFixed(1)} bps`}</dd>
-            <p>median fees and slippage per trade</p>
-          </div>
-          <div className="kpi">
-            <dt>Venues healthy</dt>
-            <dd>{venues ? `${healthy}/${venues.length}` : "–"}</dd>
-            <p>connected, in sequence, within rate limits</p>
-          </div>
+          <Kpi label="Actionable now" icon={ICONS.actionable} value={pairs ? String(actionable) : "–"}
+            {...(pairs ? { unit: `/${rows.length}`, capsules: { filled: actionable, total: rows.length } } : {})}
+            {...(actionable ? { tone: "positive" as const } : {})} note="stocks with a trade clearing every cost" />
+          <Kpi label="Closest to actionable" icon={ICONS.closest} highlight value={best ? formatBps(best.netEdgeBps).replace(/ bps$/, "").replace(/^-/, "−") : "–"}
+            {...(best ? { unit: " bps", tone: Number(best.netEdgeBps) >= 0 ? "positive" as const : "negative" as const } : {})}
+            note={best ? `${tickerOf(best.underlyingId)} · ${STRATEGY_LABELS[best.strategy] ?? best.strategy} · buy ${pairVenueLabel(best.buy.venue)}` : "waiting for evaluations"} />
+          <Kpi label="Costs to clear" icon={ICONS.costs} value={costs === undefined ? "–" : costs.toFixed(1)}
+            {...(costs === undefined ? {} : { unit: " bps" })} note="median fees and slippage per trade" />
+          <Kpi label="Venues healthy" icon={ICONS.venues} value={venues ? String(healthy) : "–"}
+            {...(venues ? { unit: `/${venues.length}`, capsules: { filled: healthy ?? 0, total: venues.length } } : {})}
+            note="connected, in sequence, within rate limits" />
         </dl>
       </section>
 
