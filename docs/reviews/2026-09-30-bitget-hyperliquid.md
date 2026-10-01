@@ -41,7 +41,7 @@ A listing whose metadata changes moves to a new version, which takes it out of i
 
 ## Funding review
 
-Every perpetual leg needs live funding: the evaluator projects funding over the holding horizon (8 hours) for any strategy, so without it even a pure price spread is rejected with `FUNDING_SEMANTICS_UNKNOWN`.
+Every perpetual leg needs live funding: the evaluator projects funding over the holding horizon (one hour in the deployment, `RANGE_HOLDING_HORIZON_MS`) for any strategy, so without it even a pure price spread is rejected with `FUNDING_SEMANTICS_UNKNOWN`.
 
 | Field | Bitget | trade.xyz (Hyperliquid) |
 | --- | --- | --- |

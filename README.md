@@ -32,7 +32,7 @@ flowchart LR
 
 1. **Connectors** read each venue's public feeds and publish listings, order books, funding and venue health as canonical events.
 2. **The instrument registry** versions each listing's metadata. Reviewed mappings in [`config/instrument-mappings.json`](config/instrument-mappings.json) join listings to one underlying, such as `equity:NVDA`. Only those mappings can produce actionable results, and a listing whose metadata changes drops out of its mapping until it is reviewed again.
-3. **The opportunity worker** keeps sequence-checked books and funding for every listing. For each reviewed pair it walks both books at the requested notional and nets out taker fees, a slippage buffer per leg, and funding projected over an 8-hour hold. It publishes the result with its evidence, writes current state to Redis and history to Postgres, from which results can be replayed.
+3. **The opportunity worker** keeps sequence-checked books and funding for every listing. For each reviewed pair it walks both books at the requested notional and nets out taker fees, a slippage buffer per leg, and funding projected over a one-hour hold. It publishes the result with its evidence, writes current state to Redis and history to Postgres, from which results can be replayed.
 4. **The gateway** serves one application layer over REST, SSE and MCP, with scoped bearer tokens and per-operation rate limits.
 5. **The dashboard** is a React app behind nginx, which adds a read-only token to API calls so the browser never holds one.
 
