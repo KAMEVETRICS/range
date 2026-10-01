@@ -29,6 +29,11 @@ export interface WorkerPolicy {
   synchronizationBudgetMs?: number;
   maxClockSkewMs?: number;
   calculationVersion?: string;
+  /**
+   * Called once, when the revision authority first fails. The worker then refuses all input (fail-closed) and never
+   * recovers by itself, so a production process should exit and be restarted, which rebuilds it from the logs.
+   */
+  onAuthorityLost?: () => void;
 }
 
 export interface OpportunityWorker {
@@ -97,6 +102,12 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   const assertAuthority = () => {
     if (authorityFailed) throw new Error("Revision authority unavailable");
   };
+  const loseAuthority = () => {
+    if (authorityFailed) return;
+    authorityFailed = true;
+    // The worker stays failed closed whatever the callback does.
+    try { policy.onAuthorityLost?.(); } catch { /* isolated */ }
+  };
   const acceptInput = (operation: () => Promise<void>): Promise<void> => {
     const result = accepting.then(async () => {
       assertAuthority();
@@ -124,7 +135,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         throw new Error(`Revision authority returned a non-increasing revision for ${underlyingId}`);
       }
     } catch (error) {
-      authorityFailed = true;
+      loseAuthority();
       throw new Error("Revision authority unavailable");
     }
     generations.set(underlyingId, revision);
@@ -142,7 +153,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
         }
       }
     } catch (error) {
-      authorityFailed = true;
+      loseAuthority();
       throw new Error("Revision authority unavailable");
     }
     for (const underlyingId of underlyingIds) generations.set(underlyingId, revisions.get(underlyingId)!);
