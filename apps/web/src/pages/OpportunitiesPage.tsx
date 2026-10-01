@@ -25,7 +25,6 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
   const picked = useRef(false);
   const [detail, setDetail] = useState<OpportunityDetailEnvelope>();
   const [invalidatedIds, setInvalidatedIds] = useState<Set<string>>(new Set());
-  const [liveMessage, setLiveMessage] = useState("Connecting to live updates…");
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
 
@@ -73,7 +72,6 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
   const latest = useRef({ filters, selectedId, opportunities });
   useEffect(() => { latest.current = { filters, selectedId, opportunities }; });
   const onStreamEvent = useCallback(async (event: DashboardStreamEvent) => {
-    setLiveMessage(event.message);
     const { filters: current, selectedId: selected, opportunities: shown } = latest.current;
     const listed = (id: string) => shown.some((item) => item.opportunityId === id);
     if (event.kind === "invalidation") {
@@ -121,7 +119,6 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
           <h1>Opportunities</h1>
           <p className="page-sub">Every reviewed pair's latest evaluation, and a scanner of the results that clear every cost. Pick a pair to scan its stock.</p>
         </div>
-        <div className="live-state"><span className="pulse" aria-hidden="true" /><p aria-live="polite">{liveMessage}</p></div>
       </header>
 
       <p className="disclaimer"><strong>Intelligence, not guaranteed profit.</strong> Values are application-service outputs from synchronized source evidence; Range does not submit orders, sign, hold assets, or manage wallets.</p>

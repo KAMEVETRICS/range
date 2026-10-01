@@ -94,8 +94,6 @@ p { text-wrap: pretty; }
 .status.ok { color: var(--pos); background: var(--pos-soft); }
 .status.warn { color: var(--warn); background: var(--warn-soft); }
 .status.bad { color: var(--neg); background: var(--neg-soft); }
-.pulse { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--pos); box-shadow: 0 0 0 0 rgb(27 138 82 / 45%); animation: pulse 2s infinite; }
-@keyframes pulse { 70% { box-shadow: 0 0 0 7px rgb(27 138 82 / 0%); } 100% { box-shadow: 0 0 0 0 rgb(27 138 82 / 0%); } }
 
 /* Data tables sit in a white inset inside their card. */
 .table-scroll { margin: 0 12px 12px; overflow-x: auto; border-radius: 20px; background: var(--white); }
@@ -179,14 +177,11 @@ p { text-wrap: pretty; }
 .venue-icon[data-venue="variational"] { color: #fff; background: #a78bfa; }
 
 /* Opportunities */
-.live-state { display: flex; align-items: center; gap: 10px; max-width: 46ch; padding: 10px 16px; border-radius: 999px; color: var(--ink-2); background: var(--white); font-size: 13px; }
-.live-state p { margin: 0; }
 .disclaimer { padding: 14px 18px; border-radius: 20px; color: var(--ink-2); background: var(--lime-soft); font-size: 13px; }
 .disclaimer strong { color: var(--ink); }
 .venue-strip { display: grid; gap: 10px; }
 .strip-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
 .strip-head h2 { margin: 0; font-size: 20px; font-weight: 500; letter-spacing: -.02em; }
-.strip-head p { margin: 0; color: var(--ink-3); font-size: 13px; }
 .venue-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .venue-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; background: var(--white); font-size: 13px; }
 .venue-chip .venue-icon { width: 26px; height: 26px; font-size: 8px; }
@@ -321,10 +316,6 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
 .cell-details dt { margin-bottom: 4px; color: var(--ink); font-family: var(--mono); font-size: 12px; font-weight: 700; }
 .cell-details dd { margin: 3px 0 0; color: var(--ink-2); font-family: var(--font); font-size: 12px; }
 .cell-details .flags { color: var(--warn); }
-
-@media (prefers-reduced-motion: reduce) {
-  .pulse { animation: none; }
-}
 
 @media (max-width: 1180px) {
   .hero { grid-template-columns: 1fr; gap: 22px; }

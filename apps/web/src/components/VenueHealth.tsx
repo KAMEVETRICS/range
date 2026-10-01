@@ -12,7 +12,6 @@ export function VenueHealth({ venues, warnings }: { venues: VenueView[]; warning
     <section className="venue-strip" aria-label="Venue health">
       <div className="strip-head">
         <h2>Venue health</h2>
-        <p>Degraded, missing, stale, and reference-only sources are excluded from actionable results.</p>
       </div>
       <ul className="venue-chips">
         {venues.map((venue) => {

@@ -73,7 +73,6 @@ export function OverviewPage({ api, now = Date.now }: { api: DashboardApi; now?:
     <main className="page overview">
       <section className="hero" aria-labelledby="hero-heading">
         <div className="hero-copy">
-          <p className="eyebrow">Tokenized-stock perpetuals · Bitget × trade.xyz</p>
           <h1 id="hero-heading">
             Cross-venue{" "}
             <span className="chip-inline" aria-hidden="true"><VenueIcon venue="bitget" /><VenueIcon venue="hyperliquid_hip3" /></span>
@@ -107,7 +106,6 @@ export function OverviewPage({ api, now = Date.now }: { api: DashboardApi; now?:
           <div><p className="eyebrow">Live board</p><h2 id="board-heading">Reviewed pairs</h2></div>
           <span className="count">{asOfMs ? `Updated ${ageText(nowMs - asOfMs)} ago` : ""}</span>
         </div>
-        <p className="panel-note">Each stock's best trade across both strategies and directions, closest to actionable first. Pick one to open it in the scanner.</p>
         {error && <div className="notice bad" role="alert"><strong>Evaluations unavailable</strong> {error}</div>}
         {!pairs && !error ? <p className="loading">Loading pair evaluations…</p> : rows.length === 0 && !error
           ? <p className="loading">No reviewed pair has been evaluated yet.</p>
