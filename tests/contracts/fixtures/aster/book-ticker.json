@@ -1,0 +1,47 @@
+[
+  {
+    "symbol": "BTCUSDT",
+    "bidPrice": "83276.5",
+    "bidQty": "0.006",
+    "askPrice": "83276.6",
+    "askQty": "7.565",
+    "time": 1790735954350,
+    "lastUpdateId": 574372984825
+  },
+  {
+    "symbol": "AAPLUSDT",
+    "bidPrice": "329.960000",
+    "bidQty": "0.06",
+    "askPrice": "329.990000",
+    "askQty": "0.58",
+    "time": 1790735954350,
+    "lastUpdateId": 574372984575
+  },
+  {
+    "symbol": "TSLAUSDT",
+    "bidPrice": "353.930000",
+    "bidQty": "0.40",
+    "askPrice": "354.030000",
+    "askQty": "0.22",
+    "time": 1790735954350,
+    "lastUpdateId": 574372985114
+  },
+  {
+    "symbol": "BBXUSDT",
+    "bidPrice": "8.68900",
+    "bidQty": "73.78",
+    "askPrice": "8.77500",
+    "askQty": "73.78",
+    "time": 1790735954350,
+    "lastUpdateId": 574372984582
+  },
+  {
+    "symbol": "METAUSD1",
+    "bidPrice": "739.48000",
+    "bidQty": "0.16",
+    "askPrice": "739.61000",
+    "askQty": "2.15",
+    "time": 1790735954300,
+    "lastUpdateId": 574372983539
+  }
+]

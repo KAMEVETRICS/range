@@ -1,0 +1,67 @@
+[
+  {
+    "type": "subscribed",
+    "channels": [
+      "bbo",
+      "funding"
+    ],
+    "symbols": [
+      "TSLA-USD",
+      "NVDA-USD"
+    ]
+  },
+  {
+    "sequence": 1,
+    "type": "bbo",
+    "time": "2026-09-30T03:45:58.826647965Z",
+    "symbol": "TSLA-USD",
+    "bid": [
+      [
+        "354.31",
+        "0.846"
+      ]
+    ],
+    "ask": [
+      [
+        "354.4",
+        "258.696"
+      ]
+    ]
+  },
+  {
+    "sequence": 2,
+    "type": "bbo",
+    "time": "2026-09-30T03:45:58.829942837Z",
+    "symbol": "NVDA-USD",
+    "bid": [
+      [
+        "228.26",
+        "511.799"
+      ]
+    ],
+    "ask": [
+      [
+        "228.35",
+        "512.409"
+      ]
+    ]
+  },
+  {
+    "sequence": 3,
+    "type": "funding",
+    "time": "2026-09-30T03:44:58.328616760Z",
+    "symbol": "TSLA-USD",
+    "funding_rate": "0.00001",
+    "annualised_funding_rate": "0.0346",
+    "time_remaining": 902
+  },
+  {
+    "sequence": 4,
+    "type": "funding",
+    "time": "2026-09-30T03:45:15.341794142Z",
+    "symbol": "NVDA-USD",
+    "funding_rate": "0.00000",
+    "annualised_funding_rate": "0.0258",
+    "time_remaining": 885
+  }
+]

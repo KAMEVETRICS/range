@@ -1,0 +1,33 @@
+{
+  "name": "@range/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/server.ts",
+  "scripts": {
+    "mcp:stdio": "tsx src/mcp/stdio.ts",
+    "openapi:generate": "tsx src/openapi.ts --write",
+    "openapi:check": "tsx src/openapi.ts --check"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.1.0",
+    "@modelcontextprotocol/server": "2.1.0",
+    "@range/application": "workspace:*",
+    "@range/config": "workspace:*",
+    "@range/domain": "workspace:*",
+    "@range/observability": "workspace:*",
+    "@range/storage": "workspace:*",
+    "fastify": "^5.6.0",
+    "ioredis": "^5.8.0",
+    "pg": "^8.16.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "^12.0.0",
+    "@types/pg": "^8.15.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "ioredis-mock": "^8.13.0",
+    "tsx": "^4.20.0"
+  }
+}

@@ -1,0 +1,67 @@
+[
+  {
+    "universe": [
+      {
+        "name": "xyz:TSLA",
+        "szDecimals": 3,
+        "maxLeverage": 10,
+        "marginTableId": 10,
+        "onlyIsolated": true,
+        "marginMode": "strictIsolated",
+        "growthMode": "enabled"
+      },
+      {
+        "name": "xyz:XYZ100",
+        "szDecimals": 4,
+        "maxLeverage": 20,
+        "marginTableId": 20,
+        "onlyIsolated": true,
+        "marginMode": "strictIsolated",
+        "growthMode": "enabled"
+      },
+      {
+        "name": "xyz:NOTSTOCK",
+        "szDecimals": 2,
+        "maxLeverage": 5,
+        "isDelisted": true
+      }
+    ],
+    "marginTables": [],
+    "collateralToken": 0
+  },
+  [
+    {
+      "funding": "0.000012500000000001",
+      "openInterest": "12.208000000000001",
+      "prevDayPx": "447.49",
+      "dayNtlVlm": "19234.123456789123456",
+      "premium": "0.000000100000000001",
+      "oraclePx": "450.780000000000001",
+      "markPx": "465.130000000000001",
+      "midPx": "464.920000000000001",
+      "impactPxs": ["464.810000000000001", "465.040000000000001"]
+    },
+    {
+      "funding": "0.0002110251",
+      "openInterest": "0.0854",
+      "prevDayPx": "25956.0",
+      "dayNtlVlm": "462.9758",
+      "premium": "0.0031136686",
+      "oraclePx": "25372.0",
+      "markPx": "25451.0",
+      "midPx": "25451.0",
+      "impactPxs": ["24946.0", "25956.0"]
+    },
+    {
+      "funding": "0.0",
+      "openInterest": "0.0",
+      "prevDayPx": "1.0",
+      "dayNtlVlm": "0.0",
+      "premium": null,
+      "oraclePx": "1.0",
+      "markPx": "1.0",
+      "midPx": null,
+      "impactPxs": null
+    }
+  ]
+]

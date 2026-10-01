@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - connectors/*
+  - packages/*
+allowBuilds:
+  cpu-features: false
+  esbuild: false
+  protobufjs: false
+  ssh2: false

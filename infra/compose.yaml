@@ -1,0 +1,316 @@
+name: range
+
+# Docker keeps container logs forever by default; keep at most 3 x 10 MB per container.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+x-range-service: &range-service
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile
+    target: runtime
+  logging: *logging
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  restart: unless-stopped
+  stop_grace_period: 20s
+  deploy:
+    resources:
+      limits: { cpus: "1.0", memory: 768M }
+      reservations: { memory: 128M }
+
+# Each probe starts a node process in its container, so fifteen services probing every 10 s cost the shared host real
+# CPU. They probe every 30 s, and every 2 s while starting so a deploy still sees them healthy within seconds; four
+# misses in a row (2 minutes, as twelve 10 s misses were) mark one unhealthy.
+x-node-healthcheck: &node-healthcheck
+  interval: 30s
+  timeout: 3s
+  retries: 4
+  start_period: 60s
+  start_interval: 2s
+
+x-bulk-connector-resources: &bulk-connector-resources
+  resources:
+    limits: { cpus: "0.5", memory: 384M }
+    reservations: { memory: 64M }
+
+x-connector-environment: &connector-environment
+  NODE_ENV: production
+  REDPANDA_BROKERS: redpanda:9092
+  HEALTH_PORT: "8081"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
+    logging: *logging
+    restart: unless-stopped
+    command: [redpanda, start, --mode=dev-container, --smp=1, --memory=1G, --reserve-memory=0M,
+      "--kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092",
+      "--advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092",
+      --rpc-addr=0.0.0.0:33145, --advertise-rpc-addr=redpanda:33145]
+    ports: ["127.0.0.1:19092:19092", "127.0.0.1:19644:9644"]
+    volumes: [redpanda-data:/var/lib/redpanda/data]
+    healthcheck:
+      test: [CMD, rpk, cluster, health, --exit-when-healthy, -X, brokers=localhost:9092]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "1.5", memory: 1536M }
+        reservations: { memory: 512M }
+
+  # Redpanda is a transport buffer, not history: high-volume topics keep 6 hours in 1-hour segments (retention
+  # drops whole segments). instrument.registry.v1 is kept forever: workers rebuild their registries by replaying it
+  # from the start. Other low-volume topics keep broker defaults. Unbounded retention filled the shared disk on
+  # 2026-09-28.
+  redpanda-retention:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
+    logging: *logging
+    restart: "no"
+    depends_on: { redpanda: { condition: service_healthy } }
+    entrypoint: [/bin/bash, -c]
+    command:
+      - |
+        set -e
+        topics="market.observation.v1 book.state.v1 market.raw.v1 funding.observation.v1 opportunity.v1"
+        for topic in $$topics; do rpk topic create "$$topic" -X brokers=redpanda:9092 >/dev/null 2>&1 || true; done
+        rpk topic alter-config $$topics --set retention.ms=21600000 --set segment.ms=3600000 -X brokers=redpanda:9092
+        rpk topic create instrument.registry.v1 -X brokers=redpanda:9092 >/dev/null 2>&1 || true
+        rpk topic alter-config instrument.registry.v1 --set retention.ms=-1 -X brokers=redpanda:9092
+
+  redis:
+    image: redis:7.4-alpine
+    logging: *logging
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck: { test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 10 }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384M }
+        reservations: { memory: 64M }
+
+  postgres:
+    image: timescale/timescaledb:2.18.0-pg17
+    logging: *logging
+    restart: unless-stopped
+    environment: { POSTGRES_DB: range, POSTGRES_USER: range, POSTGRES_PASSWORD: "${RANGE_POSTGRES_PASSWORD:-range-local-only}" }
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../packages/storage/src/migrations/0001_initial.sql:/docker-entrypoint-initdb.d/010-range.sql:ro
+      - ../packages/storage/src/migrations/0002_history_retention.sql:/docker-entrypoint-initdb.d/020-range-retention.sql:ro
+      - ../packages/storage/src/migrations/0003_history_vacuum.sql:/docker-entrypoint-initdb.d/030-range-vacuum.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U range -d range && psql -U range -d range -tAc \"SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'\" | grep -q ."]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1024M }
+        reservations: { memory: 256M }
+
+  # Reserved for the raw-event archive, which nothing reads or writes yet. Docker Hub now denies pulls of this image, so
+  # MinIO starts only with `--profile archive`, and a plain `up` no longer fails on it.
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    profiles: [archive]
+    logging: *logging
+    restart: unless-stopped
+    command: [server, /data, --console-address, ":9001"]
+    environment: { MINIO_ROOT_USER: range-local, MINIO_ROOT_PASSWORD: "${RANGE_MINIO_PASSWORD:-range-local-only}" }
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: [minio-data:/data]
+    healthcheck: { test: [CMD, curl, -f, http://localhost:9000/minio/health/live], interval: 5s, timeout: 3s, retries: 12, start_period: 10s }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+        reservations: { memory: 128M }
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.136.0
+    logging: *logging
+    restart: unless-stopped
+    command: [--config=/etc/otelcol-contrib/config.yaml]
+    volumes: [./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro]
+    ports: ["127.0.0.1:4318:4318", "127.0.0.1:13133:13133"]
+    healthcheck: { test: [CMD, /otelcol-contrib, --version], interval: 10s, timeout: 3s, retries: 5 }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384M }
+        reservations: { memory: 64M }
+
+  connector-bitget:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/bitget/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+
+  connector-hyperliquid:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/hyperliquid/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+
+  connector-extended:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/extended/src/service.ts]
+    environment:
+      <<: *connector-environment
+      EXTENDED_API_KEY: ${EXTENDED_API_KEY:-}
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+
+  connector-ondo-perps:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/ondo-perps/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+
+  # Reference-only venues read in bulk (top of book and funding for every market per read), so they need less room.
+  connector-bybit:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/bybit/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-aster:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/aster/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-binance:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/binance/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-pacifica:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/pacifica/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-lighter:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/lighter/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-variational:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/variational/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-qfex:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/qfex/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  connector-nado:
+    <<: *range-service
+    command: [node, --import, tsx, connectors/nado/src/service.ts]
+    environment: *connector-environment
+    depends_on: { redpanda: { condition: service_healthy }, otel-collector: { condition: service_healthy } }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+    deploy: *bulk-connector-resources
+
+  opportunity-worker:
+    <<: *range-service
+    command: [node, --import, tsx, apps/opportunity-worker/src/service.ts]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://range:${RANGE_POSTGRES_PASSWORD:-range-local-only}@postgres:5432/range
+      REDIS_URL: redis://redis:6379
+      REDPANDA_BROKERS: redpanda:9092
+      RANGE_MAPPING_CONFIG: /app/config/instrument-mappings.json
+      # Taker fees of the reviewed pairs: Bitget stock perps 0.06%; trade.xyz standard 0.09% (growth mode, when on, is lower).
+      RANGE_FEES_BPS_JSON: '{"bitget":"6","hyperliquid_hip3":"9"}'
+      RANGE_SLIPPAGE_BPS_JSON: '{"bitget":"1","hyperliquid_hip3":"1"}'
+      # The size each opportunity is priced at. Bitget's five visible levels hold about $5,000-$11,000 on the reviewed
+      # stocks, so $10,000 left the thinner ones permanently short of depth.
+      RANGE_REQUESTED_NOTIONAL_USD: "2500"
+      # A pair is priced as held for one hour: trade.xyz publishes only its next hourly funding rate and nothing is
+      # extrapolated, so a longer hold could never be covered; a window with no settlement is zero funding.
+      RANGE_HOLDING_HORIZON_MS: "3600000"
+      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
+      HEALTH_PORT: "8081"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    volumes: [../config:/app/config:ro]
+    depends_on:
+      redpanda: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      otel-collector: { condition: service_healthy }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+
+  gateway:
+    <<: *range-service
+    command: [node, --import, tsx, apps/gateway/src/service.ts]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://range:${RANGE_POSTGRES_PASSWORD:-range-local-only}@postgres:5432/range
+      REDIS_URL: redis://redis:6379
+      REDPANDA_BROKERS: redpanda:9092
+      RANGE_API_TOKEN_PEPPER: ${RANGE_API_TOKEN_PEPPER:?set RANGE_API_TOKEN_PEPPER to at least 32 characters}
+      RANGE_DEMO_API_TOKEN: ${RANGE_DEMO_API_TOKEN:?set RANGE_DEMO_API_TOKEN to at least 24 characters}
+      RANGE_DASHBOARD_READ_TOKEN: ${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN to at least 24 characters}
+      RANGE_VENUE_MANIFEST_JSON: '[{"venue":"bitget","capabilities":["orderbook","funding_current"],"freshnessBudgetMs":2000},{"venue":"hyperliquid_hip3","capabilities":["orderbook"],"freshnessBudgetMs":2000},{"venue":"extended","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"ondo_perps","capabilities":["orderbook"],"freshnessBudgetMs":5000},{"venue":"bybit","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"aster","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"binance","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"pacifica","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"lighter","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"variational","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"qfex","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000},{"venue":"nado","capabilities":["top_of_book","funding_current"],"freshnessBudgetMs":45000}]'
+      RANGE_ALLOWED_HOSTS: localhost,127.0.0.1,gateway
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PORT: "8080"
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      opportunity-worker: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    healthcheck: { <<: *node-healthcheck, test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+
+  dashboard:
+    build: { context: .., dockerfile: infra/Dockerfile, target: dashboard }
+    logging: *logging
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /etc/nginx/conf.d]
+    restart: unless-stopped
+    environment: { RANGE_DASHBOARD_READ_TOKEN: "${RANGE_DASHBOARD_READ_TOKEN:?set RANGE_DASHBOARD_READ_TOKEN}" }
+    ports: ["127.0.0.1:4173:8080"]
+    depends_on: { gateway: { condition: service_healthy } }
+    healthcheck: { test: [CMD, wget, -qO-, http://127.0.0.1:8080/healthz], interval: 30s, timeout: 3s, retries: 4, start_period: 60s, start_interval: 2s }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M }
+        reservations: { memory: 32M }
+
+volumes:
+  redpanda-data:
+  redis-data:
+  postgres-data:
+  minio-data:

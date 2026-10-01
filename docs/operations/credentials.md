@@ -1,0 +1,20 @@
+# Range credential inventory
+
+Range is read-only intelligence. It must never receive trading-enabled keys, signing keys, wallet seed phrases, withdrawal credentials, or custody material. The Compose deployment never mounts `.env`; values are injected only into the service listed below.
+
+| Variable | Provider | Required scope | Allowed reader | Rotation | MVP blocker |
+|---|---|---|---|---|---|
+| `EXTENDED_API_KEY` | Extended | Market-data/read-only access only; no Stark private key | `connector-extended` | Create a replacement read-only key, update the secret injection, restart only `connector-extended`, verify health and redaction, then revoke the old key | Blocks an authenticated Extended demonstration if public access is insufficient; does not authorize actionability |
+| `RANGE_API_TOKEN_PEPPER` | Range operator | Random internal hash pepper, at least 32 characters | `gateway` | Generate a new random value, replace stored client token hashes, restart the gateway, revoke prior client tokens | Yes, for authenticated REST/MCP startup |
+| `RANGE_DEMO_API_TOKEN` | Range operator | Operator/verifier scopes: `market:read`, `opportunity:read`, `intent:create`; never an exchange credential | `gateway` and the operator running the verifier | Generate a new token, update gateway/verifier injection together, restart them, invalidate the old token | Yes, for the authenticated demo |
+| `RANGE_DASHBOARD_READ_TOKEN` | Range operator | Browser proxy scopes only: `market:read`, `opportunity:read`; never `intent:create` | `gateway` and dashboard reverse proxy | Generate a different token from the demo token, update gateway/proxy together, restart them, invalidate the old token | Yes, for the dashboard |
+| `RANGE_FAULT_CONTROL_TOKEN` | Range operator | Internal fault-controller authorization only; not a Range API or venue credential | Verifier and isolated fault controller | Rotate both ends, re-run the containment proof, invalidate the old token | Only when the controlled fault surface requires authentication |
+| `RANGE_POSTGRES_PASSWORD` (Compose sets `POSTGRES_PASSWORD` and the `DATABASE_URL` password from it) | Local Compose Postgres | Database access for Range schema only | `postgres`, `opportunity-worker`, `gateway` | Stop writers, rotate the database role password, update only worker/gateway injection, restart and verify migrations/replay | Yes for persistence; Compose's checked-in `range-local-only` value is development-only |
+| `RANGE_MINIO_PASSWORD` | Local Compose MinIO | Object-store root access for Range archives only | `minio` | Generate a new URL-safe random value, update the secret env file, recreate `minio`, verify archive reads | No; MinIO starts only with `--profile archive`. Unset falls back to the development-only `range-local-only` value, which must never run on a shared or internet-facing host |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Local Compose MinIO | Local archive administration | `minio` only | Create a scoped archive service identity before production, move data access to it, rotate root, verify archive reads | No for the current live Redpanda archive reference; required before object-archive production use |
+
+`EXTENDED_API_KEY` is currently the only expected external venue credential. `ONDO_STOCKS_API_KEY` is reserved for the post-MVP Ondo Stocks connector and must not be injected until access is granted and its connector plan is approved. `BITGET_READONLY_API_KEY`, `BITGET_READONLY_API_SECRET`, and `BITGET_READONLY_PASSPHRASE` are supported by configuration validation but are not used by the public Bitget connector or Compose deployment; do not provision them for the MVP.
+
+Before accepting any external credential, independently verify the provider-side permission screen shows read-only market data and that trade, transfer, withdrawal, signing, and subaccount-management permissions are disabled. Range cannot prove provider-side permissions merely by observing that a key works.
+
+Never print credential values in probes, logs, traces, screenshots, support bundles, or verifier output. Redaction is defense in depth, not permission to log secret-bearing request objects.

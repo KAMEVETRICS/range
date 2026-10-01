@@ -1,0 +1,36 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: range
+          scrape_interval: 15s
+          static_configs:
+            - targets:
+                - gateway:8080
+                - opportunity-worker:8081
+                - connector-bitget:8081
+                - connector-hyperliquid:8081
+                - connector-extended:8081
+                - connector-ondo-perps:8081
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [debug]
+    metrics:
+      receivers: [prometheus]
+      exporters: [debug]

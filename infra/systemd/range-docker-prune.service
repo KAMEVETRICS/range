@@ -1,0 +1,8 @@
+[Unit]
+Description=Prune Docker build cache that no build has used for 3 days (every rebuild adds some)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker builder prune --force --filter until=72h

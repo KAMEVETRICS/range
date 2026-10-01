@@ -1,0 +1,159 @@
+# Range
+
+Range is a read-only intelligence service for tokenized-stock and equity-perpetual markets. It watches the same stocks across venues, prices cross-venue spread and funding opportunities against executable order-book depth and explicit costs, and shows the evidence behind every number. It holds no trading keys and never signs or submits orders.
+
+**Live dashboard:** [range.datatides.xyz](https://range.datatides.xyz), public and read-only. It opens on Markets; the scanner is under Opportunities.
+
+Hackathon focus: Track 1, arbitrage and funding opportunities.
+
+## What it does
+
+- **Opportunity scanner.** Ten reviewed stock pairs, Bitget USDT-M perpetuals against trade.xyz perpetuals on Hyperliquid (HIP-3): NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN, MSTR and HOOD. Each pair is evaluated continuously in both directions for price spreads and funding differentials at $2,500 notional. A result is actionable only while its net edge stays positive after costs; otherwise it is published as rejected, with its reasons.
+- **Evidence for every result.** Each result carries its executable quotes, costs, freshness and an evidence bundle that pins every source observation (venue time, receive time and calculation version). A result stops being current within seconds of its inputs going stale, and a feed that misses a sequence number withdraws it.
+- **Markets page.** Prices and funding for stock perpetuals across 12 venues, side by side by ticker, with Bitget first.
+- **API and MCP for agents.** A REST and Server-Sent Events API with an OpenAPI spec, and an MCP server for AI agents with the same operations.
+- **Unsigned intents.** For an actionable result, an authorized client can request an expiring, unsigned trade intent and revalidate it before acting. Range stops there: execution belongs to a separately authorized human or agent.
+
+## How it works
+
+```mermaid
+flowchart LR
+  V["Venue APIs<br/>public REST and WebSocket"] --> C["Connectors<br/>one per venue"]
+  C --> K[("Redpanda")]
+  K --> W["Opportunity worker"]
+  W --> K
+  W --> S[("Redis<br/>current state")]
+  W --> P[("Postgres + TimescaleDB<br/>history and evidence")]
+  S --> G["Gateway<br/>REST, SSE, MCP"]
+  P --> G
+  G --> D["Dashboard"]
+  G --> A["Apps and agents"]
+```
+
+1. **Connectors** read each venue's public feeds and publish listings, order books, funding and venue health as canonical events.
+2. **The instrument registry** versions each listing's metadata. Reviewed mappings in [`config/instrument-mappings.json`](config/instrument-mappings.json) join listings to one underlying, such as `equity:NVDA`. Only those mappings can produce actionable results, and a listing whose metadata changes drops out of its mapping until it is reviewed again.
+3. **The opportunity worker** keeps sequence-checked books and funding for every listing. For each reviewed pair it walks both books at the requested notional and nets out taker fees, a slippage buffer per leg, and funding projected over an 8-hour hold. It publishes the result with its evidence, writes current state to Redis and history to Postgres, from which results can be replayed.
+4. **The gateway** serves one application layer over REST, SSE and MCP, with scoped bearer tokens and per-operation rate limits.
+5. **The dashboard** is a React app behind nginx, which adds a read-only token to API calls so the browser never holds one.
+
+## Venues
+
+| Venue | Role |
+| --- | --- |
+| Bitget | Primary venue. USDT-M perpetuals for the ten reviewed stocks are executable; its other stock-linked listings are reference data. |
+| trade.xyz (Hyperliquid HIP-3) | The ten reviewed stocks are executable; other HIP-3 equity listings are reference data. |
+| Extended, Ondo Perps | Reference data. |
+| Bybit, Binance, Aster, Pacifica, Lighter, Variational, QFEX, Nado | Markets page only. |
+
+The review behind the ten pairs, including the differences it accepted, is in [`docs/reviews/2026-09-30-bitget-hyperliquid.md`](docs/reviews/2026-09-30-bitget-hyperliquid.md). [`docs/operations/venue-enablement.md`](docs/operations/venue-enablement.md) describes how another venue or pair becomes executable.
+
+## Running it
+
+You need Node.js 22 or later (Corepack, bundled with Node, provides pnpm 11) and Docker with Compose.
+
+```bash
+corepack pnpm install
+```
+
+The gateway needs three secrets. Keep them in a file outside the repository:
+
+```bash
+cat > ../range.env <<EOF
+RANGE_API_TOKEN_PEPPER=$(openssl rand -hex 32)
+RANGE_DEMO_API_TOKEN=$(openssl rand -hex 32)
+RANGE_DASHBOARD_READ_TOKEN=$(openssl rand -hex 32)
+EOF
+```
+
+Tokens must be 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. The demo token is for operators and can create intents; the dashboard token is read-only. Database passwords fall back to development-only values; set `RANGE_POSTGRES_PASSWORD` on any shared or internet-facing host. [`docs/operations/credentials.md`](docs/operations/credentials.md) lists every credential, including the optional read-only `EXTENDED_API_KEY`.
+
+Start the stack:
+
+```bash
+docker compose -f infra/compose.yaml --env-file ../range.env up -d --build
+```
+
+The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
+
+The Markets page needs only the connectors, but the scanner may stay empty on a new stack. Each reviewed mapping pins its members' instrument version and metadata hash as the live deployment's registry numbered them. A new registry can number the same metadata differently, and the worker then leaves the mapping unpublished rather than guess. To evaluate the pairs on your own stack, read your registry's pins with `scripts/reviewed-mapping-members.ts` and publish the mappings again at a higher `mappingVersion`, as the runbook's "Reviewed mappings" section describes.
+
+## Tests
+
+```bash
+corepack pnpm test:unit
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm --filter @range/gateway openapi:check
+corepack pnpm test:e2e
+```
+
+- `test:unit` runs Vitest. Its Redpanda integration test starts a container, so it needs Docker and fails without it by design.
+- Four tests are skipped unless enabled: two need a real Postgres (`RANGE_TEST_DATABASE_URL`) and two probe live venues (`RUN_LIVE_EXTENDED_PROBE=1`, `RUN_LIVE_HYPERLIQUID_PROBE=1`).
+- `test:e2e` runs the Playwright dashboard tests against mocked API responses, in the installed Google Chrome.
+- `scripts/verify-demo.ts` checks eight release invariants against a running deployment. [`docs/operations/demo.md`](docs/operations/demo.md) lists what it needs and why it does not pass yet.
+
+## API and MCP
+
+Every route needs a bearer token. Reads need `market:read` or `opportunity:read`; intents need `intent:create`.
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| GET | `/v1/venues` | Venue capabilities, health and freshness budgets |
+| GET | `/v1/instruments` | Canonical instruments and their venue mappings |
+| GET | `/v1/markets/snapshot` | Live observations for an underlying |
+| GET | `/v1/markets/overview` | The cross-venue price and funding board |
+| GET | `/v1/funding/compare` | Funding cashflows over a settlement horizon |
+| GET | `/v1/pairs` | Each reviewed pair's latest evaluation |
+| GET | `/v1/opportunities` | Current opportunities for an underlying |
+| GET | `/v1/opportunities/{id}` | One result with its evidence and history |
+| POST | `/v1/opportunities/{id}/intent` | A new unsigned, expiring intent |
+| POST | `/v1/intents/{id}/validate` | An intent revalidated against current state |
+| GET | `/v1/stream` | Server-Sent Events for opportunity and health changes |
+
+```bash
+curl -H "Authorization: Bearer $RANGE_DEMO_API_TOKEN" \
+  "http://127.0.0.1:8080/v1/opportunities?underlying=equity:NVDA"
+```
+
+The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The MCP server offers eight tools: `list_venues`, `find_instruments`, `get_market_snapshot`, `compare_funding`, `scan_opportunities`, `inspect_opportunity`, `create_unsigned_intent` and `validate_unsigned_intent`. It is served over HTTP at `/mcp` on the gateway (localhost only by default), or over stdio with `corepack pnpm --filter @range/gateway mcp:stdio`.
+
+## Safety and limits
+
+- Read-only by design: no trading keys, signing, order submission, withdrawals or custody. Venue data is public; the only venue credential Range accepts is an optional read-only Extended key.
+- Results are decision support, not guaranteed profit.
+- Actionable results are rare on the reviewed pairs. Taker fees (Bitget 6 bps, trade.xyz 9 bps at its standard rate) and a 1 bp slippage buffer per leg come to about 17 bps, more than the spreads usually on offer, so most results are published as rejected, with reasons. trade.xyz's temporary growth-mode fee is about a tenth of its standard rate; the worker does not use it, so edges are understated while it lasts.
+- Financing, transfer, currency-conversion and uncertainty costs exist in the cost model but are set to zero. The pairs settle in different stablecoins (USDT on Bitget, USDC on trade.xyz) and handle splits and dividends differently. The review describes each difference.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `apps/gateway` | REST and SSE API, MCP server, OpenAPI spec |
+| `apps/opportunity-worker` | Evaluation, and the current-state and history writers |
+| `apps/web` | The dashboard |
+| `connectors/*` | One connector per venue, on `packages/connector-sdk` |
+| `packages/domain` | Canonical schemas |
+| `packages/event-bus` | Typed Redpanda client |
+| `packages/instruments` | Instrument registry and mappings |
+| `packages/market-state` | Order books, executable quotes, funding |
+| `packages/opportunity` | Evaluator and cost model |
+| `packages/evidence` | Evidence bundles |
+| `packages/storage` | Redis current state, Postgres history, migrations |
+| `packages/application` | The application layer behind REST, SSE and MCP |
+| `packages/config`, `packages/observability` | Configuration validation and telemetry |
+| `config` | Reviewed instrument mappings |
+| `infra` | Dockerfile, Compose stack, nginx, disk guard, systemd units |
+| `scripts` | Mapping tools, replay, release verifier |
+| `tests` | Venue contract tests and end-to-end tests |
+| `docs` | Design, operations, reviews |
+
+## Documentation
+
+- [Design](docs/superpowers/specs/2026-09-20-range-design.md) and [implementation plan](docs/superpowers/plans/2026-09-20-range-implementation.md)
+- [Operations runbook](docs/operations/runbook.md)
+- [Release gate and verifier status](docs/operations/demo.md)
+- [Credentials](docs/operations/credentials.md)
+- [Venue enablement](docs/operations/venue-enablement.md)
+- [Bitget and trade.xyz review](docs/reviews/2026-09-30-bitget-hyperliquid.md)
+
+[`track 3/capital-rotation.md`](<track 3/capital-rotation.md>) is a brief for a separate Track 3 project; it is not part of Range.

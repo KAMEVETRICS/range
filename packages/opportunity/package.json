@@ -1,0 +1,14 @@
+{
+  "name": "@range/opportunity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@range/domain": "workspace:*",
+    "@range/evidence": "workspace:*",
+    "@range/instruments": "workspace:*",
+    "@range/market-state": "workspace:*",
+    "decimal.js": "^10.6.0"
+  }
+}

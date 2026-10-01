@@ -1,0 +1,93 @@
+{
+  "status": "OK",
+  "data": [
+    {
+      "name": "TSLA_24_5-USD",
+      "type": "PERPETUAL",
+      "assetName": "TSLA",
+      "assetPrecision": 4,
+      "collateralAssetName": "USD",
+      "collateralAssetPrecision": 6,
+      "active": true,
+      "status": "ACTIVE",
+      "isRfq": true,
+      "isOffHours": false,
+      "tradingHours": "CONTINUOUS",
+      "marketStats": {
+        "dailyVolume": "231478.25",
+        "dailyVolumeBase": "682.5",
+        "dailyPriceChange": "1.25",
+        "dailyPriceChangePercentage": "0.0037",
+        "dailyLow": "334.10",
+        "dailyHigh": "342.80",
+        "lastPrice": "339.50",
+        "askPrice": "339.60",
+        "bidPrice": "339.40",
+        "markPrice": "339.52",
+        "indexPrice": "339.47",
+        "fundingRate": "-0.000031",
+        "nextFundingRate": 1770534000000,
+        "openInterest": "402891.15",
+        "openInterestBase": "1186.63"
+      },
+      "tradingConfig": {
+        "minOrderSize": "0.01",
+        "minOrderSizeChange": "0.01",
+        "minPriceChange": "0.01",
+        "maxMarketOrderValue": "100000",
+        "maxLimitOrderValue": "500000",
+        "maxPositionValue": "1000000",
+        "maxLeverage": "20",
+        "maxNumOrders": "200",
+        "openInterestLimit": "10000000",
+        "limitPriceCap": "0.15",
+        "limitPriceFloor": "0.15",
+        "hourlyFundingRateCap": "0.02"
+      }
+    },
+    {
+      "name": "BTC-USD",
+      "type": "PERPETUAL",
+      "assetName": "BTC",
+      "assetPrecision": 6,
+      "collateralAssetName": "USD",
+      "collateralAssetPrecision": 6,
+      "active": true,
+      "status": "ACTIVE",
+      "isRfq": false,
+      "isOffHours": false,
+      "tradingHours": "CONTINUOUS",
+      "marketStats": {
+        "dailyVolume": "39659164065",
+        "dailyVolumeBase": "396591.64",
+        "dailyPriceChange": "1000",
+        "dailyPriceChangePercentage": "0.02",
+        "dailyLow": "60000",
+        "dailyHigh": "63000",
+        "lastPrice": "62000",
+        "askPrice": "62001",
+        "bidPrice": "61999",
+        "markPrice": "62000",
+        "indexPrice": "62000",
+        "fundingRate": "0.00001",
+        "nextFundingRate": 1770534000000,
+        "openInterest": "50000000",
+        "openInterestBase": "806.45"
+      },
+      "tradingConfig": {
+        "minOrderSize": "0.0001",
+        "minOrderSizeChange": "0.0001",
+        "minPriceChange": "0.1",
+        "maxMarketOrderValue": "1000000",
+        "maxLimitOrderValue": "5000000",
+        "maxPositionValue": "10000000",
+        "maxLeverage": "50",
+        "maxNumOrders": "200",
+        "openInterestLimit": "100000000",
+        "limitPriceCap": "0.05",
+        "limitPriceFloor": "0.05",
+        "hourlyFundingRateCap": "0.02"
+      }
+    }
+  ]
+}

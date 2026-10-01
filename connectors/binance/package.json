@@ -1,0 +1,11 @@
+{
+  "name": "@range/connector-binance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@range/connector-aster": "workspace:*",
+    "@range/connector-sdk": "workspace:*"
+  },
+  "devDependencies": { "tsx": "^4.20.0" }
+}

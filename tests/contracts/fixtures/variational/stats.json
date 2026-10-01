@@ -1,0 +1,157 @@
+{
+  "total_volume_24h": "3409299680.682029",
+  "cumulative_volume": "369726974748.327297",
+  "tvl": "259280757.682864701125",
+  "open_interest": "2081516784.5034901794068478394",
+  "num_markets": 555,
+  "loss_refund": {
+    "pool_size": "0",
+    "refunded_24h": "0"
+  },
+  "listings": [
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "mark_price": "227.9290130089509",
+      "volume_24h": "4235013.408321",
+      "open_interest": {
+        "long_open_interest": "3663273.8249752705445681100000",
+        "short_open_interest": "1645608.6136270186709336700000"
+      },
+      "funding_rate": "0.103535",
+      "funding_interval_s": 28800,
+      "base_spread_bps": "5.5719102330782540118959750000",
+      "quotes": {
+        "updated_at": "2026-09-30T02:46:31.806294784Z",
+        "base": {
+          "bid": "227.961",
+          "ask": "228.088"
+        },
+        "size_1k": {
+          "bid": "227.961",
+          "ask": "228.088"
+        },
+        "size_100k": {
+          "bid": "227.932",
+          "ask": "228.132"
+        }
+      }
+    },
+    {
+      "ticker": "BBX",
+      "name": "BlackBerry Limited",
+      "mark_price": "8.74493360587327",
+      "volume_24h": "16588.386952",
+      "open_interest": {
+        "long_open_interest": "314932.61820523946083656000000",
+        "short_open_interest": "6309.1841537916904136000000000"
+      },
+      "funding_rate": "0",
+      "funding_interval_s": 28800,
+      "base_spread_bps": "9.434033889587380260646362000",
+      "quotes": {
+        "updated_at": "2026-09-30T02:46:13.153632475Z",
+        "base": {
+          "bid": "8.74246",
+          "ask": "8.75071"
+        },
+        "size_1k": {
+          "bid": "8.73848",
+          "ask": "8.75463"
+        },
+        "size_100k": {
+          "bid": "8.68226",
+          "ask": "8.92988"
+        }
+      }
+    },
+    {
+      "ticker": "BTC",
+      "name": "Bitcoin",
+      "mark_price": "83287.7212096375",
+      "volume_24h": "499454746.514018",
+      "open_interest": {
+        "long_open_interest": "106930356.93247859017140576000",
+        "short_open_interest": "96183537.06673701254110798000"
+      },
+      "funding_rate": "0.094895",
+      "funding_interval_s": 28800,
+      "base_spread_bps": "1.0013480833516850722372520000",
+      "quotes": {
+        "updated_at": "2026-09-30T02:46:40.761271182Z",
+        "base": {
+          "bid": "83331.46",
+          "ask": "83339.8"
+        },
+        "size_1k": {
+          "bid": "83331.46",
+          "ask": "83339.8"
+        },
+        "size_100k": {
+          "bid": "83331.46",
+          "ask": "83339.8"
+        },
+        "size_1m": {
+          "bid": "83292.77",
+          "ask": "83341.01"
+        }
+      }
+    },
+    {
+      "ticker": "TSLA",
+      "name": "Tesla, Inc.",
+      "mark_price": "353.7405106625419",
+      "volume_24h": "1239756.449262",
+      "open_interest": {
+        "long_open_interest": "1105457.4445992828056812800000",
+        "short_open_interest": "624615.17419801959016320000000"
+      },
+      "funding_rate": "0.296046",
+      "funding_interval_s": 28800,
+      "base_spread_bps": "4.0707805767084389125364670000",
+      "quotes": {
+        "updated_at": "2026-09-30T02:46:52.861314145Z",
+        "base": {
+          "bid": "353.857",
+          "ask": "354.001"
+        },
+        "size_1k": {
+          "bid": "353.857",
+          "ask": "354.033"
+        },
+        "size_100k": {
+          "bid": "353.716",
+          "ask": "354.266"
+        }
+      }
+    },
+    {
+      "ticker": "GIGGLE",
+      "name": "Giggle Fund",
+      "mark_price": "37.42759616778199",
+      "volume_24h": "8432.320650",
+      "open_interest": {
+        "long_open_interest": "27967.803713273328780387000000",
+        "short_open_interest": "111.34756338302689599000000000"
+      },
+      "funding_rate": "0.1095",
+      "funding_interval_s": 14400,
+      "base_spread_bps": "10.767456135665640462729930000",
+      "quotes": {
+        "updated_at": "2026-09-30T02:46:24.800748870Z",
+        "base": {
+          "bid": "37.4524",
+          "ask": "37.4927"
+        },
+        "size_1k": {
+          "bid": "37.4267",
+          "ask": "37.5118"
+        },
+        "size_100k": {
+          "bid": "35.8628",
+          "ask": "38.9095"
+        }
+      }
+    }
+  ]
+}

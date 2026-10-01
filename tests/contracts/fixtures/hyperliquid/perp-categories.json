@@ -1,0 +1,5 @@
+[
+  ["xyz:TSLA", "equities"],
+  ["xyz:XYZ100", "indices"],
+  ["xyz:NOTSTOCK", "other"]
+]

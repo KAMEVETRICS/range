@@ -1,0 +1,38 @@
+[
+  {
+    "symbol": "BTCUSDT",
+    "bidPrice": "83385.60",
+    "bidQty": "1.662",
+    "askPrice": "83385.70",
+    "askQty": "9.002",
+    "time": 1790736887865,
+    "lastUpdateId": 11694966805178
+  },
+  {
+    "symbol": "TSLAUSDT",
+    "bidPrice": "354.06000",
+    "bidQty": "0.09",
+    "askPrice": "354.07000",
+    "askQty": "27.39",
+    "time": 1790736890168,
+    "lastUpdateId": 11694966932746
+  },
+  {
+    "symbol": "NVDAUSDT",
+    "bidPrice": "228.15000",
+    "bidQty": "38.45",
+    "askPrice": "228.16000",
+    "askQty": "110.07",
+    "time": 1790736887753,
+    "lastUpdateId": 11694966798477
+  },
+  {
+    "symbol": "MINIMAXUSDT",
+    "bidPrice": "31.75000",
+    "bidQty": "64.84",
+    "askPrice": "31.77000",
+    "askQty": "31.79",
+    "time": 1790736890286,
+    "lastUpdateId": 11694966939544
+  }
+]
