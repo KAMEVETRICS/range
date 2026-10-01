@@ -199,6 +199,19 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     expect(api.scanOpportunities).toHaveBeenLastCalledWith(expect.objectContaining({ strategy: "perp_spread", min_edge_bps: "25" }));
   });
 
+  it("scans without an age limit until one is set", async () => {
+    const api = apiWith([opportunity()]);
+    const user = userEvent.setup();
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={0} />);
+    await screen.findAllByText("51.48 bps");
+
+    expect(api.scanOpportunities).toHaveBeenCalledWith({ underlying: "equity:NVDA" });
+    expect(screen.getByLabelText("Maximum age")).toHaveValue(null);
+    await user.type(screen.getByLabelText("Maximum age"), "30000");
+    await user.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(api.scanOpportunities).toHaveBeenLastCalledWith(expect.objectContaining({ max_age_ms: 30000 })));
+  });
+
   it("refetches when a streamed opportunity is absent from the current scan", async () => {
     const current = opportunity();
     const incoming = opportunity({ opportunityId: "opp_nvda_spread_2", stateRevision: 13, netEdgeBps: "44.00", evidenceHash: "evh_fedcba9876543210" });

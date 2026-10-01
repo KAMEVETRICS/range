@@ -12,8 +12,10 @@ const SCAN_REFRESH_MS = 2_000;
 export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scanRefreshMs = SCAN_REFRESH_MS }: {
   api: DashboardApi; initialUnderlying?: string; /** 0 turns the refresh off. */ scanRefreshMs?: number;
 }) {
-  const [draft, setDraft] = useState({ underlying: initialUnderlying, strategy: "", minEdge: "", notional: "", maxAge: "5000" });
-  const [filters, setFilters] = useState<OpportunityFilters>({ underlying: initialUnderlying, max_age_ms: 5000 });
+  // No age limit by default: a result's age counts its funding updates, which arrive tens of seconds apart, so a 5 s
+  // limit hid every result. The worker already expires a result once its quotes or funding go stale.
+  const [draft, setDraft] = useState({ underlying: initialUnderlying, strategy: "", minEdge: "", notional: "", maxAge: "" });
+  const [filters, setFilters] = useState<OpportunityFilters>({ underlying: initialUnderlying });
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [quoteTimestamps, setQuoteTimestamps] = useState<QuoteTimestamp[]>([]);
   const [venues, setVenues] = useState<VenueView[]>([]);
