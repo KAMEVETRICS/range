@@ -1,22 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { DashboardApi, MarketCell, MarketFunding, MarketRow } from "../api/client.js";
 import { pollWhileIdle } from "../api/poll.js";
+import { PRIMARY_VENUE as PRIMARY, VenueIcon, venueInfo } from "../venues.js";
 
 type View = "funding" | "price";
 type Period = "1h" | "8h" | "1d" | "apr";
 
-/** Bitget is the primary venue: every other venue is shown next to its spread against Bitget. */
-const PRIMARY = "bitget";
+/** Every other venue is shown next to its spread against Bitget, the primary venue. */
 const HOUR_MS = 3_600_000;
 const VENUE_ORDER = ["binance", "hyperliquid_hip3", "bybit", "lighter", "qfex", "aster", "pacifica", "nado", "extended", "variational", "ondo_perps"];
-const VENUES: Record<string, { label: string; mono: string }> = {
-  bitget: { label: "Bitget", mono: "BG" }, binance: { label: "Binance", mono: "BN" }, hyperliquid_hip3: { label: "Hyperliquid", mono: "HL" }, extended: { label: "Extended", mono: "EX" },
-  ondo_perps: { label: "Ondo", mono: "ON" }, bybit: { label: "Bybit", mono: "BY" }, aster: { label: "Aster", mono: "AS" },
-  lighter: { label: "Lighter", mono: "LI" }, qfex: { label: "QFEX", mono: "QF" }, nado: { label: "Nado", mono: "NA" }, pacifica: { label: "Pacifica", mono: "PA" }, variational: { label: "Variational", mono: "VA" },
-};
 const PERIODS: Array<{ id: Period; label: string }> = [{ id: "1h", label: "1H" }, { id: "8h", label: "8H" }, { id: "1d", label: "1D" }, { id: "apr", label: "APR" }];
-
-const venueInfo = (venue: string) => VENUES[venue] ?? { label: venue.replaceAll("_", " "), mono: venue.slice(0, 2).toUpperCase() };
 
 /** A percentage with about four significant digits and no trailing zeros, as funding tables show them. */
 export function formatPercent(value: number): string {
@@ -122,13 +115,13 @@ function ValueCell({ column, view, now, testId }: { column: Column; view: View; 
   );
 }
 
-function SpreadCell({ spread, testId }: { spread?: number; testId: string }) {
+/** A spread, tinted by its size against the widest spread on the board, so the largest gaps stand out at a glance. */
+function SpreadCell({ spread, widest, testId }: { spread?: number; widest: number; testId: string }) {
   if (spread === undefined) return <td className="spread-cell missing" data-testid={testId}>-</td>;
   const sign = spread > 0 ? "positive" : spread < 0 ? "negative" : "zero";
-  return <td className={`spread-cell ${sign}`} data-testid={testId}>{formatPercent(spread)}</td>;
+  const strength = widest > 0 ? Math.min(1, Math.abs(spread) / widest) : 0;
+  return <td className={`spread-cell ${sign}`} data-testid={testId} style={{ "--strength": strength.toFixed(3) } as CSSProperties}>{formatPercent(spread)}</td>;
 }
-
-const VenueIcon = ({ venue }: { venue: string }) => <span className="venue-icon" data-venue={venue} data-mono={venueInfo(venue).mono} aria-hidden="true" />;
 
 export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: DashboardApi; now?: () => number; refreshMs?: number }) {
   const [rows, setRows] = useState<MarketRow[]>();
@@ -187,13 +180,15 @@ export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: D
     </th>
   );
 
+  const widest = Math.max(0, ...table.map((row) => row.bestSpread ?? 0));
   const nowMs = now();
   return (
-    <main className="markets">
-      <header className="markets-header">
+    <main className="page markets">
+      <header className="page-head">
         <div>
+          <p className="eyebrow">Cross-venue board · {rows ? `${rows.length} stocks` : "loading"}</p>
           <h1>Markets</h1>
-          <p>{view === "funding" ? "Funding rate comparisons across venues, with Bitget as the primary venue." : "Price comparisons across venues, with Bitget as the primary venue."}</p>
+          <p className="page-sub">{view === "funding" ? "Funding rate comparisons across venues, with Bitget as the primary venue." : "Price comparisons across venues, with Bitget as the primary venue."}</p>
         </div>
         <div className="markets-toolbar">
           <label className="search"><span className="visually-hidden">Search</span>
@@ -245,7 +240,7 @@ export function MarketsPage({ api, now = Date.now, refreshMs = 5_000 }: { api: D
                   {venues.flatMap((venue) => {
                     const column = row.others.get(venue)!;
                     return [<ValueCell key={venue} column={column} view={view} now={nowMs} testId={`cell-${venue}`} />,
-                      <SpreadCell key={`${venue}-spread`} spread={column.spread} testId={`cell-spread-${venue}`} />];
+                      <SpreadCell key={`${venue}-spread`} spread={column.spread} widest={widest} testId={`cell-spread-${venue}`} />];
                   })}
                 </tr>
               ))}

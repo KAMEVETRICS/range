@@ -32,7 +32,7 @@ flowchart LR
 
 1. **Connectors** read each venue's public feeds and publish listings, order books, funding and venue health as canonical events.
 2. **The instrument registry** versions each listing's metadata. Reviewed mappings in [`config/instrument-mappings.json`](config/instrument-mappings.json) join listings to one underlying, such as `equity:NVDA`. Only those mappings can produce actionable results, and a listing whose metadata changes drops out of its mapping until it is reviewed again.
-3. **The opportunity worker** keeps sequence-checked books and funding for every listing. For each reviewed pair it walks both books at the requested notional and nets out taker fees, a slippage buffer per leg, and funding projected over an 8-hour hold. It publishes the result with its evidence, writes current state to Redis and history to Postgres, from which results can be replayed.
+3. **The opportunity worker** keeps sequence-checked books and funding for every listing. For each reviewed pair it walks both books at the requested notional and nets out taker fees, a slippage buffer per leg, and funding projected over a one-hour hold. It publishes the result with its evidence, writes current state to Redis and history to Postgres, from which results can be replayed.
 4. **The gateway** serves one application layer over REST, SSE and MCP, with scoped bearer tokens and per-operation rate limits.
 5. **The dashboard** is a React app behind nginx, which adds a read-only token to API calls so the browser never holds one.
 
@@ -75,7 +75,7 @@ docker compose -f infra/compose.yaml --env-file ../range.env up -d --build
 
 The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
 
-The Markets page needs only the connectors, but the scanner may stay empty on a new stack. Each reviewed mapping pins its members' instrument version and metadata hash as the live deployment's registry numbered them. A new registry can number the same metadata differently, and the worker then leaves the mapping unpublished rather than guess. To evaluate the pairs on your own stack, read your registry's pins with `scripts/reviewed-mapping-members.ts` and publish the mappings again at a higher `mappingVersion`, as the runbook's "Reviewed mappings" section describes.
+The Markets page needs only the connectors. The scanner's pairs appear once both venues' connectors have published listings whose metadata matches the reviewed hashes. If a venue has changed a listing since the review, such as its lot size or trading hours, its pair stays off until the change is reviewed (fail-closed).
 
 ## Tests
 
@@ -149,11 +149,9 @@ The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The M
 
 ## Documentation
 
-- [Design](docs/superpowers/specs/2026-09-20-range-design.md) and [implementation plan](docs/superpowers/plans/2026-09-20-range-implementation.md)
+- [Design](docs/design.md)
 - [Operations runbook](docs/operations/runbook.md)
 - [Release gate and verifier status](docs/operations/demo.md)
 - [Credentials](docs/operations/credentials.md)
 - [Venue enablement](docs/operations/venue-enablement.md)
 - [Bitget and trade.xyz review](docs/reviews/2026-09-30-bitget-hyperliquid.md)
-
-[`track 3/capital-rotation.md`](<track 3/capital-rotation.md>) is a brief for a separate Track 3 project; it is not part of Range.

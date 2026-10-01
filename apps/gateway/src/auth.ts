@@ -8,6 +8,9 @@ export function hashClientToken(token: string, pepper: string) {
   if (pepper.length < 32) throw new Error("Client token pepper must contain at least 32 characters");
   return createHmac("sha256", pepper).update(token).digest("hex");
 }
+const CLIENT_TOKEN = /^[A-Za-z0-9_-]{32,256}$/;
+/** Whether a client token is one the gateway accepts as `Bearer <token>`: 32 to 256 characters of A-Z, a-z, 0-9, _ and -. */
+export function isClientToken(token: string) { return CLIENT_TOKEN.test(token); }
 const DASHBOARD_OPERATIONS = new Set(["getMarketOverview", "getPairEvaluations", "scanOpportunities", "inspectOpportunity"]);
 
 export class ClientAuth {
@@ -26,7 +29,9 @@ export class ClientAuth {
     }
   }
   authorize(header: string | undefined, required: readonly Scope[]): ClientRecord {
-    if (!header || header.length > 512 || !/^Bearer [A-Za-z0-9_-]{32,256}$/.test(header)) throw new ApplicationError(401, "UNAUTHORIZED");
+    if (!header || header.length > 512 || !header.startsWith("Bearer ") || !isClientToken(header.slice(7))) {
+      throw new ApplicationError(401, "UNAUTHORIZED");
+    }
     const candidate = Buffer.from(hashClientToken(header.slice(7), this.pepper), "hex");
     let result: ClientRecord | undefined;
     for (const client of this.clients) if (timingSafeEqual(candidate, Buffer.from(client.tokenHash, "hex"))) result = client;

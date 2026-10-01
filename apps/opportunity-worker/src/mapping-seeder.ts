@@ -5,7 +5,7 @@ type RegistryEvent = TopicPayload["instrument.registry.v1"];
 type MappingEvent = Extract<RegistryEvent, { kind: "mapping" }>;
 type SeedConfig = ReturnType<typeof SeedConfigSchema.parse>;
 
-/** Publishes each reviewed mapping once every member resolves to live metadata matching the reviewed version. */
+/** Publishes each reviewed mapping once every member resolves to live metadata with the reviewed metadata hash. */
 export function createReviewedMappingSeeder(seed: SeedConfig,
   publish: (underlyingId: string, event: MappingEvent) => Promise<void>): (event: RegistryEvent) => Promise<void> {
   const seedRegistry = new InstrumentRegistry();
@@ -20,10 +20,11 @@ export function createReviewedMappingSeeder(seed: SeedConfig,
       const id = `${declaration.underlyingId}@${declaration.mappingVersion}`;
       if (publishedMappings.has(id)) continue;
       const members = declaration.members.map(member => seedRegistry.resolveVenueSymbol(member.venue, member.venueSymbol, member.venueFamily));
-      // Replay meets each member's earlier versions first, so a review waits until every member reaches the reviewed
-      // version and hash; a member that moves past it leaves the review unpublished (fail-closed).
-      if (members.some((actual, index) => !actual || actual.version !== declaration.members[index]!.instrumentVersion ||
-          actual.metadataHash !== declaration.members[index]!.metadataHash)) continue;
+      // Replay meets each member's earlier metadata first, so a review waits until every member's current metadata has
+      // the reviewed hash; while any member's differs, the review stays unpublished (fail-closed). The hash alone
+      // decides: a registry numbers versions in the order it sees metadata, so another deployment's registry can give
+      // the reviewed metadata a different version.
+      if (members.some((actual, index) => !actual || actual.metadataHash !== declaration.members[index]!.metadataHash)) continue;
       const { liveEvidence: _liveEvidence, ...reviewedDeclaration } = declaration;
       const mapping = { ...reviewedDeclaration, members: members.map(actual =>
         ({ instrumentId: actual!.instrument.instrumentId, instrumentVersion: actual!.version, metadataHash: actual!.metadataHash })) };

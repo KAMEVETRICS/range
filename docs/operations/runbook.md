@@ -2,7 +2,7 @@
 
 ## Start and verify
 
-Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN`, and a different `RANGE_DASHBOARD_READ_TOKEN`. Each token needs 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_`, and `-` (for example `openssl rand -hex 32`): the gateway starts with 24, but rejects shorter tokens on every request. The dashboard token is read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
+Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN`, and a different `RANGE_DASHBOARD_READ_TOKEN`. Each token needs 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_`, and `-` (for example `openssl rand -hex 32`); the gateway refuses to start with any other token. The dashboard token is read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
 
 ```powershell
 docker compose -f infra/compose.yaml up -d --build
@@ -35,7 +35,7 @@ Pacifica, Lighter, Variational, and Nado have no asset-class field, so their sto
 
 ## Reviewed mappings
 
-Only reviewed mappings in `config/instrument-mappings.json` can produce actionable opportunities. The first ten (Bitget USDT-M and trade.xyz on Hyperliquid for NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN, MSTR, HOOD) were approved on 2026-09-30; the evidence and accepted differences are in `docs/reviews/2026-09-30-bitget-hyperliquid.md`, and the connectors mark those listings verified (`REVIEWED_STOCK_PERPS` in the Bitget mapper, `REVIEWED_EQUITY_PERPS` in the Hyperliquid mapper). Each mapping pins its members' instrument version and metadata hash: when a listing's metadata changes it moves to a new version and drops out of its mapping (fail-closed). To restore it, confirm the change is benign, read the new pins with `scripts/reviewed-mapping-members.ts` (usage in its header) and publish the mapping again with a higher `mappingVersion`. The worker reads the file at startup, so recreate the opportunity worker after changing it.
+Only reviewed mappings in `config/instrument-mappings.json` can produce actionable opportunities. The first ten (Bitget USDT-M and trade.xyz on Hyperliquid for NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN, MSTR, HOOD) were approved on 2026-09-30; the evidence and accepted differences are in `docs/reviews/2026-09-30-bitget-hyperliquid.md`, and the connectors mark those listings verified (`REVIEWED_STOCK_PERPS` in the Bitget mapper, `REVIEWED_EQUITY_PERPS` in the Hyperliquid mapper). Each mapping pins its members' metadata hashes, which every registry computes alike. A member's `instrumentVersion` only records what the reviewing deployment's registry numbered it and is not matched, since a registry numbers versions in the order it sees metadata and a new one can number the same metadata differently. When a listing's metadata changes, its hash changes and it drops out of its mapping (fail-closed). To restore it, confirm the change is benign, read the new hash with `scripts/reviewed-mapping-members.ts` (usage in its header) and publish the mapping again with a higher `mappingVersion`. The worker reads the file at startup, so recreate the opportunity worker after changing it.
 
 ## Correctness alerts
 

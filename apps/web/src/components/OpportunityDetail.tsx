@@ -15,15 +15,20 @@ export function OpportunityDetail({ opportunity, quoteTimestamps, detail, invali
 }) {
   const stale = invalidated || opportunity.status !== "actionable" || opportunity.freshness.eligibility !== "live" || !opportunity.freshness.synchronized;
   const warning = invalidated ? "This result was invalidated by the live stream and is being refreshed." : stale ? "This result is research-only because its currentness or input eligibility failed." : "Current application-service result. Revalidate before any external execution decision.";
+  const net = Number(opportunity.netEdgeBps);
   return (
-    <aside className="detail-panel" aria-label="Selected opportunity detail">
+    <aside className="panel detail-panel" aria-label="Selected opportunity detail">
       <div className="detail-header">
-        <div><p className="eyebrow">Selected result</p><h2>{opportunity.underlyingId.split(":").at(-1)} · {opportunity.strategy.replaceAll("_", " ")}</h2><p>{opportunity.opportunityId}</p></div>
-        <span className={`freshness ${stale ? "stale" : "live"}`}>{stale ? "Stale input" : "Current"}</span>
+        <div>
+          <p className="eyebrow">Selected result</p>
+          <h2>{opportunity.underlyingId.split(":").at(-1)} · {opportunity.strategy.replaceAll("_", " ")}</h2>
+          <p className="hash">{opportunity.opportunityId}</p>
+        </div>
+        <span className={`status ${stale ? "warn" : "ok"}`}>{stale ? "Stale input" : "Current"}</span>
       </div>
-      <p className={`state-callout ${stale ? "warning" : "neutral"}`}>{warning}</p>
+      <p className={`callout ${stale ? "warn" : "neutral"}`}>{warning}</p>
       <section aria-labelledby="economics-heading">
-        <div className="section-heading compact"><div><p className="eyebrow">Application truth</p><h3 id="economics-heading">Economics</h3></div><span>{formatAge(opportunity.freshness.oldestInputMs)}</span></div>
+        <div className="sub-head"><h3 id="economics-heading">Economics</h3><span>{formatAge(opportunity.freshness.oldestInputMs)}</span></div>
         <dl className="metric-grid">
           <div><dt>Gross edge</dt><dd>{opportunity.grossSpreadBps} bps</dd></div>
           <div><dt>Funding</dt><dd>{opportunity.expectedFundingBps} bps</dd></div>
@@ -33,17 +38,17 @@ export function OpportunityDetail({ opportunity, quoteTimestamps, detail, invali
           <div><dt>Gas / transfer</dt><dd>−{opportunity.gasAndTransferBps} bps</dd></div>
           <div><dt>FX conversion</dt><dd>−{opportunity.fxConversionBps} bps</dd></div>
           <div><dt>Uncertainty</dt><dd>−{opportunity.uncertaintyBufferBps} bps</dd></div>
-          <div className="metric-emphasis"><dt>Net edge</dt><dd>{opportunity.netEdgeBps} bps</dd></div>
+          <div className={`metric-emphasis ${net >= 0 ? "positive" : "negative"}`}><dt>Net edge</dt><dd>{opportunity.netEdgeBps} bps</dd></div>
           <div><dt>Capacity</dt><dd>{money(opportunity.capacityUsd)}</dd></div>
           <div><dt>Expires</dt><dd>{new Date(opportunity.expiresAt).toLocaleTimeString()}</dd></div>
         </dl>
       </section>
       <section className="legs" aria-labelledby="legs-heading">
-        <h3 id="legs-heading">Executable-depth inputs</h3>
+        <div className="sub-head"><h3 id="legs-heading">Executable-depth inputs</h3></div>
         {opportunity.legs.map((leg) => {
           const timestamp = (detail?.result.quote_timestamps ?? quoteTimestamps).find((candidate) => candidate.event_id === leg.executableQuote.sourceBookEventId);
           return <div className="leg" key={leg.legId}>
-            <div><span className={`side side-${leg.side}`}>{leg.side}</span><strong>{leg.instrumentId}</strong></div>
+            <div className="leg-title"><span className={`side side-${leg.side}`}>{leg.side}</span><strong>{leg.instrumentId}</strong></div>
             <dl>
               <div><dt>Average</dt><dd>{leg.executableQuote.averagePrice}</dd></div><div><dt>Worst</dt><dd>{leg.executableQuote.worstPrice}</dd></div><div><dt>Book age</dt><dd>{formatAge(leg.executableQuote.ageMs)}</dd></div>
               <div><dt>Source event</dt><dd className="hash">{leg.executableQuote.sourceBookEventId}</dd></div>
@@ -55,7 +60,7 @@ export function OpportunityDetail({ opportunity, quoteTimestamps, detail, invali
       </section>
       <EvidencePanel opportunity={opportunity} detail={detail} />
       {(opportunity.rejectionReasons.length > 0 || detail?.result.rejection_history.length) ? <section className="rejection-panel" aria-label="Rejection provenance">
-        <div className="section-heading compact"><div><p className="eyebrow">Decision history</p><h3>Rejection provenance</h3></div></div>
+        <div className="sub-head"><h3>Rejection provenance</h3></div>
         {opportunity.rejectionReasons.length > 0 && <div><strong>Current reasons</strong><ul>{opportunity.rejectionReasons.map((reason) => <li key={reason}>{reasonLabel(reason)}</li>)}</ul></div>}
         {detail?.result.rejection_history.map((entry) => <div className="rejection-revision" key={`${entry.state_revision}:${entry.status}`}>
           <strong>Revision {entry.state_revision} · {entry.status}</strong>

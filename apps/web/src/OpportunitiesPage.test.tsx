@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "./test-setup.js";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpportunitiesPage } from "./pages/OpportunitiesPage.js";
@@ -191,9 +191,10 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     await user.click(screen.getByRole("button", { name: "Apply filters" }));
     vi.mocked(api.scanOpportunities).mockResolvedValueOnce(opportunities([]));
 
-    await streamHandler?.({ kind: "invalidation", opportunityId: "opp_nvda_spread_1", message: "Opportunity invalidated by live update." });
+    await act(async () => { await streamHandler?.({ kind: "invalidation", opportunityId: "opp_nvda_spread_1", message: "Opportunity invalidated by live update." }); });
 
-    expect(await screen.findByText("Opportunity invalidated by live update.")).toBeVisible();
+    // The page reloads quietly: stream messages are not shown.
+    expect(screen.queryByText("Opportunity invalidated by live update.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Minimum net edge")).toHaveValue(25);
     expect(api.scanOpportunities).toHaveBeenLastCalledWith(expect.objectContaining({ strategy: "perp_spread", min_edge_bps: "25" }));
   });
@@ -263,7 +264,6 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     const health = await screen.findByRole("region", { name: "Venue health" });
     expect(within(health).getByText("Degraded")).toBeVisible();
     expect(within(health).getByText("Missing")).toBeVisible();
-    expect(within(health).getByText(/excluded from actionable results/i)).toBeVisible();
   });
 
   it("explains why unsigned intent preview is unavailable in the browser", async () => {

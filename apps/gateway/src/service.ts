@@ -9,10 +9,9 @@ import { createGatewayClients } from "./service-config.js";
 
 async function main() {
   const config = loadConfig(process.env);
-  const token = process.env.RANGE_DEMO_API_TOKEN;
-  if (!token || token.length < 24) throw new Error("RANGE_DEMO_API_TOKEN must be at least 24 characters");
-  const dashboardToken = process.env.RANGE_DASHBOARD_READ_TOKEN;
-  if (!dashboardToken || dashboardToken.length < 24) throw new Error("RANGE_DASHBOARD_READ_TOKEN must be at least 24 characters");
+  const token = process.env.RANGE_DEMO_API_TOKEN ?? "";
+  const dashboardToken = process.env.RANGE_DASHBOARD_READ_TOKEN ?? "";
+  const clients = createGatewayClients({ demoToken: token, dashboardToken, pepper: config.apiTokenPepper });
   const manifestInput = JSON.parse(process.env.RANGE_VENUE_MANIFEST_JSON ?? "[]");
   const manifest = VenueViewSchema.pick({ venue: true, capabilities: true, freshnessBudgetMs: true }).array().min(1).parse(manifestInput);
   const sql = new pg.Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 5_000 }) as unknown as SqlPool & { end(): Promise<void> };
@@ -25,7 +24,7 @@ async function main() {
     entry => telemetry.logger.info("storage query", entry)));
   const intents = new IntentService(application, new SqlIntentStore(sql));
   const app = buildServer({ application, intents, pepper: config.apiTokenPepper,
-    clients: createGatewayClients({ demoToken: token, dashboardToken, pepper: config.apiTokenPepper }),
+    clients,
     mcpAllowedHosts: (process.env.RANGE_ALLOWED_HOSTS ?? "localhost,127.0.0.1,gateway").split(",").map(value => value.trim()),
     log: entry => telemetry.logger.info("gateway request", entry),
     observeLatency: entry => telemetry.metrics.observe("range_gateway_latency_ms", entry.duration_ms, { operation: entry.operation }),

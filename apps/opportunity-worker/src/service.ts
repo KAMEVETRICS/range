@@ -142,12 +142,20 @@ async function main() {
   const registry = new InstrumentRegistry();
   const feesBpsByVenue = JSON.parse(process.env.RANGE_FEES_BPS_JSON ?? "{}") as Record<string, string>;
   const slippageBpsByVenue = JSON.parse(process.env.RANGE_SLIPPAGE_BPS_JSON ?? "{}") as Record<string, string>;
+  // A worker whose revision authority failed refuses all input until restarted, while its health check still passes:
+  // on 2026-10-01 one sat failed for five and a half hours. Exiting lets Docker restart it, rebuilt from the logs; if
+  // Postgres is still down, that start fails and Docker retries. Until shutdown is wired up below, it exits at once.
+  let exitForRestart: () => void = () => process.exit(1);
   const service = await startPersistentOpportunityWorker(bus, registry, {
     requestedNotionalUsd: process.env.RANGE_REQUESTED_NOTIONAL_USD ?? "10000",
     minimumNotionalUsd: process.env.RANGE_MINIMUM_NOTIONAL_USD ?? "100",
     holdingHorizonMs: Number(process.env.RANGE_HOLDING_HORIZON_MS ?? 28_800_000),
     feesBpsByVenue, slippageBpsByVenue, financingBps: "0", gasAndTransferBps: "0",
     fxConversionBps: "0", uncertaintyBufferBps: "0", calculationVersion,
+    onAuthorityLost: () => {
+      telemetry.logger.error("revision authority lost; exiting so the container restarts", {});
+      exitForRestart();
+    },
   }, sql, redis);
   // The pair view, like the market board: the latest evaluation of every reviewed pair, republished every 2 s.
   let pairsVersion = 0;
@@ -176,6 +184,12 @@ async function main() {
     redis.disconnect(); await sql.end();
   })();
   process.once("SIGINT", () => { void close(); }); process.once("SIGTERM", () => { void close(); });
+  // Leaving the consumer groups cleanly lets the restarted worker rejoin without waiting out their session timeout;
+  // shutdown can hang on a database that is down, so it gets ten seconds.
+  exitForRestart = () => {
+    setTimeout(() => process.exit(1), 10_000).unref();
+    void close().catch(() => undefined).finally(() => process.exit(1));
+  };
 }
 
 main().catch(error => {

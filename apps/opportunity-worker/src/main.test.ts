@@ -239,7 +239,7 @@ describe("opportunity worker", () => {
     await worker.stop();
   });
 
-  it.each([undefined, null, 0])("fails closed when authority advance rejects %s", async reason => {
+  it.each([undefined, null, 0])("fails closed and reports it once when authority advance rejects %s", async reason => {
     const bus = new InMemoryEventBus();
     const registry = reviewedRegistry();
     const backing = createInMemoryRevisionAuthority();
@@ -260,16 +260,22 @@ describe("opportunity worker", () => {
     };
     const seen: Opportunity[] = [];
     await bus.subscribe("opportunity.v1", `authority-falsy-${String(reason)}`, async event => { seen.push(event); });
-    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority });
+    const onAuthorityLost = vi.fn();
+    const worker = await startOpportunityWorker(bus, registry, { ...policy, revisionAuthority: authority, onAuthorityLost });
     await publishEligibleInputs(bus);
     await worker.flush();
     const actionable = seen.find(event => event.status === "actionable")!;
+    expect(onAuthorityLost).not.toHaveBeenCalled();
     failNext = true;
     await expect(bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_authority_fails"),
       sourceTimestamp: NOW - 1, receivedTimestamp: NOW - 1, eligibility: "reference_only" } as never))
       .rejects.toThrow(/revision authority unavailable/i);
     expect(worker.isCurrent(actionable)).toBe(false);
     expect(() => worker.currentRevision("equity:TSLA")).toThrow(/revision authority unavailable/i);
+    // Later input is refused without reporting the loss again.
+    await expect(bus.publish("book.state.v1", "ins_a", { ...book("ins_a", "venue_a", "100", "evt_after_failure"),
+      sourceTimestamp: NOW, receivedTimestamp: NOW } as never)).rejects.toThrow(/revision authority unavailable/i);
+    expect(onAuthorityLost).toHaveBeenCalledTimes(1);
     await worker.stop();
   });
 

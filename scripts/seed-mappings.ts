@@ -26,7 +26,7 @@ export function prepareSeed(configInput: unknown, discoveredInput: unknown = [])
     const members = declaration.members.map(member => {
       const resolved = registry.resolveVenueSymbol(member.venue, member.venueSymbol, member.venueFamily);
       if (!resolved) throw new Error(`Unknown or ambiguous venue symbol: ${member.venue}/${member.venueFamily ?? "?"}/${member.venueSymbol}`);
-      if (resolved.version !== member.instrumentVersion) throw new Error(`Instrument version mismatch: ${member.venue}/${member.venueSymbol}`);
+      // The reviewed metadata hash decides, not the version: this catalog numbers versions its own way.
       if (resolved.metadataHash !== member.metadataHash) throw new Error(`Metadata hash mismatch: ${member.venue}/${member.venueSymbol}`);
       return { instrumentId: resolved.instrument.instrumentId, instrumentVersion: resolved.version, metadataHash: resolved.metadataHash };
     });
