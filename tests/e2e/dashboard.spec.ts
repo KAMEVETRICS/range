@@ -35,9 +35,9 @@ async function mockApi(page: Page) {
 test("scan, inspect evidence, and explain the safe intent-preview boundary", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await mockApi(page);
-  await page.goto("/");
+  await page.goto("/#opportunities");
 
-  await expect(page.getByRole("heading", { name: "Opportunity intelligence" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Opportunities" })).toBeVisible();
   const row = page.getByRole("row", { name: /NVDA.*51\.48 bps/ });
   await expect(row).toBeVisible();
   await expect(row.getByText("131.10 avg / 131.20 worst")).toBeVisible();
@@ -63,7 +63,7 @@ test("keeps a long valid decimal price within a 320 px viewport", async ({ page 
     ...opportunity,
     legs: opportunity.legs.map((leg) => ({ ...leg, executableQuote: { ...leg.executableQuote, averagePrice: longPrice, worstPrice: longPrice } })),
   }], quote_timestamps: quoteTimestamps, next_offset: null }) }));
-  await page.goto("/");
+  await page.goto("/#opportunities");
   await expect(page.getByRole("cell", { name: /Net edge 51\.48 bps/ })).toBeVisible();
   const price = page.getByRole("row", { name: /NVDA/ }).getByText(`${longPrice} avg / ${longPrice} worst`).first();
   const bounds = await price.boundingBox();

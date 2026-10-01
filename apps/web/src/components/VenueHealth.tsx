@@ -1,34 +1,33 @@
 import type { VenueView } from "../api/client.js";
+import { HEALTH_TONE, VenueIcon, healthLabel, venueInfo } from "../venues.js";
 
-function healthLabel(venue: VenueView) {
-  if (!venue.health) return "Missing";
-  const healthy = venue.health.connectionState === "connected" && venue.health.sequenceIntegrity === "consistent" && venue.health.rateLimit.state === "healthy";
-  return healthy ? "Healthy" : venue.health.connectionState === "quarantined" ? "Excluded" : "Degraded";
+function describe(venue: VenueView): string {
+  const accepted = venue.asOfMs === null ? "accepted time unavailable" : `accepted ${new Date(venue.asOfMs).toISOString()}`;
+  if (!venue.health) return `No current health record · ${accepted}`;
+  return `Last event ${(venue.health.lastEventAgeMs / 1000).toFixed(1)} s ago · sequence ${venue.health.sequenceIntegrity} · rate limit ${venue.health.rateLimit.state} · ${accepted}`;
 }
 
 export function VenueHealth({ venues, warnings }: { venues: VenueView[]; warnings: string[] }) {
   return (
     <section className="venue-strip" aria-label="Venue health">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Coverage</p>
-          <h2>Venue health</h2>
-        </div>
-        <p className="coverage-note">Degraded, missing, stale, and reference-only sources are excluded from actionable results.</p>
+      <div className="strip-head">
+        <h2>Venue health</h2>
+        <p>Degraded, missing, stale, and reference-only sources are excluded from actionable results.</p>
       </div>
-      <div className="venue-list">
+      <ul className="venue-chips">
         {venues.map((venue) => {
           const label = healthLabel(venue);
           return (
-            <article className={`venue-item state-${label.toLowerCase()}`} key={venue.venue}>
-              <div className="venue-title"><strong>{venue.venue.replaceAll("_", " ")}</strong><span className="status-label">{label}</span></div>
-              <p>{venue.health ? `${(venue.health.lastEventAgeMs / 1000).toFixed(1)} s · sequence ${venue.health.sequenceIntegrity}` : "No current health record"}</p>
-              <p className="accepted-time">{venue.asOfMs === null ? "Accepted time unavailable" : `Accepted ${new Date(venue.asOfMs).toISOString()}`}</p>
-            </article>
+            <li key={venue.venue} className="venue-chip" title={describe(venue)}>
+              <VenueIcon venue={venue.venue} />
+              <span className="venue-name">{venueInfo(venue.venue).label}</span>
+              <span className={`status ${HEALTH_TONE[label]}`}><span className="status-text">{label}</span></span>
+              <span className="venue-age">{venue.health ? `${(venue.health.lastEventAgeMs / 1000).toFixed(1)} s` : "—"}</span>
+            </li>
           );
         })}
-      </div>
-      {warnings.length > 0 && <p className="venue-warning">{warnings.join(" · ")}</p>}
+      </ul>
+      {warnings.length > 0 && <p className="strip-warning">{warnings.join(" · ")}</p>}
     </section>
   );
 }

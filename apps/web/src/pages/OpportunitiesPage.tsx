@@ -114,11 +114,14 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
   };
 
   return (
-    <main>
-      <header className="app-header">
-        <a className="brand" href="#results" aria-label="Range dashboard home"><span className="brand-mark">R</span><span>Range</span></a>
-        <div><p className="eyebrow">Read-only decision support</p><h1>Opportunity intelligence</h1></div>
-        <div className="live-state"><span aria-hidden="true" /><p aria-live="polite">{liveMessage}</p></div>
+    <main className="page opportunities">
+      <header className="page-head">
+        <div>
+          <p className="eyebrow">Reviewed pairs · Bitget × trade.xyz</p>
+          <h1>Opportunities</h1>
+          <p className="page-sub">Every reviewed pair's latest evaluation, and a scanner of the results that clear every cost. Pick a pair to scan its stock.</p>
+        </div>
+        <div className="live-state"><span className="pulse" aria-hidden="true" /><p aria-live="polite">{liveMessage}</p></div>
       </header>
 
       <p className="disclaimer"><strong>Intelligence, not guaranteed profit.</strong> Values are application-service outputs from synchronized source evidence; Range does not submit orders, sign, hold assets, or manage wallets.</p>
@@ -127,25 +130,30 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
         unpick();
         setDraft((current) => ({ ...current, underlying }));
         setFilters((current) => ({ ...current, underlying }));
+        document.getElementById("results")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
       }} />
 
       <section id="results" className="workspace" aria-labelledby="results-heading">
-        <div className="results-panel">
-          <div className="section-heading"><div><p className="eyebrow">Scanner</p><h2 id="results-heading">Current results</h2></div><span className="result-count">{opportunities.length} returned</span></div>
+        <div className="panel results-panel">
+          <div className="panel-head">
+            <div><p className="eyebrow">Scanner · {filters.underlying.replace(/^equity:/, "")}</p><h2 id="results-heading">Current results</h2></div>
+            <span className="count">{opportunities.length} returned</span>
+          </div>
           <form className="filters" onSubmit={applyFilters}>
             <label><span>Underlying</span><input required value={draft.underlying} onChange={(event) => setDraft({ ...draft, underlying: event.target.value })} /></label>
             <label><span>Strategy</span><select value={draft.strategy} onChange={(event) => setDraft({ ...draft, strategy: event.target.value })}><option value="">All strategies</option><option value="perp_spread">Perpetual spread</option><option value="spot_perp_basis">Spot–perp basis</option><option value="funding_differential">Funding differential</option></select></label>
             <label><span>Minimum net edge</span><div className="input-unit"><input aria-label="Minimum net edge" type="number" step="0.01" value={draft.minEdge} onChange={(event) => setDraft({ ...draft, minEdge: event.target.value })} /><span>bps</span></div></label>
             <label><span>Minimum capacity / notional</span><div className="input-unit"><input aria-label="Minimum capacity / notional" type="number" min="0" step="1" value={draft.notional} onChange={(event) => setDraft({ ...draft, notional: event.target.value })} /><span>USD</span></div></label>
             <label><span>Maximum age</span><div className="input-unit"><input aria-label="Maximum age" type="number" min="0" step="100" value={draft.maxAge} onChange={(event) => setDraft({ ...draft, maxAge: event.target.value })} /><span>ms</span></div></label>
-            <button className="apply" type="submit">Apply filters</button>
+            <button className="button primary apply" type="submit">Apply filters</button>
           </form>
-          {warnings.length > 0 && <div className="inline-warning" role="status"><strong>Partial coverage</strong><p>{warnings.join(" · ")}</p></div>}
-          {error && <div className="error-state" role="alert"><strong>Results unavailable</strong><p>{error}</p></div>}
+          {warnings.length > 0 && <div className="notice warn" role="status"><strong>Partial coverage</strong> {warnings.join(" · ")}</div>}
+          {error && <div className="notice bad" role="alert"><strong>Results unavailable</strong> {error}</div>}
           {loading ? <p className="loading">Loading application-service results…</p> : <OpportunityTable opportunities={opportunities} quoteTimestamps={quoteTimestamps} selectedId={selectedId} invalidatedIds={invalidatedIds} onSelect={select} />}
         </div>
         {selected ? <OpportunityDetail opportunity={selected} quoteTimestamps={quoteTimestamps} detail={detail}
-          invalidated={invalidatedIds.has(selected.opportunityId) || (!listed && selected.status === "actionable")} intentPreviewCapability={api.intentPreviewCapability} /> : <aside className="detail-panel placeholder"><p>Select a current result to inspect economics, depth, freshness, and evidence lineage.</p></aside>}
+          invalidated={invalidatedIds.has(selected.opportunityId) || (!listed && selected.status === "actionable")} intentPreviewCapability={api.intentPreviewCapability} />
+          : <aside className="panel detail-panel placeholder"><p>Select a current result to inspect its economics, depth, freshness, and evidence lineage.</p></aside>}
       </section>
     </main>
   );
