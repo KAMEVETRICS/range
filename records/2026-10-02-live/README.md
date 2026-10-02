@@ -59,7 +59,7 @@ Observed in the window:
 
 ## Checking a row
 
-`GET https://range.datatides.xyz/v1/opportunities/{opportunity_id}` returns that result with its evidence; it now shows as expired. This works while the underlying book and funding updates are retained, and Range is configured to keep them for 72 hours.
+`GET https://range.datatides.xyz/v1/opportunities/{opportunity_id}` returns that result with its evidence; it now shows as expired. The deployment keeps results and their evidence for 48 hours, so each row can be checked this way until 48 hours after it was recorded: the rows in this window until 2026-10-03 22:00 to 2026-10-04 06:00 UTC. After that, these files are the record.
 
 ## Caveats
 
