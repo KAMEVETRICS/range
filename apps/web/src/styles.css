@@ -208,15 +208,19 @@ p { text-wrap: pretty; }
 .scan-table .strategy { text-transform: capitalize; }
 .scan-table .net { font-weight: 700; }
 .scan-table .costs { color: var(--ink-2); }
+/* The scan fits its panel at laptop widths: tighter cells, costs and freshness on two lines, strategy names wrapping. */
+.scan-table thead th, .scan-table td { padding-inline: 10px; }
+.scan-table .costs span, .freshness-cell small { display: block; }
+.scan-table .strategy { white-space: normal; }
 .row-select { padding: 0; border: 0; color: var(--ink); background: transparent; font-family: var(--mono); font-weight: 700; text-decoration: underline; text-decoration-color: var(--lime); text-decoration-thickness: 3px; text-underline-offset: 3px; cursor: pointer; }
-.lineage-cell { min-width: 250px; white-space: normal !important; }
+.lineage-cell { min-width: 210px; white-space: normal !important; }
 .row-leg { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 8px; padding: 4px 0; }
 .row-leg + .row-leg { border-top: 1px solid var(--line); }
 .row-leg strong { min-width: 0; font-family: var(--mono); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .row-leg .hash, .row-leg small { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
 .row-leg small, .freshness-cell small { color: var(--ink-3); font-family: var(--mono); font-size: 10px; }
 .row-evidence { display: block; margin-top: 4px; padding-top: 5px; border-top: 1px solid var(--line-2); }
-.freshness-cell small { margin-left: 8px; }
+.freshness-cell small { margin-top: 4px; }
 .side { display: inline-flex; padding: 2px 8px; border-radius: 999px; font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .side-buy { color: var(--pos); background: var(--pos-soft); }
 .side-sell { color: var(--neg); background: var(--neg-soft); }
@@ -251,6 +255,7 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
 .evidence-list > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .evidence-list > div:last-child { border-bottom: 0; }
 .evidence-list dd { min-width: 0; margin: 0; }
+.event-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .evidence-panel .notice { margin: 10px 0 0; }
 .rejection-panel { margin-top: 18px; padding: 14px; border-radius: 16px; color: var(--warn); background: var(--warn-soft); font-size: 13px; }
 .rejection-panel .sub-head h3 { color: var(--ink); }
@@ -413,6 +418,7 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
   .scan-table td:nth-child(1), .scan-table td:nth-child(2), .scan-table td:nth-child(3), .scan-table td:nth-child(8) { grid-column: 1 / -1; }
   .scan-table td:nth-child(8) { display: flex; flex-wrap: wrap; border-bottom: 0; }
   .scan-table td:nth-child(8)::before { flex-basis: 100%; }
+  .freshness-cell small { margin: 0 0 0 8px; align-self: center; }
   .lineage-cell { min-width: 0; }
   .evidence-list > div { grid-template-columns: 1fr; }
 }

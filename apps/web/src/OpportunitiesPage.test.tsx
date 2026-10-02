@@ -120,7 +120,8 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     render(<OpportunitiesPage api={apiWith([opportunity()])} initialUnderlying="equity:NVDA" />);
 
     const row = await screen.findByRole("row", { name: /NVDA/ });
-    expect(within(row).getByText("Fees 12.00 · slip 3.40 bps")).toBeVisible();
+    expect(within(row).getByText("Fees 12.00 bps")).toBeVisible();
+    expect(within(row).getByText("slip 3.40 bps")).toBeVisible();
     expect(within(row).queryByText("19.90 bps")).not.toBeInTheDocument();
   });
 
@@ -132,8 +133,8 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     const transfer = within(detail).getByText("Gas / transfer").closest("div")!;
     const fx = within(detail).getByText("FX conversion").closest("div")!;
     expect(within(financing).getByText("−0.50 bps")).toBeVisible();
-    expect(within(transfer).getByText("−0 bps")).toBeVisible();
-    expect(within(fx).getByText("−0 bps")).toBeVisible();
+    expect(within(transfer).getByText("0.00 bps")).toBeVisible();
+    expect(within(fx).getByText("0.00 bps")).toBeVisible();
   });
 
   it("shows source and receive timestamps for executable quote events", async () => {
@@ -141,9 +142,9 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
 
     const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
     expect(within(detail).getAllByText("Source time")).toHaveLength(2);
-    expect(within(detail).getByText("2026-09-27T17:59:59.716Z")).toBeVisible();
+    expect(within(detail).getByText("17:59:59.716 UTC")).toHaveAttribute("title", "2026-09-27T17:59:59.716Z");
     expect(within(detail).getAllByText("Received time")).toHaveLength(2);
-    expect(within(detail).getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
+    expect(within(detail).getByText("17:59:59.748 UTC")).toHaveAttribute("title", "2026-09-27T17:59:59.748Z");
     expect(within(detail).getByText("Envelope as of")).toBeVisible();
   });
 
@@ -156,8 +157,8 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" />);
 
     const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
-    expect(within(detail).getByText("2026-09-27T17:59:59.716Z")).toBeVisible();
-    expect(within(detail).getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
+    expect(within(detail).getByText("17:59:59.716 UTC")).toBeVisible();
+    expect(within(detail).getByText("17:59:59.748 UTC")).toBeVisible();
   });
 
   it("shows executable prices and evidence lineage on every result row", async () => {
@@ -167,6 +168,33 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     expect(within(row).getByText("131.10 avg / 131.20 worst")).toBeVisible();
     expect(within(row).getByText("evt_book_buy_12")).toBeVisible();
     expect(within(row).getByText("evh_0123456789abcdef")).toBeVisible();
+  });
+
+  it("rounds the service's long decimals and shortens long ids, keeping the exact values on hover", async () => {
+    const bookId = "evt_hyperliquid_ins_hyperliquid_hip3_xyz:MSFT_order_book_1790896774749_99c2ba80b2a47ff6";
+    const evidenceHash = "sha256:f6ec1df8af3981a03181ee13cdc6ffa47fe4fb517338a3fa3d96b52feefb2ec9";
+    const base = opportunity();
+    const long = opportunity({
+      legs: [{ ...base.legs[0]!, executableQuote: { ...base.legs[0]!.executableQuote, averagePrice: "515.2379575967360865381529627616556127971509",
+        worstPrice: "515.24", sourceBookEventId: bookId } }, base.legs[1]!],
+      grossSpreadBps: "8.425236778805", expectedFundingBps: "0.7275", tradingFeesBps: "6.9", slippageBps: "2", netEdgeBps: "0.252736778805", evidenceHash,
+    });
+    render(<OpportunitiesPage api={apiWith([long])} initialUnderlying="equity:MSFT" scanRefreshMs={0} />);
+
+    const row = await screen.findByRole("row", { name: /NVDA/ });
+    expect(within(row).getByText("515.238 avg / 515.24 worst")).toHaveAttribute("title", `${long.legs[0]!.executableQuote.averagePrice} avg / 515.24 worst`);
+    expect(within(row).getByText("hyperliquid…b2a47ff6")).toHaveAttribute("title", bookId);
+    expect(within(row).getByText("sha256:f6ec1df8…")).toHaveAttribute("title", evidenceHash);
+    expect(within(row).getByText("Fees 6.90 bps")).toBeVisible();
+    expect(within(row).getByText("slip 2.00 bps")).toBeVisible();
+    expect(within(row).getByText("0.25 bps")).toHaveAttribute("title", "0.252736778805 bps");
+    const detail = await screen.findByRole("complementary", { name: "Selected opportunity detail" });
+    expect(within(detail).getByText("8.43 bps")).toBeVisible();
+    expect(within(detail).getByText("0.73 bps")).toBeVisible();
+    expect(within(detail).getByText("−6.90 bps")).toBeVisible();
+    expect(within(detail).getByText("515.238")).toHaveAttribute("title", long.legs[0]!.executableQuote.averagePrice);
+    expect(within(detail).getByText("hyperliquid…b2a47ff6")).toHaveAttribute("title", bookId);
+    expect(within(detail).getByText(evidenceHash)).toBeVisible();
   });
 
   it("shows current rejection reasons and historical revision provenance", async () => {

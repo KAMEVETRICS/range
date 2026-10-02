@@ -49,8 +49,8 @@ test("scan, inspect evidence, and explain the safe intent-preview boundary", asy
   await expect(detail.getByText("Financing")).toBeVisible();
   await expect(detail.getByText("Gas / transfer")).toBeVisible();
   await expect(detail.getByText("FX conversion")).toBeVisible();
-  await expect(detail.getByText("2026-09-27T17:59:59.716Z")).toBeVisible();
-  await expect(detail.getByText("2026-09-27T17:59:59.748Z")).toBeVisible();
+  await expect(detail.getByText("17:59:59.716 UTC")).toBeVisible();
+  await expect(detail.getByText("17:59:59.748 UTC")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create unsigned intent" })).toBeDisabled();
   await expect(page.getByText(/requires a server-side intent:create scope/i)).toBeVisible();
 });
@@ -65,7 +65,7 @@ test("keeps a long valid decimal price within a 320 px viewport", async ({ page 
   }], quote_timestamps: quoteTimestamps, next_offset: null }) }));
   await page.goto("/#opportunities");
   await expect(page.getByRole("cell", { name: /Net edge 51\.48 bps/ })).toBeVisible();
-  const price = page.getByRole("row", { name: /NVDA/ }).getByText(`${longPrice} avg / ${longPrice} worst`).first();
+  const price = page.getByRole("row", { name: /NVDA/ }).getByText("0.1235 avg / 0.1235 worst").first();
   const bounds = await price.boundingBox();
   expect(bounds).not.toBeNull();
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
