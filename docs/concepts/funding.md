@@ -19,7 +19,7 @@ For each leg, Range projects what the position would pay or collect over the **h
 2. Count the settlements that fall inside the window. A window with none is zero funding, not an estimate.
 3. For each settlement, apply the rate to the position's notional, with the sign set by which side pays: when the rate is positive, longs pay shorts.
 
-The dashboard and the opportunity worker hold positions for **one hour**. trade.xyz publishes only its next hourly rate, and Range does not extrapolate, so a longer hold could not be covered honestly. The API's funding comparison takes any window up to 24 hours, with the same no-extrapolation rule.
+The dashboard and the opportunity worker hold positions for **one hour**. trade.xyz publishes only its next hourly rate, and Range does not extrapolate, so a longer hold could not be covered honestly. The API's funding comparison takes any window up to 24 hours, with the same rule: a venue whose known rates do not cover the window comes back `partial`, with the reason `MISSING_SETTLEMENT_COVERAGE`, rather than a guess.
 
 Each projection reports:
 

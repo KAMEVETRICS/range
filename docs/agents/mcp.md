@@ -54,18 +54,19 @@ Arguments use the same names and rules as the [REST parameters](../api/endpoints
 ## Prompts that work well
 
 * "Is anything between Bitget and trade.xyz worth trading after costs right now? If not, which pair is closest and why is it rejected?"
-* "What would a $10,000 long on trade.xyz and short on Bitget in NVDA pay or collect in funding over the next 8 hours?"
+* "What would a $10,000 long on trade.xyz and short on Bitget in NVDA pay or collect in funding over the next hour?"
 * "Scan MSFT, inspect the best result and tell me how old each book was and when the result expires."
 * "Which venues are degraded right now, and does that affect any reviewed pair?"
 
 ## Calling it without a client
 
-Each request is a JSON-RPC message in a POST with `Accept: application/json, text/event-stream`:
+Each request is a JSON-RPC message in a POST. The `Accept` header must list both `application/json` and `text/event-stream`, or the server answers 406. The reply comes back as one Server-Sent Event, `event: message`, whose `data:` line is the JSON-RPC response:
 
 ```bash
 curl -s https://range.datatides.xyz/mcp \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"compare_funding","arguments":{"underlying":"equity:NVDA","notional_usd":"2500","holding_horizon_ms":3600000}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"compare_funding","arguments":{"underlying":"equity:NVDA","notional_usd":"2500","holding_horizon_ms":3600000}}}' \
+  | sed -n 's/^data: //p'
 ```
 
 `tools/list` returns every tool with its input and output schema.

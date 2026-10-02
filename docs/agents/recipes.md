@@ -36,7 +36,9 @@ curl -s "https://range.datatides.xyz/v1/funding/compare?underlying=equity:NVDA&n
 
 MCP: `compare_funding` with `{"underlying": "equity:NVDA", "notional_usd": "2500", "holding_horizon_ms": 3600000}`.
 
-For each venue, `long` and `short` say what that side pays (negative) or collects (positive): `expectedCashflowUsd`, `expectedCashflowBps`, `settlementCount` and `nextSettlementMs`. A long on one venue and a short on the other nets the two. Widen `holding_horizon_ms` to 28,800,000 to include a Bitget settlement, which happens every 8 hours.
+For each venue, `long` and `short` say what that side pays (negative) or collects (positive): `expectedCashflowUsd`, `expectedCashflowBps`, `settlementCount` and `nextSettlementMs`. A long on one venue and a short on the other nets the two.
+
+A window of 28,800,000 ms (8 hours) always includes a Bitget settlement. trade.xyz publishes only its next hourly rate, though, so over more than an hour its projection comes back `partial` with `MISSING_SETTLEMENT_COVERAGE` rather than an extrapolated guess.
 
 ## Where is funding cheapest for a stock?
 
