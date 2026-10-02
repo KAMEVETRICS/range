@@ -1,9 +1,9 @@
 [Unit]
-Description=Prune the Docker build cache for Range daily
+Description=Cap the Docker build cache for Range every hour
 
 [Timer]
-OnCalendar=daily
-RandomizedDelaySec=30min
+OnCalendar=hourly
+RandomizedDelaySec=5min
 Persistent=true
 
 [Install]

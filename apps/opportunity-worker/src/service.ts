@@ -50,17 +50,25 @@ async function main() {
   stops.push(await bus.subscribeBatch("intent.lifecycle.v1", "history-intents", persist("intent.lifecycle.v1", event => event.idempotencyKey)));
 
   // Book and funding history older than RANGE_HISTORY_RETENTION_HOURS is deleted every five minutes; 0 keeps it all.
-  // Each pass is bounded, so a backlog drains over several passes rather than in one long run.
+  // Results and their evidence older than RANGE_RESULT_RETENTION_HOURS go first in the same pass, so what their
+  // evidence cited is uncited by the time books and funding are trimmed; 0, the default, keeps every result as an audit
+  // trail. Each pass is bounded, so a backlog drains over several passes rather than in one long run.
   const retentionHours = Number(process.env.RANGE_HISTORY_RETENTION_HOURS ?? 24);
   if (!Number.isFinite(retentionHours) || retentionHours < 0) throw new Error("RANGE_HISTORY_RETENTION_HOURS must be zero or more");
+  const resultRetentionHours = Number(process.env.RANGE_RESULT_RETENTION_HOURS ?? 0);
+  if (!Number.isFinite(resultRetentionHours) || resultRetentionHours < 0) throw new Error("RANGE_RESULT_RETENTION_HOURS must be zero or more");
   const stopPruning = new AbortController();
   let pruning: Promise<void> | undefined;
-  const prune = () => pruning ??= history.pruneObservations(Math.floor(Date.now() - retentionHours * 3_600_000),
-    { maxBatches: 100, signal: stopPruning.signal })
-    .then(deleted => { if (deleted) telemetry.logger.info("history pruned", { deleted, retentionHours }); },
-      error => telemetry.logger.error("history pruning failed", { error }))
+  const cutoff = (hours: number) => Math.floor(Date.now() - hours * 3_600_000);
+  const prune = () => pruning ??= (async () => {
+    const options = { maxBatches: 100, signal: stopPruning.signal };
+    const results = resultRetentionHours > 0 ? await history.pruneResults(cutoff(resultRetentionHours), options) : 0;
+    const deleted = retentionHours > 0 ? await history.pruneObservations(cutoff(retentionHours), options) : 0;
+    if (deleted || results) telemetry.logger.info("history pruned", { deleted, results, retentionHours, resultRetentionHours });
+  })()
+    .catch(error => telemetry.logger.error("history pruning failed", { error }))
     .finally(() => { pruning = undefined; });
-  const pruneTimer = retentionHours > 0 ? setInterval(prune, 300_000) : undefined;
+  const pruneTimer = retentionHours > 0 || resultRetentionHours > 0 ? setInterval(prune, 300_000) : undefined;
 
   // Canonicalization is intentionally structural only: connector adapters have
   // already validated venue payloads into the shared observation schema. Routing is batched, one broker request per

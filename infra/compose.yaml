@@ -107,6 +107,7 @@ services:
       - ../packages/storage/src/migrations/0001_initial.sql:/docker-entrypoint-initdb.d/010-range.sql:ro
       - ../packages/storage/src/migrations/0002_history_retention.sql:/docker-entrypoint-initdb.d/020-range-retention.sql:ro
       - ../packages/storage/src/migrations/0003_history_vacuum.sql:/docker-entrypoint-initdb.d/030-range-vacuum.sql:ro
+      - ../packages/storage/src/migrations/0004_result_retention.sql:/docker-entrypoint-initdb.d/040-range-result-retention.sql:ro
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U range -d range && psql -U range -d range -tAc \"SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'\" | grep -q ."]
       interval: 5s
@@ -262,6 +263,8 @@ services:
       # extrapolated, so a longer hold could never be covered; a window with no settlement is zero funding.
       RANGE_HOLDING_HORIZON_MS: "3600000"
       RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
+      # Results and their evidence are an audit trail, kept unless this is set (hours; 0 keeps them all).
+      RANGE_RESULT_RETENTION_HOURS: ${RANGE_RESULT_RETENTION_HOURS:-0}
       HEALTH_PORT: "8081"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes: [../config:/app/config:ro]
