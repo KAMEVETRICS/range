@@ -149,8 +149,16 @@ export class RangeApplication {
     });
   }
   private async marketCoverage(context: RequestContext, underlying: string, selectedVenue?: z.infer<typeof MarketQuerySchema>["venue"]) {
+    // A reviewed stock's members can be filed under their venues' own underlyings (Bitget's bitget:TSLA); they are read
+    // through the reviewed mapping, as pairCoverage reads them, or a snapshot or funding comparison left Bitget out.
+    const mapping = (await this.pairSnapshot(context))?.mappings.find(item => item.underlyingId === underlying);
+    const elsewhere = (mapping?.members ?? [])
+      .filter(member => member.underlyingId !== underlying && (!selectedVenue || member.venue === selectedVenue));
     const [observations, allVenues] = await Promise.all([
-      this.queries.getMarketSnapshot(context, { underlying, venue: selectedVenue }), this.queries.listVenues(context),
+      Promise.all([this.queries.getMarketSnapshot(context, { underlying, venue: selectedVenue }),
+        ...[...new Set(elsewhere.map(member => member.underlyingId))].map(id => this.queries.getMarketSnapshot(context, { underlying: id, venue: selectedVenue }))])
+        .then(([own = [], ...others]) => [...own, ...others.flat().filter(item => elsewhere.some(member => member.instrumentId === item.instrumentId))]),
+      this.queries.listVenues(context),
     ]);
     const venues = allVenues.filter(venue => !selectedVenue || venue.venue === selectedVenue);
     const warnings = this.venueWarnings(venues);
@@ -277,11 +285,14 @@ export class RangeApplication {
     const [live, coverage] = await Promise.all([this.queries.liveOpportunities(context, query.underlying),
       this.pairCoverage(context, query.underlying, query.venue)]);
     const candidates = newestPerDirection(live).filter(item => item.status === "actionable" && this.now() < Date.parse(item.expiresAt));
-    const instruments = query.venue ? await this.queries.findInstruments(context, { underlying: query.underlying, venue: query.venue, limit: 100, offset: 0 }) : [];
+    // The reviewed pair's members name their venues. A search by the stock missed a member filed under its venue's own
+    // underlying (Bitget's bitget:TSLA), so filtering by venue dropped Bitget's legs.
+    const venueMembers = query.venue ? new Set(((await this.pairSnapshot(context))?.mappings.find(item => item.underlyingId === query.underlying)
+      ?.members ?? []).filter(member => member.venue === query.venue).map(member => member.instrumentId)) : undefined;
     const warnings: string[] = [...coverage.warnings, ...(live.length >= 1000 ? ["scan truncated at 1000 current candidates"] : [])];
     const selected = candidates.filter(item => item.underlyingId === query.underlying && (!query.strategy || item.strategy === query.strategy) &&
       (!query.min_edge_bps || new Decimal(item.netEdgeBps).gte(query.min_edge_bps)) && (!query.min_capacity_usd || new Decimal(item.capacityUsd).gte(query.min_capacity_usd)) &&
-      (!query.venue || item.legs.some(leg => instruments.some(instrument => instrument.instrumentId === leg.instrumentId))));
+      (!venueMembers || item.legs.some(leg => venueMembers.has(leg.instrumentId))));
     const valid = [];
     for (const item of selected) {
       // A result reaches the scan moments before history records its evidence. Until then it cannot be verified, so it

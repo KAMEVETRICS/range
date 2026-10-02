@@ -249,6 +249,27 @@ describe("REST application boundary", () => {
     expect(JSON.stringify(body)).not.toContain("private-locator");
   });
 
+  it("reads a reviewed member filed under its venue's own underlying into snapshots and venue-filtered scans", async () => {
+    const f = await fixture();
+    const snapshot = reviewedPairs();
+    snapshot.mappings[0]!.members[0] = { ...snapshot.mappings[0]!.members[0]!, underlyingId: "extended:TSLA" };
+    f.queries.getPairEvaluations = async () => snapshot;
+    const observation = (eventId: string, instrumentId: string) => ObservationEnvelopeSchema.parse({ eventId, schemaVersion: 1,
+      venue: "extended", instrumentId, sourceTimestamp: now - 100, receivedTimestamp: now - 50, transport: "websocket",
+      freshnessBudgetMs: 1000, qualityFlags: [], rawPayloadRefOrHash: eventId, eligibility: "live",
+      payload: { kind: "order_book", bids: [], asks: [], capacityUsd: "0" } });
+    f.queries.getMarketSnapshot = async (_context, filter) => filter.underlying === "extended:TSLA"
+      ? [observation("evt_member_book", "ins_bitget_tsla"), observation("evt_other_book", "ins_extended_OTHER")] : [];
+
+    const market = (await f.app.inject({ method: "GET", url: "/v1/markets/snapshot?underlying=equity:TSLA", headers: auth })).json();
+    expect(market.result.observations.map((item: { eventId: string }) => item.eventId)).toEqual(["evt_member_book"]);
+    expect(market.warnings).not.toContain("extended: market data missing");
+    const scan = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA&venue=extended", headers: auth })).json();
+    expect(scan.result.items.map((item: { opportunityId: string }) => item.opportunityId)).toEqual(["opp_1"]);
+    const elsewhere = (await f.app.inject({ method: "GET", url: "/v1/opportunities?underlying=equity:TSLA&venue=bitget", headers: auth })).json();
+    expect(elsewhere.result.items).toEqual([]);
+  });
+
   it("does not call a venue stale between its health heartbeats", async () => {
     const f = await fixture();
     const venue = (await f.queries.listVenues({ traceId: "rng_trace_test", clientId: "reader" }))[0]!;
