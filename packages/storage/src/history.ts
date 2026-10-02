@@ -249,6 +249,76 @@ export class HistoryStore {
   }
 
   /**
+   * Deletes results recorded before the cutoff: the results themselves, then evidence that no remaining result or
+   * intent cites, with its source links, then both kinds of event in the event log. The books and funding that evidence
+   * cited become uncited, so pruneObservations removes them on its next pass. Each batch is one transaction, oldest
+   * first; a backlog drains over several passes.
+   */
+  async pruneResults(beforeMs: number,
+    options: { batchSize?: number; maxBatches?: number; signal?: AbortSignal } = {}): Promise<number> {
+    const { batchSize = 2_000, maxBatches = Number.MAX_SAFE_INTEGER, signal } = options;
+    if (!Number.isSafeInteger(beforeMs) || beforeMs < 0) throw new Error("Invalid retention cutoff");
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10_000 || !Number.isSafeInteger(maxBatches) || maxBatches < 1) {
+      throw new Error("Invalid retention batch bound");
+    }
+    const inBatches = async (step: (client: SqlClient) => Promise<number>) => {
+      let deleted = 0;
+      for (let batch = 0; batch < maxBatches && !signal?.aborted; batch++) {
+        const client = await this.pool.connect();
+        let count: number;
+        try {
+          await client.query("BEGIN");
+          count = await step(client);
+          await client.query("COMMIT");
+        } catch (error) { await client.query("ROLLBACK"); throw error; }
+        finally { client.release(); }
+        deleted += count;
+        if (count < batchSize) break;
+      }
+      return deleted;
+    };
+    const placeholders = (values: readonly unknown[], from = 1) => values.map((_, index) => `$${index + from}`).join(", ");
+    let deleted = 0;
+    // One status per query, so the (status, accepted_at_ms) index yields the oldest rows without a sort. These are every
+    // status OpportunitySchema allows; reading them from the table would scan it on every pass.
+    for (const status of ["actionable", "rejected", "observed", "validated", "intent_ready", "expired"]) {
+      deleted += await inBatches(async client => {
+        const doomed = (await client.query(`SELECT opportunity_id FROM opportunities
+          WHERE status = $1 AND accepted_at_ms < $2 ORDER BY accepted_at_ms LIMIT $3`, [status, beforeMs, batchSize])).rows
+          .map(row => String(row.opportunity_id));
+        // Every revision of these results recorded before the cutoff goes too; a later one stays.
+        if (doomed.length) await client.query(`DELETE FROM opportunities WHERE opportunity_id IN (${placeholders(doomed, 2)})
+          AND accepted_at_ms < $1`, [beforeMs, ...doomed]);
+        return doomed.length;
+      });
+    }
+    deleted += await inBatches(async client => {
+      // As in pruneObservations, the LEFT JOIN ... IS NULL form is planned as an anti-join.
+      const doomed = (await client.query(`SELECT e.event_id, ev.evidence_hash FROM event_log e
+        JOIN evidence ev ON ev.event_id = e.event_id
+        LEFT JOIN opportunities o ON o.evidence_hash = ev.evidence_hash
+        LEFT JOIN intents i ON i.evidence_hash = ev.evidence_hash
+        WHERE e.topic = 'evidence.bundle.v1' AND e.accepted_at_ms < $1 AND o.evidence_hash IS NULL AND i.evidence_hash IS NULL
+        ORDER BY e.accepted_at_ms LIMIT $2`, [beforeMs, batchSize])).rows;
+      if (doomed.length) {
+        const hashes = doomed.map(row => String(row.evidence_hash));
+        const events = doomed.map(row => String(row.event_id));
+        await client.query(`DELETE FROM evidence_sources WHERE evidence_hash IN (${placeholders(hashes)})`, hashes);
+        await client.query(`DELETE FROM evidence WHERE evidence_hash IN (${placeholders(hashes)})`, hashes);
+        await client.query(`DELETE FROM event_log WHERE event_id IN (${placeholders(events)})`, events);
+      }
+      return doomed.length;
+    });
+    deleted += await inBatches(async client => {
+      const doomed = (await client.query(`SELECT event_id FROM event_log WHERE topic = 'opportunity.v1' AND accepted_at_ms < $1
+        ORDER BY accepted_at_ms LIMIT $2`, [beforeMs, batchSize])).rows.map(row => String(row.event_id));
+      if (doomed.length) await client.query(`DELETE FROM event_log WHERE event_id IN (${placeholders(doomed)})`, doomed);
+      return doomed.length;
+    });
+    return deleted;
+  }
+
+  /**
    * Evidence cites source events and a result cites its evidence; the foreign keys refuse either until what it cites is
    * recorded. Checked before the event-log cursor is taken, a batch that must wait fails at once instead of holding the
    * lock every other writer needs while it writes rows it then rolls back: those retries kept the book writer, which

@@ -21,7 +21,7 @@ export async function database() {
   const { Pool } = memory.adapters.createPg();
   const pool = new Pool();
   // 0003 only sets autovacuum storage parameters, which pg-mem cannot parse and has no use for.
-  for (const migration of ["0001_initial.sql", "0002_history_retention.sql"]) {
+  for (const migration of ["0001_initial.sql", "0002_history_retention.sql", "0004_result_retention.sql"]) {
     await pool.query(await readFile(new URL(`./migrations/${migration}`, import.meta.url), "utf8"));
   }
   return pool;
@@ -410,6 +410,76 @@ describe("history retention", () => {
     await history.append(book("evt_book_later", now));
     await history.append(evidence(["evt_book_later"], now));
     expect((await pool.query("SELECT evidence_hash FROM evidence")).rows).toHaveLength(1);
+    await pool.end();
+  });
+
+  const evidenceFor = (hashDigit: string, eventId: string, sourceEventIds: string[], acceptedAtMs: number) => {
+    const payload = parseEvent("evidence.bundle.v1", { evidenceHash: `sha256:${hashDigit.repeat(64)}`, calculationVersion: "calc.v1",
+      sourceEventIds, canonicalMappingVersions: {}, assumptions: {}, intermediateValues: {}, warnings: [] });
+    return { eventId, topic: "evidence.bundle.v1" as const, key: payload.evidenceHash, acceptedAtMs,
+      archiveId: "archive1", calculationVersion: "calc.v1", payload };
+  };
+  const resultFor = (eventId: string, opportunityId: string, hashDigit: string, acceptedAtMs: number) => ({
+    eventId, topic: "opportunity.v1" as const, key: "equity:TSLA", underlyingId: "equity:TSLA", acceptedAtMs,
+    archiveId: "archive1", calculationVersion: "calc.v1",
+    payload: OpportunitySchema.parse({ ...opportunity(1, acceptedAtMs + 1000), opportunityId, evidenceHash: `sha256:${hashDigit.repeat(64)}` }) });
+  const column = async (pool: Awaited<ReturnType<typeof database>>, sql: string) =>
+    (await pool.query(sql)).rows.map((row: Record<string, unknown>) => String(Object.values(row)[0]));
+
+  it("deletes results recorded before the cutoff with evidence nothing else cites, leaving what it cited to the book trim", async () => {
+    const { pool, history, ids } = await store();
+    await history.appendMany([book("evt_book_a", now - 10 * hour), book("evt_book_b", now - 10 * hour), book("evt_book_c", now - hour)]);
+    await history.append(evidenceFor("c", "evt_evidence_old", ["evt_book_a"], now - 10 * hour));
+    await history.append(resultFor("evt_result_old", "opp_old", "c", now - 10 * hour));
+    await history.append(evidenceFor("d", "evt_evidence_new", ["evt_book_c"], now - hour));
+    await history.append(resultFor("evt_result_new", "opp_new", "d", now - hour));
+
+    expect(await history.pruneResults(now - 5 * hour)).toBe(3);
+
+    expect(await column(pool, "SELECT opportunity_id FROM opportunities")).toEqual(["opp_new"]);
+    expect(await column(pool, "SELECT evidence_hash FROM evidence")).toEqual([`sha256:${"d".repeat(64)}`]);
+    expect(await column(pool, "SELECT source_event_id FROM evidence_sources")).toEqual(["evt_book_c"]);
+    expect(await ids("event_log")).toEqual(["evt_book_a", "evt_book_b", "evt_book_c", "evt_evidence_new", "evt_result_new"]);
+    // The old book is no longer cited, so the book and funding trim removes it with the book nothing ever cited.
+    expect(await history.pruneObservations(now - 5 * hour)).toBe(2);
+    expect(await ids("event_log")).toEqual(["evt_book_c", "evt_evidence_new", "evt_result_new"]);
+    expect(await history.pruneResults(now - 5 * hour)).toBe(0);
+    await pool.end();
+  });
+
+  it("keeps old evidence that a newer result or an intent still cites", async () => {
+    const { pool, history } = await store();
+    await history.appendMany([book("evt_book_a", now - 10 * hour), book("evt_book_b", now - 10 * hour)]);
+    await history.append(evidenceFor("e", "evt_evidence_intent", ["evt_book_a"], now - 10 * hour));
+    await history.append(resultFor("evt_result_intent", "opp_intent", "e", now - 10 * hour));
+    await pool.query(`INSERT INTO intents(idempotency_key, opportunity_id, evidence_hash, expires_at, payload)
+      VALUES ('idem_1', 'opp_intent', 'sha256:${"e".repeat(64)}', now(), '{}')`);
+    await history.append(evidenceFor("f", "evt_evidence_shared", ["evt_book_b"], now - 10 * hour));
+    await history.append(resultFor("evt_result_later", "opp_later", "f", now - hour));
+
+    expect(await history.pruneResults(now - 5 * hour)).toBe(2);
+
+    expect(await column(pool, "SELECT opportunity_id FROM opportunities")).toEqual(["opp_later"]);
+    expect((await column(pool, "SELECT evidence_hash FROM evidence ORDER BY evidence_hash"))).toEqual(
+      [`sha256:${"e".repeat(64)}`, `sha256:${"f".repeat(64)}`]);
+    expect(await history.pruneObservations(now - 5 * hour)).toBe(0);
+    await pool.end();
+  });
+
+  it("prunes results in bounded batches and starts none once its signal aborts", async () => {
+    const { pool, history } = await store();
+    await history.append(book("evt_book_a", now - 10 * hour));
+    for (const [index, digit] of ["1", "2", "3"].entries()) {
+      await history.append(evidenceFor(digit, `evt_evidence_${digit}`, ["evt_book_a"], now - (10 - index) * hour));
+      await history.append(resultFor(`evt_result_${digit}`, `opp_${digit}`, digit, now - (10 - index) * hour));
+    }
+    expect(await history.pruneResults(now, { signal: AbortSignal.abort() })).toBe(0);
+    expect(await history.pruneResults(now, { batchSize: 2, maxBatches: 1 })).toBe(6);
+    expect(await column(pool, "SELECT opportunity_id FROM opportunities")).toEqual(["opp_3"]);
+    expect(await history.pruneResults(now)).toBe(3);
+    expect(await column(pool, "SELECT evidence_hash FROM evidence")).toEqual([]);
+    await expect(history.pruneResults(Number.NaN)).rejects.toThrow(/cutoff/i);
+    await expect(history.pruneResults(now, { batchSize: 0 })).rejects.toThrow(/batch/i);
     await pool.end();
   });
 

@@ -6,6 +6,8 @@ Range is a read-only intelligence service for tokenized-stock and equity-perpetu
 
 Hackathon focus: Track 1, arbitrage and funding opportunities.
 
+**Live run records:** [records/2026-10-02-live](records/2026-10-02-live): every actionable result from eight hours of production, with the queries that produced them.
+
 ## What it does
 
 - **Opportunity scanner.** Ten reviewed stock pairs, Bitget USDT-M perpetuals against trade.xyz perpetuals on Hyperliquid (HIP-3): NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL, COIN, MSTR and HOOD. Each pair is evaluated continuously in both directions for price spreads and funding differentials at $2,500 notional. A result is actionable only while its net edge stays positive after costs; otherwise it is published as rejected, with its reasons.
