@@ -79,7 +79,6 @@ p { text-wrap: pretty; }
 .panel-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 20px 22px 12px; }
 .panel-head .eyebrow { margin-bottom: 4px; }
 .panel-head h2 { margin: 0; font-size: 26px; font-weight: 500; letter-spacing: -.03em; }
-.panel-note { margin: 0; padding: 0 22px 14px; color: var(--ink-2); font-size: 14px; }
 .count { padding: 7px 14px; border-radius: 999px; color: var(--ink-2); background: var(--white); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .loading { margin: 0; padding: 28px 16px; color: var(--ink-3); text-align: center; }
 .notice { margin: 0 14px 12px; padding: 10px 14px; border-radius: var(--radius); font-size: 13px; }
@@ -387,7 +386,6 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
   .venue-grid { grid-template-columns: 1fr; }
   .panel-head { padding: 16px 14px 10px; }
   .panel-head h2 { font-size: 22px; }
-  .panel-note { padding: 0 14px 12px; }
   .table-scroll, .filters, .empty-state { margin-inline: 8px; margin-bottom: 8px; }
   .pairs-table tbody tr { padding: 12px; }
   .venue-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
