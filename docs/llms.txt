@@ -1,0 +1,30 @@
+# Range
+
+> Read-only intelligence for tokenized-stock perpetuals on Bitget and trade.xyz: every reviewed pair priced in both directions against executable order-book depth, taker fees, slippage and funding, with the evidence behind every number. Range holds no keys and places no orders.
+
+Public and keyless: REST at https://range.datatides.xyz/v1, an MCP server (Streamable HTTP) at https://range.datatides.xyz/mcp, and the OpenAPI document at https://range.datatides.xyz/openapi.json. Underlyings look like equity:NVDA; the reviewed stocks are AAPL, AMZN, COIN, GOOGL, HOOD, META, MSFT, MSTR, NVDA and TSLA. Venue ids include bitget and hyperliquid_hip3 (trade.xyz). Every response is an envelope with status (ok, partial or rejected), as_of, freshness, result, evidence, warnings and trace_id; numbers are decimal strings. All public callers share one budget: 600 calls a minute for scans, inspections, pair evaluations and the markets board, 60 for everything else; on HTTP 429 wait up to a minute. An empty scan is normal: most gaps do not clear their costs, and /v1/pairs says how close each pair is and why.
+
+## Docs
+
+- [Range for agents](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/agents/README.md): which call answers which question, names, limits
+- [MCP server](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/agents/mcp.md): connecting clients, the eight tools and their arguments
+- [Recipes](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/agents/recipes.md): worked examples
+- [API overview](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/api/README.md): base URLs, the envelope, errors and limits
+- [Endpoints](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/api/endpoints.md): every operation with parameters and examples
+- [Streaming](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/api/streaming.md): Server-Sent Events
+- [How Range prices a trade](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/concepts/pricing.md): fills, costs, net edge and rejection reasons
+- [Funding](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/concepts/funding.md): why headline rates mislead and what Range projects
+- [Currentness and evidence](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/concepts/currentness-and-evidence.md): expiry, replacement and checking a result
+
+## API
+
+- [OpenAPI document](https://range.datatides.xyz/openapi.json)
+- [Every reviewed pair's latest evaluation](https://range.datatides.xyz/v1/pairs)
+- [Prices and funding across 12 venues](https://range.datatides.xyz/v1/markets/overview)
+
+## Optional
+
+- [Quickstart](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/getting-started/quickstart.md)
+- [Live run records](https://raw.githubusercontent.com/KAMEVETRICS/range/main/records/2026-10-02-live/README.md)
+- [Bitget and trade.xyz review](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/reviews/2026-09-30-bitget-hyperliquid.md)
+- [Design](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/design.md)
