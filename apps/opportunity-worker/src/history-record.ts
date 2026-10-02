@@ -43,6 +43,16 @@ export function keptInHistory(book: { readonly eligibility: string }): boolean {
   return book.eligibility === "live";
 }
 
+/**
+ * History keeps any funding a result could cite. Reference-only funding (every bulk-read venue, and Bitget listings
+ * outside the reviewed set) is display data, like reference-only books, and was nearly all the funding written to
+ * Postgres: about 2.5 million rows a day that nothing read back. Funding that is merely stale or delayed stays, since
+ * evidence that cites it cannot be recorded without it.
+ */
+export function fundingKeptInHistory(funding: { readonly eligibility: string }): boolean {
+  return funding.eligibility !== "reference_only";
+}
+
 /** The record is canonically hashed, so an absent optional field is omitted rather than set to undefined. */
 export function historyRecord<T extends Topic>(topic: T, key: string, event: TopicPayload[T],
   context: { archiveId: string; calculationVersion: string }): StoredEvent<T> {

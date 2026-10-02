@@ -9,7 +9,7 @@ import { createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@r
 import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersistentOpportunityWorker,
   type RedisCommands, type SqlPool } from "@range/storage";
 import { checkWorkerHealth } from "./health.js";
-import { historyRecord, keptInHistory, writeOnceCited } from "./history-record.js";
+import { fundingKeptInHistory, historyRecord, keptInHistory, writeOnceCited } from "./history-record.js";
 import { MarketBoard, newestPerInstrument } from "./market-board.js";
 import { createReviewedMappingSeeder } from "./mapping-seeder.js";
 
@@ -42,7 +42,8 @@ async function main() {
   stops.push(await bus.subscribeBatch("instrument.registry.v1", "history-instruments", persist("instrument.registry.v1", () => "registry")));
   const persistBooks = persist("book.state.v1", event => event.instrumentId);
   stops.push(await bus.subscribeBatch("book.state.v1", "history-books", events => persistBooks(events.filter(keptInHistory))));
-  stops.push(await bus.subscribeBatch("funding.observation.v1", "history-funding", persist("funding.observation.v1", event => event.instrumentId)));
+  const persistFunding = persist("funding.observation.v1", event => event.instrumentId);
+  stops.push(await bus.subscribeBatch("funding.observation.v1", "history-funding", events => persistFunding(events.filter(fundingKeptInHistory))));
   stops.push(await bus.subscribeBatch("venue.health.v1", "history-health", persist("venue.health.v1", event => event.venue)));
   stops.push(await bus.subscribeBatch("evidence.bundle.v1", "history-evidence", persist("evidence.bundle.v1", event => event.evidenceHash)));
   stops.push(await bus.subscribeBatch("opportunity.v1", "history-opportunities", persist("opportunity.v1", event => event.opportunityId)));

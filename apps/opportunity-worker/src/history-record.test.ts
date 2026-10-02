@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { hashCanonical } from "@range/evidence";
 import { CitationPendingError } from "@range/storage";
-import { historyRecord, keptInHistory, writeOnceCited } from "./history-record.js";
+import { fundingKeptInHistory, historyRecord, keptInHistory, writeOnceCited } from "./history-record.js";
 
 it("waits for cited records instead of failing a batch, only for that reason and only so long", async () => {
   const sleeps: number[] = [];
@@ -30,6 +30,13 @@ it("keeps executable books in history and leaves reference-only display books ou
   expect(keptInHistory({ eligibility: "live" })).toBe(true);
   expect(keptInHistory({ eligibility: "reference_only" })).toBe(false);
   expect(keptInHistory({ eligibility: "stale" })).toBe(false);
+});
+
+it("keeps funding a result could cite in history and leaves reference-only display funding out", () => {
+  expect(fundingKeptInHistory({ eligibility: "live" })).toBe(true);
+  expect(fundingKeptInHistory({ eligibility: "delayed" })).toBe(true);
+  expect(fundingKeptInHistory({ eligibility: "stale" })).toBe(true);
+  expect(fundingKeptInHistory({ eligibility: "reference_only" })).toBe(false);
 });
 
 it("keeps a present underlyingId and the calculation version on opportunity records", () => {
