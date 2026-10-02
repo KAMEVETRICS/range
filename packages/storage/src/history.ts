@@ -279,9 +279,9 @@ export class HistoryStore {
     };
     const placeholders = (values: readonly unknown[], from = 1) => values.map((_, index) => `$${index + from}`).join(", ");
     let deleted = 0;
-    // One status per query, so the (status, accepted_at_ms) index yields the oldest rows without a sort.
-    const statuses = (await this.pool.query("SELECT DISTINCT status FROM opportunities")).rows.map(row => String(row.status));
-    for (const status of statuses) {
+    // One status per query, so the (status, accepted_at_ms) index yields the oldest rows without a sort. These are every
+    // status OpportunitySchema allows; reading them from the table would scan it on every pass.
+    for (const status of ["actionable", "rejected", "observed", "validated", "intent_ready", "expired"]) {
       deleted += await inBatches(async client => {
         const doomed = (await client.query(`SELECT opportunity_id FROM opportunities
           WHERE status = $1 AND accepted_at_ms < $2 ORDER BY accepted_at_ms LIMIT $3`, [status, beforeMs, batchSize])).rows
