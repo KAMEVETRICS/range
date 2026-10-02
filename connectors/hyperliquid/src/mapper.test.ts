@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
+  hip3TakerFeeBps,
   mapFundingHistory,
   mapHyperliquidFunding,
   mapHyperliquidBook,
@@ -131,6 +132,38 @@ it("maps the current hourly funding of followed HIP-3 markets as reference-only 
       intervalMs: 3_600_000, nextSettlementMs: nextHourMs },
   })]);
   expect(events[0]!.eventId).toMatch(new RegExp(`^evt_hyperliquid_ins_hyperliquid_hip3_xyz:TSLA_funding_${observedAtMs}_[0-9a-f]{16}$`));
+});
+
+it("computes a HIP-3 market's base-tier taker fee exactly, by Hyperliquid's formula", () => {
+  // 0.045% × (1 + scale below 1, else 2 × scale), a tenth in growth mode. trade.xyz's markets run at scale 1.0:
+  // 0.090% normally and 0.0090% in growth mode, as its fee table states.
+  expect(hip3TakerFeeBps("1.0", false)).toBe("9");
+  expect(hip3TakerFeeBps("1.0", true)).toBe("0.9");
+  expect(hip3TakerFeeBps("1", true)).toBe("0.9");
+  expect(hip3TakerFeeBps("0", false)).toBe("4.5");
+  expect(hip3TakerFeeBps("0.25", true)).toBe("0.5625");
+  expect(hip3TakerFeeBps("2", false)).toBe("18");
+  expect(hip3TakerFeeBps("2.5", true)).toBe("2.25");
+});
+
+it("attaches each market's live taker fee to its funding, the full fee once it leaves growth mode", () => {
+  const withScale = (growthMode?: string) => {
+    const [meta, contexts] = fixture("meta-and-contexts");
+    const universe = meta.universe.map((row: { name: string }) => row.name === "xyz:TSLA"
+      ? { ...row, deployerFeeScale: "1.0", ...(growthMode === undefined ? { growthMode: undefined } : { growthMode }) } : row);
+    return [{ ...meta, universe }, contexts];
+  };
+  const { instruments } = mapMetaAndContexts(fixture("meta-and-contexts"), "xyz", fixture("perp-categories"), observedAtMs);
+  const fee = (input: unknown) => {
+    const [event] = mapHyperliquidFunding(input, "xyz", instruments, observedAtMs, new Map([["TSLA", "1.0"]]));
+    return event!.payload.kind === "funding" ? event!.payload.takerFeeBps : "not funding";
+  };
+
+  expect(fee(withScale("enabled"))).toBe("0.9");
+  expect(fee(withScale())).toBe("9");
+  expect(fee(withScale("disabled"))).toBe("9");
+  // Without a deployer fee scale the fee can't be computed, and the evaluator falls back to the configured one.
+  expect(fee(fixture("meta-and-contexts"))).toBeUndefined();
 });
 
 it("keeps an unreviewed market's funding reference-only, flagging a multiplier other than 1 as unverified", () => {

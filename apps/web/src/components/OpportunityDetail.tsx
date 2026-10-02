@@ -1,8 +1,14 @@
 import type { DashboardApi, Opportunity, OpportunityDetailEnvelope, QuoteTimestamp } from "../api/client.js";
 import { EvidencePanel } from "./EvidencePanel.js";
-import { formatAge, formatTimestamp } from "./OpportunityTable.js";
+import { formatAge, formatBpsNumber, formatPrice, formatTimestamp, formatUtcClock, shortId } from "./OpportunityTable.js";
 
 const money = (value: string) => `$${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const bps = (value: string) => `${formatBpsNumber(value)} bps`;
+/** A cost as what it takes off the edge; zero carries no sign. */
+const cost = (value: string) => {
+  const shown = formatBpsNumber(value);
+  return shown === "0.00" ? "0.00 bps" : shown.startsWith("-") ? `+${shown.slice(1)} bps` : `−${shown} bps`;
+};
 
 const reasonLabel = (reason: string) => reason.replaceAll("_", " ");
 
@@ -30,17 +36,17 @@ export function OpportunityDetail({ opportunity, quoteTimestamps, detail, invali
       <section aria-labelledby="economics-heading">
         <div className="sub-head"><h3 id="economics-heading">Economics</h3><span>{formatAge(opportunity.freshness.oldestInputMs)}</span></div>
         <dl className="metric-grid">
-          <div><dt>Gross edge</dt><dd>{opportunity.grossSpreadBps} bps</dd></div>
-          <div><dt>Funding</dt><dd>{opportunity.expectedFundingBps} bps</dd></div>
-          <div><dt>Fees</dt><dd>−{opportunity.tradingFeesBps} bps</dd></div>
-          <div><dt>Slippage</dt><dd>−{opportunity.slippageBps} bps</dd></div>
-          <div><dt>Financing</dt><dd>−{opportunity.financingBps} bps</dd></div>
-          <div><dt>Gas / transfer</dt><dd>−{opportunity.gasAndTransferBps} bps</dd></div>
-          <div><dt>FX conversion</dt><dd>−{opportunity.fxConversionBps} bps</dd></div>
-          <div><dt>Uncertainty</dt><dd>−{opportunity.uncertaintyBufferBps} bps</dd></div>
-          <div className={`metric-emphasis ${net >= 0 ? "positive" : "negative"}`}><dt>Net edge</dt><dd>{opportunity.netEdgeBps} bps</dd></div>
+          <div><dt>Gross edge</dt><dd title={`${opportunity.grossSpreadBps} bps`}>{bps(opportunity.grossSpreadBps)}</dd></div>
+          <div><dt>Funding</dt><dd title={`${opportunity.expectedFundingBps} bps`}>{bps(opportunity.expectedFundingBps)}</dd></div>
+          <div><dt>Fees</dt><dd title={`${opportunity.tradingFeesBps} bps`}>{cost(opportunity.tradingFeesBps)}</dd></div>
+          <div><dt>Slippage</dt><dd title={`${opportunity.slippageBps} bps`}>{cost(opportunity.slippageBps)}</dd></div>
+          <div><dt>Financing</dt><dd title={`${opportunity.financingBps} bps`}>{cost(opportunity.financingBps)}</dd></div>
+          <div><dt>Gas / transfer</dt><dd title={`${opportunity.gasAndTransferBps} bps`}>{cost(opportunity.gasAndTransferBps)}</dd></div>
+          <div><dt>FX conversion</dt><dd title={`${opportunity.fxConversionBps} bps`}>{cost(opportunity.fxConversionBps)}</dd></div>
+          <div><dt>Uncertainty</dt><dd title={`${opportunity.uncertaintyBufferBps} bps`}>{cost(opportunity.uncertaintyBufferBps)}</dd></div>
+          <div className={`metric-emphasis ${net >= 0 ? "positive" : "negative"}`}><dt>Net edge</dt><dd title={`${opportunity.netEdgeBps} bps`}>{bps(opportunity.netEdgeBps)}</dd></div>
           <div><dt>Capacity</dt><dd>{money(opportunity.capacityUsd)}</dd></div>
-          <div><dt>Expires</dt><dd>{new Date(opportunity.expiresAt).toLocaleTimeString()}</dd></div>
+          <div><dt>Expires</dt><dd title={opportunity.expiresAt}>{formatUtcClock(Date.parse(opportunity.expiresAt))}</dd></div>
         </dl>
       </section>
       <section className="legs" aria-labelledby="legs-heading">
@@ -50,10 +56,12 @@ export function OpportunityDetail({ opportunity, quoteTimestamps, detail, invali
           return <div className="leg" key={leg.legId}>
             <div className="leg-title"><span className={`side side-${leg.side}`}>{leg.side}</span><strong>{leg.instrumentId}</strong></div>
             <dl>
-              <div><dt>Average</dt><dd>{leg.executableQuote.averagePrice}</dd></div><div><dt>Worst</dt><dd>{leg.executableQuote.worstPrice}</dd></div><div><dt>Book age</dt><dd>{formatAge(leg.executableQuote.ageMs)}</dd></div>
-              <div><dt>Source event</dt><dd className="hash">{leg.executableQuote.sourceBookEventId}</dd></div>
-              <div className="leg-timestamp"><dt>Source time</dt><dd>{formatTimestamp(timestamp?.source_timestamp_ms)}</dd></div>
-              <div className="leg-timestamp"><dt>Received time</dt><dd>{formatTimestamp(timestamp?.received_timestamp_ms)}</dd></div>
+              <div><dt>Average</dt><dd title={leg.executableQuote.averagePrice}>{formatPrice(leg.executableQuote.averagePrice)}</dd></div>
+              <div><dt>Worst</dt><dd title={leg.executableQuote.worstPrice}>{formatPrice(leg.executableQuote.worstPrice)}</dd></div>
+              <div><dt>Book age</dt><dd>{formatAge(leg.executableQuote.ageMs)}</dd></div>
+              <div><dt>Source event</dt><dd className="hash" title={leg.executableQuote.sourceBookEventId}>{shortId(leg.executableQuote.sourceBookEventId)}</dd></div>
+              <div className="leg-timestamp"><dt>Source time</dt><dd title={formatTimestamp(timestamp?.source_timestamp_ms)}>{formatUtcClock(timestamp?.source_timestamp_ms)}</dd></div>
+              <div className="leg-timestamp"><dt>Received time</dt><dd title={formatTimestamp(timestamp?.received_timestamp_ms)}>{formatUtcClock(timestamp?.received_timestamp_ms)}</dd></div>
             </dl>
           </div>;
         })}

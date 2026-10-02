@@ -121,7 +121,7 @@ The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The M
 
 - Read-only by design: no trading keys, signing, order submission, withdrawals or custody. Venue data is public; the only venue credential Range accepts is an optional read-only Extended key.
 - Results are decision support, not guaranteed profit.
-- Actionable results are rare on the reviewed pairs. Taker fees (Bitget 6 bps, trade.xyz 9 bps at its standard rate) and a 1 bp slippage buffer per leg come to about 17 bps, more than the spreads usually on offer, so most results are published as rejected, with reasons. trade.xyz's temporary growth-mode fee is about a tenth of its standard rate; the worker does not use it, so edges are understated while it lasts.
+- Costs decide most results. Bitget charges a 6 bps taker fee. trade.xyz is charged each market's live taker fee, read every minute: 0.9 bps for the nine stocks in its growth mode and 9 bps for MSTR. With a 1 bp slippage buffer per leg, most pairs cost about 9 bps to trade, close to the spreads usually on offer; results that fall short are published as rejected, with their reasons.
 - Financing, transfer, currency-conversion and uncertainty costs exist in the cost model but are set to zero. The pairs settle in different stablecoins (USDT on Bitget, USDC on trade.xyz) and handle splits and dividends differently. The review describes each difference.
 
 ## Repository layout

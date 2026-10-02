@@ -6,7 +6,9 @@ export function EvidencePanel({ opportunity, detail }: { opportunity: Opportunit
       <div className="sub-head"><h3 id="evidence-heading">Evidence</h3><span>Revision {opportunity.stateRevision}</span></div>
       <dl className="evidence-list">
         <div><dt>Evidence hash</dt><dd className="hash">{opportunity.evidenceHash ?? "Not available"}</dd></div>
-        <div><dt>Source events</dt><dd className="hash">{detail?.evidence.length ? detail.evidence.map((item) => item.event_id).join(", ") : "Available after inspection"}</dd></div>
+        <div><dt>Source events</dt><dd className="hash">{detail?.evidence.length
+          ? <ul className="event-list">{detail.evidence.map((item) => <li key={item.event_id}>{item.event_id}</li>)}</ul>
+          : "Available after inspection"}</dd></div>
         <div><dt>Envelope as of</dt><dd className="hash">{detail ? new Date(detail.as_of).toISOString() : "Loading current detail…"}</dd></div>
         <div><dt>Trace</dt><dd className="hash">{detail?.trace_id ?? "Pending"}</dd></div>
       </dl>

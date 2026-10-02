@@ -133,7 +133,6 @@ export function ReviewedPairs({ api, onSelectUnderlying, now = () => Date.now() 
         <div><p className="eyebrow">Reviewed pairs</p><h2 id="reviewed-pairs-heading">Live evaluations</h2></div>
         <span className="count">{actionable} actionable of {rows.length}</span>
       </div>
-      <p className="panel-note">Each approved pair is evaluated on every book update, in both directions, net of fees, slippage, and one hour of funding. The better direction is shown; a row turns green when it clears every cost.</p>
       {error && <div className="notice bad" role="alert"><strong>Evaluations unavailable</strong> {error}</div>}
       {!pairs && !error ? <p className="loading">Loading pair evaluations…</p> : rows.length === 0 && !error
         ? <p className="loading">No reviewed pair has been evaluated yet.</p>

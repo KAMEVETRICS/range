@@ -34,7 +34,7 @@ As of 2026-09-30, ten reviewed mappings are live: Bitget USDT-M stock perpetuals
 No verifier run against that deployment is recorded. A run would fail invariants 2, 6, 7, and 8 whatever the market does, and 4 and 5 whenever nothing is actionable:
 
 - **Mapping evidence (2):** the reviewed mappings state their proofs as prose with the sources inline and carry no `liveEvidence`, while the verifier needs every proof field and each venue's `liveEvidence` entry as an HTTPS or `sha256:` reference. Its default `RANGE_DEMO_VENUES` also includes Extended, which has no reviewed mapping; set `RANGE_DEMO_VENUES=bitget,hyperliquid_hip3`.
-- **Actionable output and intent (4, 5):** these need a current actionable opportunity. On the reviewed pairs, taker fees (Bitget 6 bps, trade.xyz 9 bps at its standard rate) and a 1 bp slippage buffer per leg come to about 17 bps. Gross spreads observed on 2026-09-30 were about 4 to 12 bps, so the pairs' results were rejected, with reasons, rather than actionable.
+- **Actionable output and intent (4, 5):** these need a current actionable opportunity. Until 2026-10-01 trade.xyz legs were charged its standard 9 bps taker fee, which with Bitget's 6 bps and a 1 bp slippage buffer per leg came to about 17 bps against gross spreads of about 4 to 12 bps, so nothing was actionable. Each trade.xyz market is now charged its live fee (0.9 bps in growth mode; see the fee review in `docs/reviews/2026-09-30-bitget-hyperliquid.md`), which brings most pairs to about 9 bps.
 - **Fault containment, replay, and redaction (6, 7, 8):** no fault controller, replay fixture, or telemetry export URL is deployed. Replay (7) also needs the evidence hash of an actionable opportunity from invariant 4.
 
 None of these may be represented as a pass.

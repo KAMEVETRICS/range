@@ -31,6 +31,12 @@ export const FundingObservationPayloadSchema = z.object({
   positiveRatePayer: z.enum(["long", "short"]).optional(),
   intervalMs: z.number().int().positive(),
   nextSettlementMs: EpochMillisecondsSchema,
+  /**
+   * The taker fee, in bps, a base-tier account paid on this market when the funding was observed, where the venue
+   * publishes what sets it in the same snapshot (a Hyperliquid HIP-3 market's growth mode and deployer fee scale). An
+   * evaluation charges a leg this fee; without it, the venue's configured fee.
+   */
+  takerFeeBps: NonNegativeDecimalStringSchema.optional(),
 }).strict();
 
 export const IndexPriceObservationPayloadSchema = z.object({

@@ -206,6 +206,20 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
   // Every evaluation, rejected or not, replaces its pair and direction here for the pair view; publishing it costs nothing.
   // Validated against PairEvaluationSchema when the snapshot is taken.
   const latestEvaluations = new Map<string, { underlyingId: string } & Record<string, unknown>>();
+  /**
+   * The taker fee a leg pays. A market whose funding carries its own fee (trade.xyz's depends on each market's growth
+   * mode and deployer fee scale) pays the highest fee among the observations its funding is projected from, so the
+   * fee is as fresh as the funding and the evidence cites where it came from; any other leg pays the venue's
+   * configured fee.
+   */
+  const legFeeBps = (instrument: { instrumentId: string; venue: string }, citedObservationIds: readonly string[]) => {
+    const cited = new Set(citedObservationIds);
+    const published = (funding.get(instrument.instrumentId) ?? []).flatMap(item =>
+      cited.has(item.eventId) && item.payload.kind === "funding" && item.payload.takerFeeBps !== undefined ? [item.payload.takerFeeBps] : []);
+    return published.length
+      ? published.reduce((highest, fee) => new Decimal(fee).greaterThan(highest) ? fee : highest)
+      : policy.feesBpsByVenue[instrument.venue];
+  };
   const evaluateUnlocked = async (underlyingId: string) => {
     await accepting;
     assertAuthority();
@@ -266,7 +280,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
             instrumentId: instrument.instrumentId, side,
             eligibility: quote ? "live" : "reference_only",
             quote, health: health.get(instrument.venue), qualityFlags: metadata ? [...metadata.qualityFlags] : [],
-            tradingFeeBps: policy.feesBpsByVenue[instrument.venue],
+            tradingFeeBps: legFeeBps(instrument, projection?.sourceObservationIds ?? []),
             slippageBps: policy.slippageBpsByVenue[instrument.venue],
             funding: projection, fundingEvaluatedAtMs: projection ? at : undefined,
             fundingSourceExpiresAtMs,
