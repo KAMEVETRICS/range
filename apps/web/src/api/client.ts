@@ -181,7 +181,10 @@ export class RangeApiError extends Error {
 
 export function createDashboardApi(options: { baseUrl?: string; readToken?: string } = {}): DashboardApi {
   const baseUrl = options.baseUrl ?? "";
-  const headers = (): HeadersInit => options.readToken ? { Authorization: `Bearer ${options.readToken}` } : {};
+  // The public proxy reads the dashboard's calls with the dashboard's own token, and any other caller's with the public
+  // agents client's, so agents cannot use up the dashboard's rate limits.
+  const headers = (): HeadersInit => ({ "X-Range-Client": "dashboard",
+    ...(options.readToken ? { Authorization: `Bearer ${options.readToken}` } : {}) });
   const request = async <T>(path: string): Promise<T> => {
     const response = await fetch(`${baseUrl}${path}`, { headers: headers(), credentials: "same-origin" });
     const body = await response.json() as T & { result?: { code?: string } };

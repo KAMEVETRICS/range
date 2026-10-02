@@ -2,7 +2,7 @@
 
 ## Start and verify
 
-Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN`, and a different `RANGE_DASHBOARD_READ_TOKEN`. Each token needs 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_`, and `-` (for example `openssl rand -hex 32`); the gateway refuses to start with any other token. The dashboard token is read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
+Set `RANGE_API_TOKEN_PEPPER` (32+ random characters), `RANGE_DEMO_API_TOKEN`, and two more different tokens: `RANGE_DASHBOARD_READ_TOKEN` and `RANGE_PUBLIC_AGENT_TOKEN`. Each token needs 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_`, and `-` (for example `openssl rand -hex 32`); the gateway refuses to start with any other token. The dashboard and public agent tokens are read-only and must never have `intent:create`. Set `EXTENDED_API_KEY` only when a provider-verified read-only key is available. Then run:
 
 ```powershell
 docker compose -f infra/compose.yaml up -d --build

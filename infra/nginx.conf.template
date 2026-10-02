@@ -1,7 +1,16 @@
+# The dashboard marks its own API calls. Every other caller (agents, scripts, the docs' request runner) reads as the
+# public agents client, so each has its own rate-limit budget at the gateway and heavy API use cannot crowd out the
+# dashboard's visitors. Both tokens are read-only; a caller that copies the header only shares the dashboard's budget.
+map $http_x_range_client $range_read_token {
+  dashboard "${RANGE_DASHBOARD_READ_TOKEN}";
+  default   "${RANGE_PUBLIC_AGENT_TOKEN}";
+}
+
 server {
   listen 8080;
   server_name _;
   root /usr/share/nginx/html;
+  charset utf-8;
 
   location = /healthz { access_log off; return 200 '{"status":"healthy"}'; add_header Content-Type application/json; }
   location /v1/ {
@@ -12,10 +21,29 @@ server {
     proxy_pass $gateway_upstream;
     proxy_http_version 1.1;
     proxy_set_header Host gateway;
-    proxy_set_header Authorization "Bearer ${RANGE_DASHBOARD_READ_TOKEN}";
+    proxy_set_header Authorization "Bearer $range_read_token";
     proxy_buffering off;
     proxy_read_timeout 3600s;
+    # The API is public and read-only and no credential reaches the browser, so any page may read it, including the
+    # docs' request runner.
+    add_header Access-Control-Allow-Origin "*" always;
   }
+  # The MCP server for public agents, with the agents client's read-only token: the read tools answer, and the intent
+  # tools refuse without the intent:create scope. The gateway caps a request body at 16 KB.
+  location = /mcp {
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $gateway_upstream http://gateway:8080;
+    proxy_pass $gateway_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Host gateway;
+    proxy_set_header Authorization "Bearer ${RANGE_PUBLIC_AGENT_TOKEN}";
+    proxy_buffering off;
+    proxy_read_timeout 300s;
+    client_max_body_size 16k;
+  }
+  # The API's OpenAPI document and the index for language models, fetched by agents and the docs site.
+  location = /openapi.json { add_header Cache-Control "no-cache"; add_header Access-Control-Allow-Origin "*" always; }
+  location = /llms.txt { add_header Cache-Control "no-cache"; add_header Access-Control-Allow-Origin "*" always; }
   # The page names its content-hashed bundle: revalidating the page on every load gets a deploy to returning visitors at
   # once, where a heuristically cached page kept an old bundle running; the bundles themselves never change.
   location = /index.html { add_header Cache-Control "no-cache"; }

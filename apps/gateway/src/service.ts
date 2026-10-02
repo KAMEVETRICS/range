@@ -11,14 +11,15 @@ async function main() {
   const config = loadConfig(process.env);
   const token = process.env.RANGE_DEMO_API_TOKEN ?? "";
   const dashboardToken = process.env.RANGE_DASHBOARD_READ_TOKEN ?? "";
-  const clients = createGatewayClients({ demoToken: token, dashboardToken, pepper: config.apiTokenPepper });
+  const agentToken = process.env.RANGE_PUBLIC_AGENT_TOKEN ?? "";
+  const clients = createGatewayClients({ demoToken: token, dashboardToken, agentToken, pepper: config.apiTokenPepper });
   const manifestInput = JSON.parse(process.env.RANGE_VENUE_MANIFEST_JSON ?? "[]");
   const manifest = VenueViewSchema.pick({ venue: true, capabilities: true, freshnessBudgetMs: true }).array().min(1).parse(manifestInput);
   const sql = new pg.Pool({ connectionString: config.databaseUrl, max: 10, connectionTimeoutMillis: 5_000 }) as unknown as SqlPool & { end(): Promise<void> };
   const redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { connect(): Promise<void>; disconnect(): void };
   const current = new CurrentStateStore(redis, new PostgresRevisionAuthority(sql));
   const history = new HistoryStore(sql);
-  const telemetry = createTelemetry({ service: "gateway", secrets: [token, dashboardToken, config.apiTokenPepper],
+  const telemetry = createTelemetry({ service: "gateway", secrets: [token, dashboardToken, ...(agentToken ? [agentToken] : []), config.apiTokenPepper],
     traceSink: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(process.env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const application = new RangeApplication(new StorageQueries(current, history, sql, manifest,
     entry => telemetry.logger.info("storage query", entry)));
