@@ -6,5 +6,6 @@ site:
       key: docs
       title: Range
       path: docs
+      default: true
       content:
         directory: ./docs
