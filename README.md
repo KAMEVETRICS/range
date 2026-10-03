@@ -4,6 +4,8 @@ Range is a read-only intelligence service for tokenized-stock and equity-perpetu
 
 **Live dashboard:** [range.datatides.xyz](https://range.datatides.xyz), public and read-only. It opens on Markets; the scanner is under Opportunities.
 
+**Docs:** [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/): the quickstart, the API and MCP server for agents, and how Range prices a trade.
+
 Hackathon focus: Track 1, arbitrage and funding opportunities.
 
 **Live run records:** [records/2026-10-02-live](records/2026-10-02-live): every actionable result from eight hours of production, with the queries that produced them.
@@ -97,7 +99,7 @@ corepack pnpm test:e2e
 
 ## API and MCP
 
-The public deployment is open to agents and scripts without a key: REST at `https://range.datatides.xyz/v1`, an MCP server at `https://range.datatides.xyz/mcp`, the OpenAPI document at [`/openapi.json`](https://range.datatides.xyz/openapi.json) and an index for language models at [`/llms.txt`](https://range.datatides.xyz/llms.txt). Start with [Range for agents](docs/agents/README.md); the full documentation is in [`docs/`](docs/README.md).
+The public deployment is open to agents and scripts without a key: REST at `https://range.datatides.xyz/v1`, an MCP server at `https://range.datatides.xyz/mcp`, the OpenAPI document at [`/openapi.json`](https://range.datatides.xyz/openapi.json) and an index for language models at [`/llms.txt`](https://range.datatides.xyz/llms.txt). Start with [Range for agents](https://range-2.gitbook.io/range-docs/for-agents/agents); the full documentation is at [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/), published from [`docs/`](docs/README.md).
 
 ```bash
 claude mcp add --transport http range https://range.datatides.xyz/mcp
@@ -154,9 +156,11 @@ The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The M
 | `infra` | Dockerfile, Compose stack, nginx, disk guard, systemd units |
 | `scripts` | Mapping tools, replay, release verifier |
 | `tests` | Venue contract tests and end-to-end tests |
-| `docs` | Design, operations, reviews |
+| `docs` | The documentation site: guides, API, design, operations, reviews |
 
 ## Documentation
+
+The documentation site, [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/), is published from `docs/` on `main`. In the repository:
 
 - [Design](docs/design.md)
 - [Operations runbook](docs/operations/runbook.md)

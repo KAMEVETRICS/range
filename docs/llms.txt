@@ -6,6 +6,7 @@ Public and keyless: REST at https://range.datatides.xyz/v1, an MCP server (Strea
 
 ## Docs
 
+- [Documentation site](https://range-2.gitbook.io/range-docs/): the pages below, rendered and searchable
 - [Range for agents](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/agents/README.md): which call answers which question, names, limits
 - [MCP server](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/agents/mcp.md): connecting clients, the eight tools and their arguments
 - [Recipes](https://raw.githubusercontent.com/KAMEVETRICS/range/main/docs/agents/recipes.md): worked examples
