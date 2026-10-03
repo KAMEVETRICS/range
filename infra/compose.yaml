@@ -108,6 +108,7 @@ services:
       - ../packages/storage/src/migrations/0002_history_retention.sql:/docker-entrypoint-initdb.d/020-range-retention.sql:ro
       - ../packages/storage/src/migrations/0003_history_vacuum.sql:/docker-entrypoint-initdb.d/030-range-vacuum.sql:ro
       - ../packages/storage/src/migrations/0004_result_retention.sql:/docker-entrypoint-initdb.d/040-range-result-retention.sql:ro
+      - ../packages/storage/src/migrations/0005_observation_chunks.sql:/docker-entrypoint-initdb.d/050-range-observation-chunks.sql:ro
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U range -d range && psql -U range -d range -tAc \"SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'\" | grep -q ."]
       interval: 5s

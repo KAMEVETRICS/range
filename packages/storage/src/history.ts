@@ -252,12 +252,16 @@ export class HistoryStore {
    * Deletes results recorded before the cutoff: the results themselves, then evidence that no remaining result or
    * intent cites, with its source links, then both kinds of event in the event log. The books and funding that evidence
    * cited become uncited, so pruneObservations removes them on its next pass. Each batch is one transaction, oldest
-   * first; a backlog drains over several passes.
+   * first; a backlog drains over several passes. Uncited evidence goes once it was recorded before evidenceBeforeMs,
+   * which may be later than the results' cutoff: evidence the worker published for a result it then dropped is cited
+   * by nothing and never will be. Between the two cutoffs only evidence recorded from evidenceAfterMs on is looked at;
+   * uncited evidence older than that waits for the results' cutoff.
    */
-  async pruneResults(beforeMs: number,
-    options: { batchSize?: number; maxBatches?: number; signal?: AbortSignal } = {}): Promise<number> {
-    const { batchSize = 2_000, maxBatches = Number.MAX_SAFE_INTEGER, signal } = options;
+  async pruneResults(beforeMs: number, options: { batchSize?: number; maxBatches?: number; signal?: AbortSignal;
+    evidenceBeforeMs?: number; evidenceAfterMs?: number } = {}): Promise<number> {
+    const { batchSize = 2_000, maxBatches = Number.MAX_SAFE_INTEGER, signal, evidenceBeforeMs = beforeMs, evidenceAfterMs = 0 } = options;
     if (!Number.isSafeInteger(beforeMs) || beforeMs < 0) throw new Error("Invalid retention cutoff");
+    if (![evidenceBeforeMs, evidenceAfterMs].every(ms => Number.isSafeInteger(ms) && ms >= 0)) throw new Error("Invalid evidence cutoff");
     if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10_000 || !Number.isSafeInteger(maxBatches) || maxBatches < 1) {
       throw new Error("Invalid retention batch bound");
     }
@@ -292,14 +296,21 @@ export class HistoryStore {
         return doomed.length;
       });
     }
-    deleted += await inBatches(async client => {
+    // Before the results' cutoff nearly every bundle is uncited, because its results just went, so the oldest-first scan
+    // fills a batch at once. After it most bundles are still cited, and the scan steps over each cited one, a random read
+    // apiece, to reach the uncited ones: on the VPS that ran about a minute per 2,000 deleted. Starting that range at
+    // evidenceAfterMs keeps the scan to what the caller has not looked at yet.
+    const evidenceRanges: Array<[fromMs: number, toMs: number]> = evidenceBeforeMs > beforeMs
+      ? [[0, beforeMs], [Math.max(beforeMs, evidenceAfterMs), evidenceBeforeMs]] : [[0, evidenceBeforeMs]];
+    for (const [fromMs, toMs] of evidenceRanges) deleted += await inBatches(async client => {
       // As in pruneObservations, the LEFT JOIN ... IS NULL form is planned as an anti-join.
       const doomed = (await client.query(`SELECT e.event_id, ev.evidence_hash FROM event_log e
         JOIN evidence ev ON ev.event_id = e.event_id
         LEFT JOIN opportunities o ON o.evidence_hash = ev.evidence_hash
         LEFT JOIN intents i ON i.evidence_hash = ev.evidence_hash
-        WHERE e.topic = 'evidence.bundle.v1' AND e.accepted_at_ms < $1 AND o.evidence_hash IS NULL AND i.evidence_hash IS NULL
-        ORDER BY e.accepted_at_ms LIMIT $2`, [beforeMs, batchSize])).rows;
+        WHERE e.topic = 'evidence.bundle.v1' AND e.accepted_at_ms >= $1 AND e.accepted_at_ms < $2
+          AND o.evidence_hash IS NULL AND i.evidence_hash IS NULL
+        ORDER BY e.accepted_at_ms LIMIT $3`, [fromMs, toMs, batchSize])).rows;
       if (doomed.length) {
         const hashes = doomed.map(row => String(row.evidence_hash));
         const events = doomed.map(row => String(row.event_id));
