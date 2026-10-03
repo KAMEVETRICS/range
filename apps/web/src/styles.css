@@ -337,10 +337,11 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
   .page-head h1 { font-size: 36px; }
   .markets .search, .markets .search input { width: 100%; }
   .markets .search { flex: 1 1 100%; }
-  /* The pair board becomes one card per pair. */
+  /* The pair board becomes one card per pair. The status gets a row of its own: a rejection can list several reasons,
+     and beside the strategy it squeezed that column to nothing and covered it. */
   .pairs-table, .pairs-table tbody { display: block; }
   .pairs-table thead { display: none; }
-  .pairs-table tbody tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "stock strategy status" "trade trade trade" "net meter checked" "spread funding costs"; align-items: center; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .pairs-table tbody tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "stock strategy checked" "status status status" "trade trade trade" "net meter meter" "spread funding costs"; align-items: center; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
   .pairs-table tbody tr:last-child { border-bottom: 0; }
   .pairs-table tbody tr > * { padding: 0; border: 0; white-space: normal; text-align: left; }
   .pairs-table tbody th { grid-area: stock; }
@@ -352,10 +353,11 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
   .pairs-table td:nth-child(7) { grid-area: funding; }
   .pairs-table tbody td.num { text-align: left; }
   .pairs-table tbody td:nth-child(8) { grid-area: costs; text-align: right; }
-  .pairs-table td:nth-child(9) { grid-area: status; justify-self: end; min-width: 0; }
+  .pairs-table td:nth-child(9) { grid-area: status; justify-self: start; min-width: 0; }
   .pairs-table td:nth-child(10) { grid-area: checked; justify-self: end; font-size: 11px; }
   .pairs-table td:nth-child(n+6):nth-child(-n+8) { color: var(--ink-2); font-size: 11px; }
-  .pairs-table td:nth-child(n+6):nth-child(-n+8)::before { content: attr(data-label) " "; color: var(--ink-3); font-family: var(--font); }
+  /* Spread, funding and costs share a row on a phone, so each label sits above its value rather than wrapping into it. */
+  .pairs-table td:nth-child(n+6):nth-child(-n+8)::before { content: attr(data-label); display: block; color: var(--ink-3); font-family: var(--font); }
   .pairs-table .meter-col { width: auto; }
   .pairs-table .edge-meter { width: 100%; max-width: 160px; }
   .pairs-table tr.actionable > th { box-shadow: none; }
@@ -419,4 +421,12 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
   .freshness-cell small { margin: 0 0 0 8px; align-self: center; }
   .lineage-cell { min-width: 0; }
   .evidence-list > div { grid-template-columns: 1fr; }
+}
+
+/* Below about 360 px the three page tabs overran the nav, which scrolls with its scrollbar hidden, so Markets looked
+   missing. Tighter tabs fit them down to 320 px. */
+@media (max-width: 380px) {
+  .topbar { gap: 8px; }
+  .nav { gap: 4px; }
+  .nav a { padding: 0 9px; font-size: 12.5px; }
 }
