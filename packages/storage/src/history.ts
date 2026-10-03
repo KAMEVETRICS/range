@@ -252,12 +252,15 @@ export class HistoryStore {
    * Deletes results recorded before the cutoff: the results themselves, then evidence that no remaining result or
    * intent cites, with its source links, then both kinds of event in the event log. The books and funding that evidence
    * cited become uncited, so pruneObservations removes them on its next pass. Each batch is one transaction, oldest
-   * first; a backlog drains over several passes.
+   * first; a backlog drains over several passes. Uncited evidence goes once it was recorded before evidenceBeforeMs,
+   * which may be later than the results' cutoff: evidence the worker published for a result it then dropped is cited
+   * by nothing and never will be.
    */
   async pruneResults(beforeMs: number,
-    options: { batchSize?: number; maxBatches?: number; signal?: AbortSignal } = {}): Promise<number> {
-    const { batchSize = 2_000, maxBatches = Number.MAX_SAFE_INTEGER, signal } = options;
+    options: { batchSize?: number; maxBatches?: number; signal?: AbortSignal; evidenceBeforeMs?: number } = {}): Promise<number> {
+    const { batchSize = 2_000, maxBatches = Number.MAX_SAFE_INTEGER, signal, evidenceBeforeMs = beforeMs } = options;
     if (!Number.isSafeInteger(beforeMs) || beforeMs < 0) throw new Error("Invalid retention cutoff");
+    if (!Number.isSafeInteger(evidenceBeforeMs) || evidenceBeforeMs < 0) throw new Error("Invalid evidence cutoff");
     if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10_000 || !Number.isSafeInteger(maxBatches) || maxBatches < 1) {
       throw new Error("Invalid retention batch bound");
     }
@@ -299,7 +302,7 @@ export class HistoryStore {
         LEFT JOIN opportunities o ON o.evidence_hash = ev.evidence_hash
         LEFT JOIN intents i ON i.evidence_hash = ev.evidence_hash
         WHERE e.topic = 'evidence.bundle.v1' AND e.accepted_at_ms < $1 AND o.evidence_hash IS NULL AND i.evidence_hash IS NULL
-        ORDER BY e.accepted_at_ms LIMIT $2`, [beforeMs, batchSize])).rows;
+        ORDER BY e.accepted_at_ms LIMIT $2`, [evidenceBeforeMs, batchSize])).rows;
       if (doomed.length) {
         const hashes = doomed.map(row => String(row.evidence_hash));
         const events = doomed.map(row => String(row.event_id));

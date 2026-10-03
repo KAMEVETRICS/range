@@ -60,9 +60,14 @@ async function main() {
   const stopPruning = new AbortController();
   let pruning: Promise<void> | undefined;
   const cutoff = (hours: number) => Math.floor(Date.now() - hours * 3_600_000);
+  // Evidence goes out before its result, and the result is dropped when a newer book arrives first, leaving evidence
+  // nothing cites: about 400,000 bundles in 48 hours. Its result could still be recorded while the broker keeps
+  // results (6 hours), but never after, so with result retention on, uncited evidence goes after 6 hours.
+  const UNCITED_EVIDENCE_HOURS = 6;
   const prune = () => pruning ??= (async () => {
     const options = { maxBatches: 100, signal: stopPruning.signal };
-    const results = resultRetentionHours > 0 ? await history.pruneResults(cutoff(resultRetentionHours), options) : 0;
+    const results = resultRetentionHours > 0 ? await history.pruneResults(cutoff(resultRetentionHours),
+      { ...options, evidenceBeforeMs: Math.max(cutoff(resultRetentionHours), cutoff(UNCITED_EVIDENCE_HOURS)) }) : 0;
     const deleted = retentionHours > 0 ? await history.pruneObservations(cutoff(retentionHours), options) : 0;
     if (deleted || results) telemetry.logger.info("history pruned", { deleted, results, retentionHours, resultRetentionHours });
   })()
