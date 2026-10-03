@@ -62,12 +62,22 @@ async function main() {
   const cutoff = (hours: number) => Math.floor(Date.now() - hours * 3_600_000);
   // Evidence goes out before its result, and the result is dropped when a newer book arrives first, leaving evidence
   // nothing cites: about 400,000 bundles in 48 hours. Its result could still be recorded while the broker keeps
-  // results (6 hours), but never after, so with result retention on, uncited evidence goes after 6 hours.
+  // results (6 hours), but never after, so with result retention on, uncited evidence goes after 6 hours. Most evidence
+  // that young is still cited, and scanning all of it each pass held up the book trim for hours, so each pass looks
+  // only at what crossed the 6-hour line since the last one, and at most an hour back after a restart. Uncited
+  // evidence older than that goes at the results' cutoff instead.
   const UNCITED_EVIDENCE_HOURS = 6;
+  let evidenceScannedToMs = 0;
   const prune = () => pruning ??= (async () => {
     const options = { maxBatches: 100, signal: stopPruning.signal };
-    const results = resultRetentionHours > 0 ? await history.pruneResults(cutoff(resultRetentionHours),
-      { ...options, evidenceBeforeMs: Math.max(cutoff(resultRetentionHours), cutoff(UNCITED_EVIDENCE_HOURS)) }) : 0;
+    let results = 0;
+    if (resultRetentionHours > 0) {
+      const resultsBeforeMs = cutoff(resultRetentionHours);
+      const evidenceBeforeMs = Math.max(resultsBeforeMs, cutoff(UNCITED_EVIDENCE_HOURS));
+      results = await history.pruneResults(resultsBeforeMs,
+        { ...options, evidenceBeforeMs, evidenceAfterMs: Math.max(evidenceScannedToMs, evidenceBeforeMs - 3_600_000) });
+      evidenceScannedToMs = evidenceBeforeMs;
+    }
     const deleted = retentionHours > 0 ? await history.pruneObservations(cutoff(retentionHours), options) : 0;
     if (deleted || results) telemetry.logger.info("history pruned", { deleted, results, retentionHours, resultRetentionHours });
   })()

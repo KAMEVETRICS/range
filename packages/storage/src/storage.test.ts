@@ -484,6 +484,24 @@ describe("history retention", () => {
     await pool.end();
   });
 
+  it("looks for uncited evidence between the cutoffs only from evidenceAfterMs, leaving older bundles to the results' cutoff", async () => {
+    const { pool, history } = await store();
+    await history.appendMany([book("evt_book_a", now - 10 * hour), book("evt_book_b", now - 8 * hour), book("evt_book_c", now - 7 * hour)]);
+    await history.append(evidenceFor("7", "evt_evidence_skipped", ["evt_book_a"], now - 10 * hour));
+    await history.append(evidenceFor("8", "evt_evidence_cited", ["evt_book_b"], now - 8 * hour));
+    await history.append(resultFor("evt_result_cited", "opp_cited", "8", now - 8 * hour));
+    await history.append(evidenceFor("9", "evt_evidence_scanned", ["evt_book_c"], now - 7 * hour));
+
+    expect(await history.pruneResults(now - 48 * hour, { evidenceBeforeMs: now - 6 * hour, evidenceAfterMs: now - 9 * hour })).toBe(1);
+    expect(await column(pool, "SELECT evidence_hash FROM evidence ORDER BY evidence_hash")).toEqual(
+      [`sha256:${"7".repeat(64)}`, `sha256:${"8".repeat(64)}`]);
+    // The skipped bundle goes like any other once the results' cutoff passes it.
+    expect(await history.pruneResults(now - 9 * hour)).toBe(1);
+    expect(await column(pool, "SELECT evidence_hash FROM evidence")).toEqual([`sha256:${"8".repeat(64)}`]);
+    await expect(history.pruneResults(now, { evidenceAfterMs: -1 })).rejects.toThrow(/evidence cutoff/i);
+    await pool.end();
+  });
+
   it("prunes results in bounded batches and starts none once its signal aborts", async () => {
     const { pool, history } = await store();
     await history.append(book("evt_book_a", now - 10 * hour));
