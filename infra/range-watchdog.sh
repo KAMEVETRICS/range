@@ -17,7 +17,7 @@ if [ -z "${RANGE_SMTP_PASSWORD:-}" ] && [ -z "${RANGE_ALERT_TOPIC:-}" ]; then
   echo "set RANGE_ALERT_EMAIL and RANGE_SMTP_PASSWORD, or RANGE_ALERT_TOPIC, in /etc/range-watchdog.env" >&2; exit 1
 fi
 warn_percent=${RANGE_WATCHDOG_DISK_PERCENT:-80}
-stale_seconds=${RANGE_WATCHDOG_STALE_SECONDS:-300}
+stale_seconds=${RANGE_WATCHDOG_STALE_SECONDS:-600}
 pairs_url=${RANGE_WATCHDOG_PAIRS_URL:-http://127.0.0.1:4173/v1/pairs}
 state_file=/var/lib/range-watchdog/state
 
