@@ -67,7 +67,7 @@ services:
   # Redpanda is a transport buffer, not history: high-volume topics keep 6 hours in 1-hour segments (retention
   # drops whole segments). instrument.registry.v1 is kept forever: workers rebuild their registries by replaying it
   # from the start. Other low-volume topics keep broker defaults. Unbounded retention filled the shared disk on
-  # 2026-09-28.
+  # 2026-09-28; evidence.bundle.v1, left at the 7-day default, reached 11 GB within two days of pairs turning actionable.
   redpanda-retention:
     image: docker.redpanda.com/redpandadata/redpanda:v26.2.3
     logging: *logging
@@ -77,7 +77,7 @@ services:
     command:
       - |
         set -e
-        topics="market.observation.v1 book.state.v1 market.raw.v1 funding.observation.v1 opportunity.v1"
+        topics="market.observation.v1 book.state.v1 market.raw.v1 funding.observation.v1 opportunity.v1 evidence.bundle.v1"
         for topic in $$topics; do rpk topic create "$$topic" -X brokers=redpanda:9092 >/dev/null 2>&1 || true; done
         rpk topic alter-config $$topics --set retention.ms=21600000 --set segment.ms=3600000 -X brokers=redpanda:9092
         rpk topic create instrument.registry.v1 -X brokers=redpanda:9092 >/dev/null 2>&1 || true
