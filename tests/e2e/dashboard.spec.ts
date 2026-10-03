@@ -73,6 +73,19 @@ test("keeps a long valid decimal price within a 320 px viewport", async ({ page 
   expect(overflow).toBe(false);
 });
 
+test("shows every page tab within a 320 px viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockApi(page);
+  await page.goto("/#overview");
+  const nav = page.getByRole("navigation", { name: "Dashboard pages" });
+  for (const name of ["Overview", "Opportunities", "Markets"]) {
+    const bounds = (await nav.getByRole("link", { name, exact: true }).boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  }
+  expect(await nav.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
 test("keeps a reviewed pair's long status clear of its strategy within a 320 px viewport", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await mockApi(page);

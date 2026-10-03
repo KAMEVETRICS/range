@@ -422,3 +422,11 @@ dd { margin: 4px 0 0; font-family: var(--mono); font-size: 13px; font-variant-nu
   .lineage-cell { min-width: 0; }
   .evidence-list > div { grid-template-columns: 1fr; }
 }
+
+/* Below about 360 px the three page tabs overran the nav, which scrolls with its scrollbar hidden, so Markets looked
+   missing. Tighter tabs fit them down to 320 px. */
+@media (max-width: 380px) {
+  .topbar { gap: 8px; }
+  .nav { gap: 4px; }
+  .nav a { padding: 0 9px; font-size: 12.5px; }
+}
