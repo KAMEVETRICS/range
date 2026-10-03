@@ -2,7 +2,9 @@
 # Emails the operator when Range needs attention: the root disk nearing the disk guard's threshold, a connector or the
 # opportunity worker not running (the guard stops them and they stay stopped), or the live pair evaluations going
 # stale. Runs every 5 minutes from range-watchdog.timer and sends only when the set of problems changes, so one
-# incident is one email and its recovery another.
+# incident is one email and its recovery another. A deploy stops a container for seconds and leaves the board empty for
+# minutes, so a stopped container counts once two runs in a row see it, and a missing board once it has lasted as long
+# as a stale one would.
 #
 # /etc/range-watchdog.env (0600, outside the repository) chooses where messages go; set either or both:
 # - email: RANGE_ALERT_EMAIL and RANGE_SMTP_PASSWORD, sent with curl over SMTP with STARTTLS (no mail server needed
@@ -19,7 +21,8 @@ fi
 warn_percent=${RANGE_WATCHDOG_DISK_PERCENT:-80}
 stale_seconds=${RANGE_WATCHDOG_STALE_SECONDS:-600}
 pairs_url=${RANGE_WATCHDOG_PAIRS_URL:-http://127.0.0.1:4173/v1/pairs}
-state_file=/var/lib/range-watchdog/state
+state_dir=/var/lib/range-watchdog
+state_file=$state_dir/state
 
 # Sends a title, ntfy tags and a body on every configured channel; succeeds when at least one delivered it.
 send() {
@@ -49,20 +52,33 @@ if [ "${1:-}" = "--test" ]; then
   exit 0
 fi
 
+# Succeeds once the problem named $1 has lasted $2 seconds. Its first sighting is kept in $state_dir/$1.since, which
+# the caller removes when the check passes.
+lasted() {
+  local since=$state_dir/$1.since
+  [[ "$(cat "$since" 2>/dev/null)" =~ ^[0-9]+$ ]] || date +%s > "$since"
+  [ $(( $(date +%s) - $(cat "$since") )) -ge "$2" ]
+}
+
+mkdir -p "$state_dir"
 problems=()
 used=$(df --output=pcent / | tail -1 | tr -dc '0-9')
 [ "$used" -ge "$warn_percent" ] && problems+=("disk: root disk at ${used}% (the disk guard stops Range's producers at 85%)")
 stopped=$(docker ps -a --filter "name=range-connector-" --filter "name=range-opportunity-worker" --format '{{.Names}} {{.State}}' \
   | awk '$2 != "running" {print $1}' | tr '\n' ' ')
-[ -n "${stopped// }" ] && problems+=("stopped: not running: ${stopped% }")
+# Runs are 5 minutes apart, give or take the timer's minute of slack, so 240 s is the next run.
+if [ -z "${stopped// }" ]; then rm -f "$state_dir/stopped.since"
+elif lasted stopped 240; then problems+=("stopped: not running: ${stopped% }"); fi
 as_of=$(curl -s -m 15 "$pairs_url" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["as_of_ms"] or 0)' 2>/dev/null || echo 0)
 age=$(( $(date +%s) - ${as_of:-0} / 1000 ))
-[ "${as_of:-0}" -eq 0 ] && problems+=("board: pair evaluations unavailable from $pairs_url") \
-  || { [ "$age" -gt "$stale_seconds" ] && problems+=("board: pair evaluations are ${age} s old"); }
+# A restarted worker serves no evaluations for 3 to 5 minutes while it replays the instrument registry.
+if [ "${as_of:-0}" -ne 0 ]; then
+  rm -f "$state_dir/board.since"
+  [ "$age" -gt "$stale_seconds" ] && problems+=("board: pair evaluations are ${age} s old")
+elif lasted board "$stale_seconds"; then problems+=("board: pair evaluations unavailable from $pairs_url"); fi
 
 # The kinds of problem present, such as "board disk": an empty string when every check passes.
 current=$(for problem in "${problems[@]+"${problems[@]}"}"; do echo "${problem%%:*}"; done | sort -u | paste -sd ' ' -)
-mkdir -p "$(dirname "$state_file")"
 previous=$(cat "$state_file" 2>/dev/null || true)
 [ "$current" = "$previous" ] && exit 0
 
