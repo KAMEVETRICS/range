@@ -5,6 +5,7 @@ import { PairTable, STRATEGY_LABELS, bestPerStock, formatBps, pairVenueLabel, ti
 import { HEALTH_TONE, VenueIcon, healthLabel, venueInfo, type VenueRole } from "../venues.js";
 
 const ROLE_LABELS: Record<VenueRole, string> = { executable: "Reviewed pairs", reference: "Reference data", board: "Markets board" };
+const DOCS_URL = "https://range-2.gitbook.io/range-docs/";
 
 const STEPS = [
   { title: "Ingest", body: "Public order books, funding and health from twelve venues, each stamped with its source and receive time." },
@@ -84,6 +85,7 @@ export function OverviewPage({ api, now = Date.now }: { api: DashboardApi; now?:
           <div className="hero-actions">
             <a className="button primary" href="#opportunities">Open the scanner</a>
             <a className="button" href="#markets">Compare markets</a>
+            <a className="button" href={DOCS_URL} target="_blank" rel="noreferrer">Read the docs</a>
           </div>
         </div>
         <dl className="kpis" aria-label="Live summary">

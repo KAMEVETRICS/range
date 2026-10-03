@@ -53,4 +53,12 @@ describe("overview", { timeout: 15_000 }, () => {
     fireEvent.click(nvda);
     expect(window.location.hash).toBe("#opportunities/equity:NVDA");
   });
+
+  it("links the documentation site in a new tab", async () => {
+    render(<OverviewPage api={api()} now={() => NOW} />);
+    const docs = await screen.findByRole("link", { name: "Read the docs" });
+    expect(docs).toHaveAttribute("href", "https://range-2.gitbook.io/range-docs/");
+    expect(docs).toHaveAttribute("target", "_blank");
+    await waitFor(() => expect(screen.getAllByRole("rowheader")).toHaveLength(2));
+  });
 });
