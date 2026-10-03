@@ -64,6 +64,7 @@ cat > ../range.env <<EOF
 RANGE_API_TOKEN_PEPPER=$(openssl rand -hex 32)
 RANGE_DEMO_API_TOKEN=$(openssl rand -hex 32)
 RANGE_DASHBOARD_READ_TOKEN=$(openssl rand -hex 32)
+RANGE_PUBLIC_AGENT_TOKEN=$(openssl rand -hex 32)
 EOF
 ```
 
@@ -96,7 +97,13 @@ corepack pnpm test:e2e
 
 ## API and MCP
 
-Every route needs a bearer token. Reads need `market:read` or `opportunity:read`; intents need `intent:create`.
+The public deployment is open to agents and scripts without a key: REST at `https://range.datatides.xyz/v1`, an MCP server at `https://range.datatides.xyz/mcp`, the OpenAPI document at [`/openapi.json`](https://range.datatides.xyz/openapi.json) and an index for language models at [`/llms.txt`](https://range.datatides.xyz/llms.txt). Start with [Range for agents](docs/agents/README.md); the full documentation is in [`docs/`](docs/README.md).
+
+```bash
+claude mcp add --transport http range https://range.datatides.xyz/mcp
+```
+
+A self-hosted gateway needs a bearer token on every route. Reads need `market:read` or `opportunity:read`; intents need `intent:create`.
 
 | Method | Path | Returns |
 | --- | --- | --- |

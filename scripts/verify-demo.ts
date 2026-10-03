@@ -231,7 +231,7 @@ export async function verifyDemo(options: DemoOptions = {}): Promise<InvariantRe
   }));
 
   results.push(await safe(async () => {
-    const secrets = [token, env.RANGE_FAULT_CONTROL_TOKEN, env.RANGE_DASHBOARD_READ_TOKEN, env.EXTENDED_API_KEY]
+    const secrets = [token, env.RANGE_FAULT_CONTROL_TOKEN, env.RANGE_DASHBOARD_READ_TOKEN, env.RANGE_PUBLIC_AGENT_TOKEN, env.EXTENDED_API_KEY]
       .filter((value): value is string => Boolean(value));
     if (!telemetry) return { passed: false, detail: "RANGE_TELEMETRY_EXPORT_URL is required for redaction proof" };
     const response = await request(telemetry);
