@@ -72,3 +72,25 @@ test("keeps a long valid decimal price within a 320 px viewport", async ({ page 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(overflow).toBe(false);
 });
+
+test("keeps a reviewed pair's long status clear of its strategy within a 320 px viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await mockApi(page);
+  const side = (venue: string, venueSymbol: string, averagePrice: string) => ({ instrumentId: `ins_${venue}_${venueSymbol}`, venue, venueSymbol, averagePrice });
+  await page.route("**/v1/pairs", (route) => route.fulfill({ json: envelope({ as_of_ms: Date.now(), pairs: [{
+    underlyingId: "equity:NVDA", strategy: "perp_spread", status: "rejected",
+    rejectionReasons: ["NET_EDGE_BELOW_THRESHOLD", "INSUFFICIENT_DEPTH", "STALE_INPUT", "UNSYNCHRONIZED_INPUTS"],
+    buy: side("hyperliquid_hip3", "xyz:NVDA", "234.46"), sell: side("bitget", "NVDAUSDT", "234.58"),
+    grossSpreadBps: "5.03", expectedFundingBps: "-0.06", costsBps: "8.90", netEdgeBps: "-3.94", capacityUsd: "2500",
+    requestedNotionalUsd: "2500", evaluatedAtMs: Date.now() - 2_000,
+  }] }) }));
+  await page.goto("/#overview");
+  const row = page.getByRole("row", { name: /NVDA/ });
+  await expect(row.getByText("below costs, not enough depth, stale quote, unsynchronized inputs")).toBeVisible();
+  const strategy = (await row.locator('td[data-label="Strategy"]').boundingBox())!;
+  const status = (await row.locator('td[data-label="Status"]').boundingBox())!;
+  expect(status.y).toBeGreaterThanOrEqual(strategy.y + strategy.height);
+  expect(status.x + status.width).toBeLessThanOrEqual(320);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow).toBe(false);
+});
