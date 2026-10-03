@@ -1,0 +1,8 @@
+[Unit]
+Description=Email the operator when Range's disk, producers or live evaluations need attention
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /srv/range/infra/range-watchdog.sh
