@@ -267,7 +267,8 @@ services:
       # A pair is priced as held for one hour: trade.xyz publishes only its next hourly funding rate and nothing is
       # extrapolated, so a longer hold could never be covered; a window with no settlement is zero funding.
       RANGE_HOLDING_HORIZON_MS: "3600000"
-      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
+      # Book and funding history, in hours: as long as results are kept on the public deployment.
+      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-48}
       # Results and their evidence are an audit trail, kept unless this is set (hours; 0 keeps them all).
       RANGE_RESULT_RETENTION_HOURS: ${RANGE_RESULT_RETENTION_HOURS:-0}
       HEALTH_PORT: "8081"
