@@ -227,6 +227,25 @@ describe("Range opportunities dashboard", { timeout: 15_000 }, () => {
     expect(api.scanOpportunities).toHaveBeenLastCalledWith(expect.objectContaining({ strategy: "perp_spread", min_edge_bps: "25" }));
   });
 
+  it("keeps the newest scan's results when an older scan answers last", async () => {
+    const newer = opportunity({ opportunityId: "opp_nvda_spread_2", netEdgeBps: "33.30" });
+    const api = apiWith([newer], newer);
+    let answerFirstScan!: (envelope: OpportunityEnvelope) => void;
+    vi.mocked(api.scanOpportunities)
+      .mockReturnValueOnce(new Promise<OpportunityEnvelope>((resolve) => { answerFirstScan = resolve; }))
+      .mockResolvedValueOnce(opportunities([newer]));
+    const user = userEvent.setup();
+    render(<OpportunitiesPage api={api} initialUnderlying="equity:NVDA" scanRefreshMs={0} />);
+    await user.selectOptions(screen.getByLabelText("Strategy"), "perp_spread");
+    await user.click(screen.getByRole("button", { name: "Apply filters" }));
+    await screen.findAllByText("33.30 bps");
+
+    await act(async () => { answerFirstScan(opportunities([opportunity()])); });
+
+    expect(screen.queryByText("51.48 bps")).not.toBeInTheDocument();
+    expect(screen.getAllByText("33.30 bps").length).toBeGreaterThan(0);
+  });
+
   it("scans without an age limit until one is set", async () => {
     const api = apiWith([opportunity()]);
     const user = userEvent.setup();

@@ -87,13 +87,17 @@ services:
     image: redis:7.4-alpine
     logging: *logging
     restart: unless-stopped
-    command: [redis-server, --appendonly, "yes"]
+    # Capped below the container's limit: a full Redis refuses writes rather than being killed and reloading its whole
+    # append-only file in a loop, as it did on 2026-10-04. The rest of the limit is for the fork that rewrites that file.
+    # RDB snapshots are off: the append-only file is what a restart reloads, and a snapshot forked as often as every
+    # minute under load, briefly adding hundreds of MB.
+    command: [redis-server, --appendonly, "yes", --save, "", --maxmemory, 768mb, --maxmemory-policy, noeviction]
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis-data:/data]
     healthcheck: { test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 10 }
     deploy:
       resources:
-        limits: { cpus: "0.5", memory: 384M }
+        limits: { cpus: "0.5", memory: 1G }
         reservations: { memory: 64M }
 
   postgres:
@@ -263,7 +267,8 @@ services:
       # A pair is priced as held for one hour: trade.xyz publishes only its next hourly funding rate and nothing is
       # extrapolated, so a longer hold could never be covered; a window with no settlement is zero funding.
       RANGE_HOLDING_HORIZON_MS: "3600000"
-      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-72}
+      # Book and funding history, in hours: as long as results are kept on the public deployment.
+      RANGE_HISTORY_RETENTION_HOURS: ${RANGE_HISTORY_RETENTION_HOURS:-48}
       # Results and their evidence are an audit trail, kept unless this is set (hours; 0 keeps them all).
       RANGE_RESULT_RETENTION_HOURS: ${RANGE_RESULT_RETENTION_HOURS:-0}
       HEALTH_PORT: "8081"

@@ -1,8 +1,8 @@
 [Unit]
-Description=Keep the Docker build cache for Range under 6 GB, least recently used first (every rebuild adds some)
+Description=Keep the Docker build cache for Range under 3 GB, least recently used first (every rebuild adds some)
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/docker builder prune --force --max-used-space 6gb
+ExecStart=/usr/bin/docker builder prune --force --max-used-space 3gb
