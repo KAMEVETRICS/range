@@ -125,12 +125,33 @@ describe("constrained unsigned intents", () => {
     store.insert = async (...args) => { const record = await insert(...args); f.setRevision(8); return record; };
     await expect(new IntentService(f.application, store, f.now).createUnsignedIntent(request, caller)).rejects.toMatchObject({ code: "OPPORTUNITY_NOT_CURRENT" });
   });
-  it("bounds intent lifetime by the remaining freshness of venue health", async () => {
-    const f = await intentFixture(); const read = f.queries.listVenues;
-    f.queries.listVenues = async context => (await read(context)).map(item => ({ ...item, health: { ...item.health!, lastEventAgeMs: 1500 } }));
+  it("bounds intent lifetime by the remaining freshness of its books", async () => {
+    const f = await intentFixture();
+    for (const item of f.observations) if (item.payload.kind === "order_book") { item.sourceTimestamp = (instant - 1500) as never; item.receivedTimestamp = (instant - 1500) as never; }
     const service = new IntentService(f.application, new SqlIntentStore(f.sql), f.now);
     const intent = await service.createUnsignedIntent(request, caller);
     expect(Date.parse(intent.expiresAt) - instant).toBe(500);
+  });
+  it("refuses a venue that had heard no event within the quote TTL when it last reported", async () => {
+    const f = await intentFixture(); const read = f.queries.listVenues;
+    f.queries.listVenues = async context => (await read(context)).map(item => ({ ...item, health: { ...item.health!, lastEventAgeMs: 2500 } }));
+    await expect(new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller))
+      .rejects.toMatchObject({ code: "STALE_INPUT" });
+  });
+  it("derives a reviewed pair's Bitget leg filed under its venue's own underlying, through the reviewed mapping", async () => {
+    const f = await intentFixture("perp_spread", { reviewedBitget: true });
+    const intent = await new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller);
+    expect(intent.derivedLegs.map(leg => [leg.instrumentId, leg.side])).toEqual([["ins_0", "buy"], ["ins_1", "sell"]]);
+    const unreviewed = await intentFixture("perp_spread", { reviewedBitget: true, reviewed: false });
+    await expect(new IntentService(unreviewed.application, new SqlIntentStore(unreviewed.sql), unreviewed.now).createUnsignedIntent(request, caller))
+      .rejects.toMatchObject({ code: "UNKNOWN_INSTRUMENT_EQUIVALENCE" });
+  });
+  it("accepts funding within its own budget and venue health from the last 30-second report, as the evaluator does", async () => {
+    const f = await intentFixture("perp_spread", { reviewedBitget: true }); const read = f.queries.listVenues;
+    for (const item of f.observations) if (item.payload.kind === "funding") { item.sourceTimestamp = (instant - 10_000) as never; item.receivedTimestamp = (instant - 10_000) as never; }
+    f.queries.listVenues = async context => (await read(context)).map(item => ({ ...item, asOfMs: instant - 25_000 }));
+    const intent = await new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller);
+    expect(Date.parse(intent.expiresAt) - Date.parse(intent.createdAt)).toBe(2000);
   });
   it.each(["price", "funding", "evidence"])("returns a new immutable proposal when %s changes", async mode => {
     const f = await intentFixture(); const service = new IntentService(f.application, new SqlIntentStore(f.sql), f.now);

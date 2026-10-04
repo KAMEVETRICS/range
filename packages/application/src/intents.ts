@@ -71,22 +71,26 @@ export class IntentService {
     const queries = this.application.queries;
     const opportunity = await queries.inspectOpportunity(caller, input.opportunityId);
     if (!opportunity || opportunity.status !== "actionable") fail("OPPORTUNITY_NOT_CURRENT");
-    const detail = await this.application.inspectOpportunity({ id: input.opportunityId }, caller);
     const evidence = await queries.getEvidence(caller, opportunity.evidenceHash);
     if (!evidence || evidence.evidenceHash !== opportunity.evidenceHash) fail("EVIDENCE_UNAVAILABLE");
     const limits = policy(opportunity, evidence);
-    const [rawObservations, rawInstruments, venues] = await Promise.all([
-      queries.getMarketSnapshot(caller, { underlying: opportunity.underlyingId }),
-      queries.findInstruments(caller, { underlying: opportunity.underlyingId, limit: 100, offset: 0 }), queries.listVenues(caller),
+    // A reviewed pair's member can be filed under its venue's own underlying (Bitget's bitget:TSLA), and only the reviewed
+    // mapping makes it the same stock. Reading the stock's underlying alone left out every Bitget leg.
+    const members = (await this.application.reviewedMembers(caller, opportunity.underlyingId))
+      .filter(member => opportunity.legs.some(leg => leg.instrumentId === member.instrumentId));
+    const underlyings = [...new Set([opportunity.underlyingId, ...members.map(member => member.underlyingId)])];
+    const [snapshots, instrumentLists, venues] = await Promise.all([
+      Promise.all(underlyings.map(underlying => queries.getMarketSnapshot(caller, { underlying }))),
+      Promise.all(underlyings.map(underlying => queries.findInstruments(caller, { underlying, limit: 100, offset: 0 }))),
+      queries.listVenues(caller),
     ]);
-    if (rawObservations.length >= 1000 || rawInstruments.length >= 100) fail("PREFLIGHT_COVERAGE_INCOMPLETE");
-    const observations = rawObservations.map(item => ObservationEnvelopeSchema.parse(item));
-    const instruments = rawInstruments.map(item => InstrumentSchema.parse(item));
+    if (snapshots.some(items => items.length >= 1000) || instrumentLists.some(items => items.length >= 100)) fail("PREFLIGHT_COVERAGE_INCOMPLETE");
+    const observations = snapshots.flat().map(item => ObservationEnvelopeSchema.parse(item));
+    const instruments = instrumentLists.flat().map(item => InstrumentSchema.parse(item));
     const now = this.now();
-    const sourceMs = Date.parse(detail.as_of);
-    if (now - sourceMs >= limits.ttl) fail("STALE_INPUT");
-    let deadline = Math.min(now + limits.ttl, Date.parse(opportunity.expiresAt), sourceMs + limits.ttl);
-    const times: number[] = [sourceMs];
+    let deadline = Math.min(now + limits.ttl, Date.parse(opportunity.expiresAt));
+    const times: number[] = [];
+    const bookTimes: number[] = [];
     const sourceIds = [...evidence.sourceEventIds];
     const sourceFingerprints: unknown[] = [];
     const notional = Exact.min(input.requestedNotionalUsd, opportunity.capacityUsd).toFixed();
@@ -94,24 +98,31 @@ export class IntentService {
     const prices: { side: string; price: string }[] = [];
     const legs = opportunity.legs.map(leg => {
       const instrument = instruments.find(item => item.instrumentId === leg.instrumentId);
-      if (!instrument || instrument.underlyingId !== opportunity.underlyingId || ["extended", "variational"].includes(instrument.venue)) fail("UNKNOWN_INSTRUMENT_EQUIVALENCE");
-      if (!instrument.capabilities.includes("orderbook")) fail("CAPABILITY_WITHDRAWN");
+      const member = members.find(item => item.instrumentId === leg.instrumentId);
+      if (!instrument || (instrument.underlyingId !== opportunity.underlyingId && instrument.underlyingId !== member?.underlyingId) ||
+        ["extended", "variational"].includes(instrument.venue)) fail("UNKNOWN_INSTRUMENT_EQUIVALENCE");
+      // A reviewed member was reviewed as an order-book perpetual. Bitget's instruments don't list the capability, and
+      // adding it would change the metadata hash their review pins; the venue's capability and a live book are checked below.
+      if (!member && !instrument.capabilities.includes("orderbook")) fail("CAPABILITY_WITHDRAWN");
       const venue = venues.find(item => item.venue === instrument.venue);
       if (!venue?.health || venue.health.connectionState !== "connected" || venue.health.sequenceIntegrity !== "consistent" ||
         venue.health.rateLimit.state !== "healthy" || !venue.capabilities.includes("orderbook")) fail("VENUE_DEGRADED");
       if (Math.abs(venue.health.clockSkewMs) > limits.skewBudget) fail("CLOCK_SKEW_EXCEEDED");
-      if (venue.asOfMs === null || venue.asOfMs > now || now - venue.asOfMs + venue.health.lastEventAgeMs >= Math.min(venue.freshnessBudgetMs, limits.ttl)) fail("STALE_INPUT");
-      deadline = Math.min(deadline, venue.asOfMs + Math.min(venue.freshnessBudgetMs, limits.ttl) - venue.health.lastEventAgeMs);
+      // Venues report health every 30 seconds, so the report's own age says nothing about the books, which are checked
+      // below. As in the evaluator, the venue must have heard an event within the quote budget when it reported.
+      if (venue.asOfMs === null || venue.asOfMs > now || venue.health.lastEventAgeMs >= Math.min(venue.freshnessBudgetMs, limits.ttl)) fail("STALE_INPUT");
       const used = observations.filter(item => item.instrumentId === instrument.instrumentId);
       const books = used.filter(item => item.payload.kind === "order_book");
       if (books.length !== 1) fail("PREFLIGHT_COVERAGE_INCOMPLETE");
       for (const item of used) {
+        // A book must be as fresh as the result's quote; funding keeps its own budget, often minutes, as in the evaluator.
+        const budget = item.payload.kind === "order_book" ? Math.min(item.freshnessBudgetMs, limits.ttl) : item.freshnessBudgetMs;
         if (item.venue !== instrument.venue || item.eligibility !== "live" || item.transport === "replay" || item.qualityFlags.length ||
-            item.sourceTimestamp > item.receivedTimestamp || item.receivedTimestamp > now ||
-            now - item.sourceTimestamp >= Math.min(item.freshnessBudgetMs, limits.ttl)) fail("STALE_INPUT");
+            item.sourceTimestamp > item.receivedTimestamp || item.receivedTimestamp > now || now - item.sourceTimestamp >= budget) fail("STALE_INPUT");
         times.push(item.sourceTimestamp);
+        if (item.payload.kind === "order_book") bookTimes.push(item.sourceTimestamp);
         sourceIds.push(item.eventId);
-        deadline = Math.min(deadline, item.sourceTimestamp + Math.min(item.freshnessBudgetMs, limits.ttl));
+        deadline = Math.min(deadline, item.sourceTimestamp + budget);
         const { rawPayloadRefOrHash: _raw, ...publicSource } = item;
         sourceFingerprints.push(publicSource);
       }
@@ -145,7 +156,8 @@ export class IntentService {
       return { legId: leg.legId, instrumentId: leg.instrumentId, side: leg.side, quantity: quantity.toFixed(),
         priceBounds: { minimum: Exact.min(best, quote.worstPrice).toFixed(), maximum: Exact.max(best, quote.worstPrice).toFixed() } };
     });
-    if (Math.max(...times) - Math.min(...times) > limits.syncBudget) fail("UNSYNCHRONIZED_INPUTS");
+    // As in the evaluator, the books must agree in time; funding updates on its own schedule.
+    if (Math.max(...bookTimes) - Math.min(...bookTimes) > limits.syncBudget) fail("UNSYNCHRONIZED_INPUTS");
     const buy = prices.find(item => item.side === "buy")!.price, sell = prices.find(item => item.side === "sell")!.price;
     const gross = new Exact(sell).minus(buy).div(buy).times(10000);
     const costs = [opportunity.tradingFeesBps, opportunity.slippageBps, opportunity.financingBps, opportunity.gasAndTransferBps, opportunity.fxConversionBps, opportunity.uncertaintyBufferBps];
