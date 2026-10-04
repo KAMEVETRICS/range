@@ -84,6 +84,11 @@ export class RangeApplication {
     if (!this.pairs || now - this.pairs.readAtMs >= 1_000) this.pairs = { readAtMs: now, snapshot: await this.queries.getPairEvaluations(context) };
     return this.pairs.snapshot;
   }
+  /** A reviewed stock's members, some filed under their venue's own underlying (Bitget's bitget:TSLA); none while the
+   * worker's pair snapshot is unavailable. */
+  async reviewedMembers(context: RequestContext, underlyingId: string) {
+    return (await this.pairSnapshot(context))?.mappings.find(item => item.underlyingId === underlyingId)?.members ?? [];
+  }
   /**
    * The latest evaluation of every reviewed pair, strategy, and direction, including rejections: the reason nothing
    * is actionable is part of the answer. A pair's evaluatedAtMs says how old each one is.
