@@ -88,8 +88,8 @@ services:
     logging: *logging
     restart: unless-stopped
     # Capped below the container's limit: a full Redis refuses writes rather than being killed and reloading its whole
-    # append-only file in a loop, as it did on 2026-10-04. The headroom is for the fork that rewrites that file.
-    command: [redis-server, --appendonly, "yes", --maxmemory, 512mb, --maxmemory-policy, noeviction]
+    # append-only file in a loop, as it did on 2026-10-04. The rest of the limit is for the fork that rewrites that file.
+    command: [redis-server, --appendonly, "yes", --maxmemory, 768mb, --maxmemory-policy, noeviction]
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis-data:/data]
     healthcheck: { test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 10 }
