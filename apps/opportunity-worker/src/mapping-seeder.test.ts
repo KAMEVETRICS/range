@@ -60,6 +60,32 @@ it("publishes a review on a new registry that numbers the reviewed metadata diff
     .toEqual([[["ins_a", 1], ["ins_b", 1]]]);
 });
 
+it("publishes a review again when the event is redelivered after its publish failed", async () => {
+  const a = perp("ins_a", "venue_a", ["perpetual"], "2026-09-29T00:00:00.000Z");
+  const b = perp("ins_b", "venue_b", ["perpetual"], "2026-09-20T00:00:00.000Z");
+  const published: unknown[] = [];
+  let attempts = 0;
+  const seeder = createReviewedMappingSeeder(SeedConfigSchema.parse({ schemaVersion: 1, refusedCandidates: [], mappings: [{
+    underlyingId: "equity:TSLA", mappingVersion: 1, compatibleExposure: "one share", reviewer: "reviewer",
+    reviewedAt: "2026-09-29T00:00:00.000Z", proof, members: [
+      { venue: "venue_a", venueSymbol: "ins_a", metadataHash: calculationMetadataHash(a) },
+      { venue: "venue_b", venueSymbol: "ins_b", metadataHash: calculationMetadataHash(b) },
+    ],
+  }] }), async (_underlyingId, event) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("broker unavailable");
+    published.push(event);
+  });
+
+  await seeder({ kind: "upsert", instrument: a });
+  await expect(seeder({ kind: "upsert", instrument: b })).rejects.toThrow("broker unavailable");
+  // The consumer redelivers the event whose handler failed.
+  await seeder({ kind: "upsert", instrument: b });
+  expect(published).toHaveLength(1);
+  await seeder({ kind: "upsert", instrument: b });
+  expect(attempts).toBe(2);
+});
+
 it("skips a metadata change reported at an unchanged effective time instead of crash-looping", async () => {
   const published: unknown[] = [];
   const seeder = createReviewedMappingSeeder(SeedConfigSchema.parse({ schemaVersion: 1, mappings: [], refusedCandidates: [] }),
