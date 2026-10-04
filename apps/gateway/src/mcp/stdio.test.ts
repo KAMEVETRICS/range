@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createServer, type AddressInfo } from "node:net";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import Redis from "ioredis-mock";
@@ -101,6 +102,27 @@ describe("local stdio executable", () => {
       expect((redis as unknown as { connected: boolean }).connected).toBe(false);
       await expect(sql.query("SELECT 1")).rejects.toThrow(/pool after calling end/i);
     } finally { await runtime.close(); redis.disconnect(); }
+  }, 10_000);
+
+  it("waits for its lazy Redis connection instead of failing the first tool call", async () => {
+    // A minimal Redis that is ready at once and holds no keys.
+    const server = createServer(socket => socket.on("data", chunk => socket.write(chunk.toString().split(/(?=\*\d+\r\n)/)
+      .filter(Boolean).map(command => /\bINFO\b/i.test(command) ? "$9\r\nloading:0\r\n" : "$-1\r\n").join(""))));
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const input = new PassThrough(), output = new PassThrough();
+    const sql = new pg.Pool({ connectionString: baseEnv.DATABASE_URL });
+    const runtime = await runRangeStdio({ ...baseEnv, REDIS_URL: `redis://127.0.0.1:${(server.address() as AddressInfo).port}` },
+      { input, output, sql });
+    try {
+      input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
+        protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" },
+      } }) + "\n");
+      input.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+      input.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_venues", arguments: {} } }) + "\n");
+      const message = await responseWithId(output, 2);
+      expect(message.result.isError).not.toBe(true);
+      expect(message.result.structuredContent).toMatchObject({ result: { items: [{ venue: "extended", health: null }] } });
+    } finally { await runtime.close(); server.close(); }
   }, 10_000);
 
   it("rejects a pipelined tool call when the stdio concurrency slot is occupied", async () => {

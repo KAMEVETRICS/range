@@ -51,7 +51,10 @@ export async function runRangeStdio(env: NodeJS.ProcessEnv = process.env, option
     maxConcurrent: options.maxConcurrent ?? env.RANGE_MCP_MAX_CONCURRENT ?? 16 });
   const venues = publicVenueManifest(env);
   const sql = options.sql ?? new pg.Pool({ connectionString: config.databaseUrl, max: 5, connectionTimeoutMillis: 5000 }) as unknown as RuntimeSql;
-  const redis = options.redis ?? new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RuntimeRedis;
+  // Redis connects on the first command, which waits in the offline queue until the connection is up; with the queue
+  // off, that first tool call failed at once. Tool discovery needs no Redis, and an unreachable one fails a call after
+  // one retry.
+  const redis = options.redis ?? new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 }) as unknown as RuntimeRedis;
   const pool = sql as SqlPool;
   // ioredis models command overloads more narrowly than the storage port's
   // variadic Redis signature, while implementing the same runtime commands.
