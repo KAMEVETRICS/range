@@ -64,17 +64,17 @@ describe("Redis current state", () => {
     redis.disconnect();
   });
 
-  it("expires a version fence 12 hours after its data, and renews it with each accepted version", async () => {
+  it("expires a version fence 10 minutes after its data, and renews it with each accepted version", async () => {
     const redis = new Redis();
     const now = Date.now();
     const store = new CurrentStateStore(redis, { read: async () => 2 }, () => now);
     const fenceTtl = async () => Number(await redis.eval("return redis.call('PTTL', KEYS[1])", 1, "{range}:fence:opportunity:opp_fence_ttl"));
-    const hours12 = 12 * 3_600_000;
+    const minutes10 = 10 * 60_000;
     expect(await store.put("opportunity:opp_fence_ttl", value(1, now + 2_000))).toBe(true);
-    expect(await fenceTtl()).toBeGreaterThan(hours12);
-    expect(await fenceTtl()).toBeLessThanOrEqual(hours12 + 2_000);
+    expect(await fenceTtl()).toBeGreaterThan(minutes10);
+    expect(await fenceTtl()).toBeLessThanOrEqual(minutes10 + 2_000);
     expect(await store.put("opportunity:opp_fence_ttl", value(2, now + 30_000))).toBe(true);
-    expect(await fenceTtl()).toBeGreaterThan(hours12 + 2_000);
+    expect(await fenceTtl()).toBeGreaterThan(minutes10 + 2_000);
     redis.disconnect();
   });
 

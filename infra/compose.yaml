@@ -89,7 +89,9 @@ services:
     restart: unless-stopped
     # Capped below the container's limit: a full Redis refuses writes rather than being killed and reloading its whole
     # append-only file in a loop, as it did on 2026-10-04. The rest of the limit is for the fork that rewrites that file.
-    command: [redis-server, --appendonly, "yes", --maxmemory, 768mb, --maxmemory-policy, noeviction]
+    # RDB snapshots are off: the append-only file is what a restart reloads, and a snapshot forked as often as every
+    # minute under load, briefly adding hundreds of MB.
+    command: [redis-server, --appendonly, "yes", --save, "", --maxmemory, 768mb, --maxmemory-policy, noeviction]
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis-data:/data]
     healthcheck: { test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 10 }

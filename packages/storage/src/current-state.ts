@@ -20,11 +20,13 @@ export interface VersionedState<T = unknown> {
 }
 
 /**
- * How long a version fence outlives its data. The broker keeps the events behind current state for 6 hours, so a replay
- * cannot deliver a version older than a fence this old. Kept forever, every opportunity's fence stayed: 1.9 million by
- * 2026-10-04, when Redis outgrew its memory limit and was killed every minute.
+ * How long a version fence outlives its data. A fence only has to stop an older version while that version could still
+ * write: past its own expiry a version writes nothing, and while a result is being written its fence is renewed with
+ * every version, so no data outlives its fence. No result lives longer than 30 seconds. Kept forever, fences filled
+ * Redis's memory on 2026-10-04 (1.9 million); kept 12 hours, they crowded Redis's sampling of expiring keys, and
+ * expired results piled up unreclaimed.
  */
-const FENCE_GRACE_MS = 12 * 3_600_000;
+const FENCE_GRACE_MS = 10 * 60_000;
 
 // Version fences deliberately outlive expiring data. An expired key is not
 // permission to accept an older version or revive the same one.
