@@ -19,8 +19,15 @@ export interface VersionedState<T = unknown> {
   terminal?: boolean;
 }
 
-// Persistent version fences deliberately outlive expiring data. An expired
-// key is not permission to accept an older version or revive the same one.
+/**
+ * How long a version fence outlives its data. The broker keeps the events behind current state for 6 hours, so a replay
+ * cannot deliver a version older than a fence this old. Kept forever, every opportunity's fence stayed: 1.9 million by
+ * 2026-10-04, when Redis outgrew its memory limit and was killed every minute.
+ */
+const FENCE_GRACE_MS = 12 * 3_600_000;
+
+// Version fences deliberately outlive expiring data. An expired key is not
+// permission to accept an older version or revive the same one.
 const CAS = `
 local old = redis.call('HGET', KEYS[2], 'version')
 local incoming = tonumber(ARGV[4])
@@ -30,6 +37,7 @@ if old then
     (redis.call('HGET', KEYS[2], 'terminal') == '1' or ARGV[5] ~= '1') then return 0 end
 end
 redis.call('HSET', KEYS[2], 'version', ARGV[4], 'terminal', ARGV[5])
+redis.call('PEXPIRE', KEYS[2], ARGV[8])
 if ARGV[5] == '1' or tonumber(ARGV[2]) <= 0 then
   redis.call('DEL', KEYS[1])
   redis.call('ZREM', KEYS[3], ARGV[3])
@@ -55,9 +63,11 @@ export class CurrentStateStore {
     if (!Number.isSafeInteger(record.version) || record.version < 0 || !Number.isSafeInteger(record.expiresAt)) {
       throw new Error("Invalid state version or expiry");
     }
+    const now = this.now();
+    const ttlMs = Math.max(0, record.expiresAt - now);
     return Number(await this.redis.eval(CAS, 3, this.key("data", key), this.key("fence", key),
       this.key("index", record.underlyingId ?? "all"), JSON.stringify(record),
-      Math.max(0, record.expiresAt - this.now()), key, record.version, record.terminal ? "1" : "0", record.expiresAt, this.now())) === 1;
+      ttlMs, key, record.version, record.terminal ? "1" : "0", record.expiresAt, now, ttlMs + FENCE_GRACE_MS)) === 1;
   }
 
   async get<T = unknown>(key: string): Promise<VersionedState<T> | undefined> {

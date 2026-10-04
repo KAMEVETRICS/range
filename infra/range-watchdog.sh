@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Emails the operator when Range needs attention: the root disk nearing the disk guard's threshold, a connector or the
-# opportunity worker not running (the guard stops them and they stay stopped), or the live pair evaluations going
-# stale. Runs every 5 minutes from range-watchdog.timer and sends only when the set of problems changes, so one
+# opportunity worker not running (the guard stops them and they stay stopped), any Range container restarting, or the
+# live pair evaluations going stale. Runs every 5 minutes from range-watchdog.timer and sends only when the set of problems changes, so one
 # incident is one email and its recovery another. A deploy stops a container for seconds and leaves the board empty for
 # minutes, so a stopped container counts once two runs in a row see it, and a missing board once it has lasted as long
 # as a stale one would.
@@ -69,6 +69,16 @@ stopped=$(docker ps -a --filter "name=range-connector-" --filter "name=range-opp
 # Runs are 5 minutes apart, give or take the timer's minute of slack, so 240 s is the next run.
 if [ -z "${stopped// }" ]; then rm -f "$state_dir/stopped.since"
 elif lasted stopped 240; then problems+=("stopped: not running: ${stopped% }"); fi
+# A container that keeps crashing is running between restarts, so the check above misses it: on 2026-10-04 Redis was
+# killed every minute for an hour and a half without an alert. Any restart counts, since none of Range's containers
+# restarts in normal operation and a deploy replaces a container rather than restarting it.
+counts=$(docker ps -a --filter "name=range-" --format '{{.Names}}' | xargs -r docker inspect -f '{{.Name}} {{.RestartCount}}' \
+  | sed 's#^/##' | sort)
+if [ -s "$state_dir/restarts" ]; then
+  restarted=$(join "$state_dir/restarts" <(printf '%s\n' "$counts") | awk '$3 > $2 { printf "%s (+%d) ", $1, $3 - $2 }')
+  [ -n "$restarted" ] && problems+=("restarting: restarted since the last check: ${restarted% }")
+fi
+printf '%s\n' "$counts" > "$state_dir/restarts"
 as_of=$(curl -s -m 15 "$pairs_url" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["as_of_ms"] or 0)' 2>/dev/null || echo 0)
 age=$(( $(date +%s) - ${as_of:-0} / 1000 ))
 # A restarted worker serves no evaluations for 3 to 5 minutes while it replays the instrument registry.
