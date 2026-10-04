@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Emails the operator when Range needs attention: the root disk nearing the disk guard's threshold, a connector or the
-# opportunity worker not running (the guard stops them and they stay stopped), any Range container restarting, or the
-# live pair evaluations going stale. Runs every 5 minutes from range-watchdog.timer and sends only when the set of problems changes, so one
-# incident is one email and its recovery another. A deploy stops a container for seconds and leaves the board empty for
-# minutes, so a stopped container counts once two runs in a row see it, and a missing board once it has lasted as long
-# as a stale one would.
+# opportunity worker not running, any Range container restarting, Redis nearing its memory cap, or the live pair
+# evaluations going stale. Runs every 5 minutes from range-watchdog.timer and sends only when the set of problems
+# changes, so one incident is one email and its recovery another. A deploy stops a container for seconds and leaves the
+# board empty for minutes, so a stopped container counts once two runs in a row see it, and a missing board once it has
+# lasted as long as a stale one would. `range-watchdog.sh --notify <title> <ntfy tags> <body>` sends one message; the
+# disk guard reports its actions that way.
 #
 # /etc/range-watchdog.env (0600, outside the repository) chooses where messages go; set either or both:
 # - email: RANGE_ALERT_EMAIL and RANGE_SMTP_PASSWORD, sent with curl over SMTP with STARTTLS (no mail server needed
@@ -48,8 +49,13 @@ send() {
 }
 
 if [ "${1:-}" = "--test" ]; then
-  echo "test message delivered by: $(send "Range watchdog test" "white_check_mark" "Range's watchdog on $(hostname) can reach you. It checks the disk, the producers and the live pair evaluations every 5 minutes.")"
+  echo "test message delivered by: $(send "Range watchdog test" "white_check_mark" "Range's watchdog on $(hostname) can reach you. It checks the disk, the producers, restarts, Redis's memory and the live pair evaluations every 5 minutes.")"
   exit 0
+fi
+if [ "${1:-}" = "--notify" ]; then
+  channels=$(send "${2:?a title}" "${3:-warning}" "${4:-}"); status=$?
+  echo "delivered by: $channels"
+  exit $status
 fi
 
 # Succeeds once the problem named $1 has lasted $2 seconds. Its first sighting is kept in $state_dir/$1.since, which
@@ -79,6 +85,13 @@ if [ -s "$state_dir/restarts" ]; then
   [ -n "$restarted" ] && problems+=("restarting: restarted since the last check: ${restarted% }")
 fi
 printf '%s\n' "$counts" > "$state_dir/restarts"
+# Redis refuses writes at its maxmemory and is killed at its container's limit; the cap is whichever applies.
+redis_used=$(docker exec range-redis-1 redis-cli INFO memory 2>/dev/null | tr -d '\r' | awk -F: '$1 == "used_memory" { print $2 }')
+redis_cap=$(docker exec range-redis-1 redis-cli CONFIG GET maxmemory 2>/dev/null | tail -1 | tr -d '\r')
+[[ "${redis_cap:-}" =~ ^[1-9][0-9]*$ ]] || redis_cap=$(docker inspect -f '{{.HostConfig.Memory}}' range-redis-1 2>/dev/null)
+if [[ "${redis_used:-}" =~ ^[0-9]+$ && "${redis_cap:-}" =~ ^[1-9][0-9]*$ ]] && [ $(( redis_used * 100 / redis_cap )) -ge 75 ]; then
+  problems+=("redis: Redis is using $(( redis_used * 100 / redis_cap ))% of its $(( redis_cap / 1048576 )) MB cap")
+fi
 as_of=$(curl -s -m 15 "$pairs_url" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["as_of_ms"] or 0)' 2>/dev/null || echo 0)
 age=$(( $(date +%s) - ${as_of:-0} / 1000 ))
 # A restarted worker serves no evaluations for 3 to 5 minutes while it replays the instrument registry.
