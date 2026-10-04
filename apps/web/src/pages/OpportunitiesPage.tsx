@@ -30,9 +30,14 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
 
+  // A filter change, a poll and a stream-triggered reload can overlap and answer out of order. Only the latest scan's
+  // answer is shown, so an older one never replaces newer results, such as NVDA results under a TSLA filter.
+  const latestScan = useRef(0);
   const loadOpportunities = useCallback(async (query: OpportunityFilters) => {
+    const scan = ++latestScan.current;
     try {
       const response = await api.scanOpportunities(query);
+      if (scan !== latestScan.current) return;
       setOpportunities(response.result.items);
       setQuoteTimestamps(response.result.quote_timestamps);
       setWarnings(response.warnings);
@@ -40,9 +45,9 @@ export function OpportunitiesPage({ api, initialUnderlying = "equity:NVDA", scan
         ? current : response.result.items[0]?.opportunityId);
       setError(undefined);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Opportunity data is unavailable.");
+      if (scan === latestScan.current) setError(cause instanceof Error ? cause.message : "Opportunity data is unavailable.");
     } finally {
-      setLoading(false);
+      if (scan === latestScan.current) setLoading(false);
     }
   }, [api]);
 
