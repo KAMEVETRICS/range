@@ -8,7 +8,9 @@ describe("constrained unsigned intents", () => {
     const service = new IntentService(f.application, new SqlIntentStore(f.sql), f.now);
     const result = await service.createUnsignedIntent(request, caller);
     expect(result.constrainedNotionalUsd).toBe("1200");
-    expect(result.derivedLegs[0]).toMatchObject({ instrumentId: "ins_0", side: "buy", quantity: "12", priceBounds: { minimum: "100", maximum: "100" } });
+    // $1,200 buys 12 at $100 but sells only 11.76470588 at $102; both legs trade the smaller count.
+    expect(result.derivedLegs[0]).toMatchObject({ instrumentId: "ins_0", side: "buy", quantity: "11.76470588", priceBounds: { minimum: "100", maximum: "100" } });
+    expect(result.derivedLegs[1].quantity).toBe("11.76470588");
     expect(result.derivedLegs[1].priceBounds).toEqual({ minimum: "102", maximum: "102" });
     expect(Date.parse(result.expiresAt) - Date.parse(result.createdAt)).toBe(2000);
     expect(result.nonAtomicWarning).toBe(true);
@@ -193,9 +195,22 @@ describe("constrained unsigned intents", () => {
     const payload = f.observations[0].payload;
     if (payload.kind !== "order_book") throw new Error("book expected");
     payload.asks = [{ price: "100" as never, quantity: "5" as never }, { price: "101" as never, quantity: "100" as never }];
+    // A sell bid low enough that the buy leg's cap, not the sell leg's, sets the shares.
+    const sell = f.observations[2].payload;
+    if (sell.kind !== "order_book") throw new Error("sell book expected");
+    sell.bids[0].price = "100.9" as never;
     const intent = await new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller);
-    expect(intent.derivedLegs[0].quantity).toBe("11.88118811");
+    expect(intent.derivedLegs.map(leg => leg.quantity)).toEqual(["11.88118811", "11.88118811"]);
     expect(intent.derivedLegs[0].priceBounds).toEqual({ minimum: "100", maximum: "101" });
+  });
+  it("sizes both legs to one share count, on a step that is whole lots on both venues", async () => {
+    const f = await intentFixture();
+    f.instruments[0].lotSize = "0.01" as never;
+    f.instruments[1].lotSize = "1" as never;
+    f.instruments[1].contractMultiplier = "0.1" as never;
+    const intent = await new IntentService(f.application, new SqlIntentStore(f.sql), f.now).createUnsignedIntent(request, caller);
+    // Steps of 0.01 and 0.1 shares meet at 0.1: 11.7 shares, which the second venue counts as 117 contracts of 0.1.
+    expect(intent.derivedLegs.map(leg => leg.quantity)).toEqual(["11.7", "117"]);
   });
   it("rejects a rounded leg whose actual permitted fill falls below instrument minimum", async () => {
     const f = await intentFixture();
