@@ -85,6 +85,26 @@ async function fixture(scopes: string[] = ["market:read", "opportunity:read"]) {
 }
 
 describe("REST application boundary", () => {
+  it("answers a client's malformed request with its own status in Range's envelope, never as an outage", async () => {
+    const { app } = await fixture(["market:read", "opportunity:read", "intent:create"]);
+    const intentUrl = `/v1/intents/intent_${"a".repeat(64)}/validate`;
+    const cases = [
+      { status: 413, code: "PAYLOAD_TOO_LARGE", request: { method: "POST" as const, url: intentUrl, headers: { ...auth, "content-type": "application/json" },
+        payload: JSON.stringify({ padding: "a".repeat(20_000) }) } },
+      { status: 415, code: "UNSUPPORTED_MEDIA_TYPE", request: { method: "POST" as const, url: intentUrl, headers: { ...auth, "content-type": "application/xml" },
+        payload: "<intent/>" } },
+      { status: 400, code: "INVALID_REQUEST", request: { method: "POST" as const, url: intentUrl, headers: { ...auth, "content-type": "application/json" },
+        payload: "{not json" } },
+      { status: 414, code: "URI_TOO_LONG", request: { method: "GET" as const, url: `/v1/opportunities/opp_${"a".repeat(300)}`, headers: auth } },
+    ];
+    for (const { status, code, request } of cases) {
+      const response = await app.inject(request);
+      expect([response.statusCode, response.json().result.code], code).toEqual([status, code]);
+      expect(response.headers["x-range-trace-id"], code).toMatch(/^rng_trace_/);
+      expect(response.body, code).not.toContain("a".repeat(100));
+    }
+  });
+
   it("returns source freshness, evidence, warnings, and one trace through storage and logs", async () => {
     const { app, contexts, logs } = await fixture();
     const response = await app.inject({ method: "GET", url: "/v1/opportunities/opp_1", headers: auth });
