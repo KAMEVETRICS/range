@@ -92,6 +92,25 @@ describe("evaluateOpportunity", () => {
     expect(Date.parse(result.expiresAt)).toBe(NOW + 250);
   });
 
+  it("keeps a funding result no longer than its books' own freshness budget, and rejects older books", () => {
+    const input = candidate({ strategy: "funding_differential", quoteFreshnessBudgetMs: 2_000 });
+    for (const leg of input.legs) leg.fundingSourceExpiresAtMs = NOW + 120_000;
+    const result = evaluateOpportunity(input);
+    expect(result.status).toBe("actionable");
+    // Quotes and health are 100 ms old, so the books have 1.9 s left: far short of the strategy's 30 s.
+    expect(Date.parse(result.expiresAt)).toBe(NOW + 1_900);
+    input.legs[1]!.quote!.ageMs = 2_500;
+    expect(evaluateOpportunity(input).rejectionReasons).toContain("STALE_INPUT");
+  });
+
+  it("never stretches a price-spread result past its TTL for a looser book budget", () => {
+    const input = candidate({ quoteFreshnessBudgetMs: 5_000 });
+    for (const leg of input.legs) leg.fundingSourceExpiresAtMs = NOW + 120_000;
+    expect(Date.parse(evaluateOpportunity(input).expiresAt)).toBe(NOW + 1_900);
+    input.legs[1]!.quote!.ageMs = 3_000;
+    expect(evaluateOpportunity(input).rejectionReasons).toContain("STALE_INPUT");
+  });
+
   it("rejects a funding-sensitive candidate without every source expiry", () => {
     const input = candidate();
     input.legs[1]!.fundingSourceExpiresAtMs = undefined;

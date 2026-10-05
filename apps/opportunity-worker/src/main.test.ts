@@ -47,13 +47,13 @@ const policy = { runtime: "development" as const, now: () => NOW, debounceMs: 0,
   feesBpsByVenue: { venue_a: "3", venue_b: "3" }, slippageBpsByVenue: { venue_a: "2", venue_b: "2" },
   financingBps: "0", gasAndTransferBps: "0", fxConversionBps: "0", uncertaintyBufferBps: "0" };
 
-async function publishEligibleInputs(bus: InMemoryEventBus) {
+async function publishEligibleInputs(bus: InMemoryEventBus, { fundingBudgetMs = 2_000 } = {}) {
   for (const [venue, id] of [["venue_a", "ins_a"], ["venue_b", "ins_b"]] as const) {
     await bus.publish("venue.health.v1", venue, { venue, connectionState: "connected", lastEventAgeMs: 10,
       clockSkewMs: 0, sequenceIntegrity: "consistent", rateLimit: { state: "healthy" }, capabilityChanges: [], errorCounters: {} } as never);
     await bus.publish("funding.observation.v1", id, {
       eventId: `evt_funding_${venue}`, schemaVersion: 1, venue, instrumentId: id, transport: "websocket",
-      sourceTimestamp: NOW - 10, receivedTimestamp: NOW - 5, freshnessBudgetMs: 2_000, qualityFlags: [],
+      sourceTimestamp: NOW - 10, receivedTimestamp: NOW - 5, freshnessBudgetMs: fundingBudgetMs, qualityFlags: [],
       rawPayloadRefOrHash: "sha256:funding", eligibility: "live", payload: { kind: "funding", rateType: "predicted",
         rate: "0.0001", positiveRatePayer: "long", intervalMs: 28_800_000, nextSettlementMs: NOW + 1_000 },
     } as never);
@@ -723,6 +723,20 @@ describe("opportunity worker", () => {
     expect(spread).toMatchObject({ status: "actionable", buy: { venue: "venue_a", averagePrice: "100" }, sell: { venue: "venue_b", averagePrice: "125" },
       costsBps: "10", requestedNotionalUsd: "1000", evaluatedAtMs: NOW, rejectionReasons: [] });
     expect(snapshot.pairs.find(item => item.strategy === "perp_spread" && item.buy.instrumentId === "ins_b")).toMatchObject({ status: "rejected" });
+    await worker.stop();
+  });
+
+  it("keeps a funding result no longer than its books' own freshness budget", async () => {
+    const bus = new InMemoryEventBus();
+    const published: Array<{ strategy: string; status: string; expiresAt: string }> = [];
+    await bus.subscribe("opportunity.v1", "assert", async event => { published.push(event as never); });
+    const worker = await startOpportunityWorker(bus, reviewedRegistry(), policy);
+    // Funding is valid for two minutes and the books for 2 seconds; the books were read 50 ms ago.
+    await publishEligibleInputs(bus, { fundingBudgetMs: 120_000 });
+    await worker.flush();
+    const funding = published.filter(item => item.strategy === "funding_differential" && item.status === "actionable");
+    expect(funding.length).toBeGreaterThan(0);
+    for (const item of funding) expect(Date.parse(item.expiresAt)).toBeLessThanOrEqual(NOW - 50 + 2_000);
     await worker.stop();
   });
 
