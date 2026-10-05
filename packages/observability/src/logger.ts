@@ -10,6 +10,16 @@ function redactString(value: string, secrets: readonly string[]): string {
   return result;
 }
 
+/** The passwords inside connection URLs (`redis://:password@redis:6379`), for a logger's or tracer's secrets. */
+export function connectionSecrets(...urls: readonly (string | undefined)[]): string[] {
+  return urls.flatMap(url => {
+    try {
+      const password = url ? decodeURIComponent(new URL(url).password) : "";
+      return password ? [password] : [];
+    } catch { return []; }
+  });
+}
+
 /** Clone telemetry input while removing secret-bearing keys and configured values.
  * It is deliberately safe for Errors, arrays and cyclic diagnostic objects. */
 export function redactTelemetry(value: unknown, secrets: readonly string[] = []): unknown {

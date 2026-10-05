@@ -51,7 +51,7 @@ services:
       "--kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092",
       "--advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092",
       --rpc-addr=0.0.0.0:33145, --advertise-rpc-addr=redpanda:33145]
-    ports: ["127.0.0.1:19092:19092", "127.0.0.1:19644:9644"]
+    # No host port: compose.dev.yaml publishes the external listener for code running on the host.
     volumes: [redpanda-data:/var/lib/redpanda/data]
     healthcheck:
       test: [CMD, rpk, cluster, health, --exit-when-healthy, -X, brokers=localhost:9092]
@@ -91,8 +91,14 @@ services:
     # append-only file in a loop, as it did on 2026-10-04. The rest of the limit is for the fork that rewrites that file.
     # RDB snapshots are off: the append-only file is what a restart reloads, and a snapshot forked as often as every
     # minute under load, briefly adding hundreds of MB.
-    command: [redis-server, --appendonly, "yes", --save, "", --maxmemory, 768mb, --maxmemory-policy, noeviction]
-    ports: ["127.0.0.1:6379:6379"]
+    # It needs a password, since every process on a shared host can reach it, and it publishes no host port
+    # (compose.dev.yaml adds one). The password goes into a config file only the redis user can read, never onto a
+    # command line that `ps` shows. The image's entrypoint then starts redis-server as that user. redis-cli reads
+    # REDISCLI_AUTH, so the healthcheck and `docker exec range-redis-1 redis-cli` sign in by themselves.
+    command: [sh, -c, 'umask 077 && printf "requirepass %s\n" "$$REDISCLI_AUTH" > /tmp/auth.conf && chown redis:redis /tmp/auth.conf &&
+      exec docker-entrypoint.sh redis-server /tmp/auth.conf --appendonly yes --save "" --maxmemory 768mb --maxmemory-policy noeviction']
+    environment:
+      REDISCLI_AUTH: ${RANGE_REDIS_PASSWORD:?set RANGE_REDIS_PASSWORD to 32-256 characters of A-Z, a-z, 0-9, _ and -}
     volumes: [redis-data:/data]
     healthcheck: { test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 10 }
     deploy:
@@ -133,7 +139,7 @@ services:
     restart: unless-stopped
     command: [server, /data, --console-address, ":9001"]
     environment: { MINIO_ROOT_USER: range-local, MINIO_ROOT_PASSWORD: "${RANGE_MINIO_PASSWORD:-range-local-only}" }
-    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    # No host ports: compose.dev.yaml publishes them.
     volumes: [minio-data:/data]
     healthcheck: { test: [CMD, curl, -f, http://localhost:9000/minio/health/live], interval: 5s, timeout: 3s, retries: 12, start_period: 10s }
     deploy:
@@ -147,7 +153,7 @@ services:
     restart: unless-stopped
     command: [--config=/etc/otelcol-contrib/config.yaml]
     volumes: [./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro]
-    ports: ["127.0.0.1:4318:4318", "127.0.0.1:13133:13133"]
+    # No host ports: services send to otel-collector:4318 on the compose network; compose.dev.yaml publishes them.
     healthcheck: { test: [CMD, /otelcol-contrib, --version], interval: 10s, timeout: 3s, retries: 5 }
     deploy:
       resources:
@@ -255,7 +261,7 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://range:${RANGE_POSTGRES_PASSWORD:-range-local-only}@postgres:5432/range
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${RANGE_REDIS_PASSWORD}@redis:6379
       REDPANDA_BROKERS: redpanda:9092
       RANGE_MAPPING_CONFIG: /app/config/instrument-mappings.json
       # Taker fees of the reviewed pairs: Bitget stock perps 0.06%; trade.xyz standard 0.09% (growth mode, when on, is lower).
@@ -287,7 +293,7 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://range:${RANGE_POSTGRES_PASSWORD:-range-local-only}@postgres:5432/range
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${RANGE_REDIS_PASSWORD}@redis:6379
       REDPANDA_BROKERS: redpanda:9092
       RANGE_API_TOKEN_PEPPER: ${RANGE_API_TOKEN_PEPPER:?set RANGE_API_TOKEN_PEPPER to at least 32 characters}
       RANGE_DEMO_API_TOKEN: ${RANGE_DEMO_API_TOKEN:?set RANGE_DEMO_API_TOKEN to 32-256 characters of A-Z, a-z, 0-9, _ and -}

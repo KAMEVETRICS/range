@@ -5,7 +5,7 @@ import { Redis } from "ioredis";
 import pg from "pg";
 import { RedpandaEventBus, type Topic, type TopicPayload } from "@range/event-bus";
 import { InstrumentRegistry, SeedConfigSchema } from "@range/instruments";
-import { createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@range/observability";
+import { connectionSecrets, createOtlpHttpTraceSink, createTelemetry, instrumentEventBus } from "@range/observability";
 import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, startPersistentOpportunityWorker,
   type RedisCommands, type SqlPool } from "@range/storage";
 import { checkWorkerHealth } from "./health.js";
@@ -25,7 +25,7 @@ async function main() {
   if (!databaseUrl || !redisUrl || !brokers.length) throw new Error("DATABASE_URL, REDIS_URL, and REDPANDA_BROKERS are required");
   const sql = new pg.Pool({ connectionString: databaseUrl, max: 10, connectionTimeoutMillis: 5_000 }) as unknown as SqlPool & { end(): Promise<void> };
   const redis = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { connect(): Promise<void>; disconnect(): void; ping(): Promise<string> };
-  const telemetry = createTelemetry({ service: "opportunity-worker",
+  const telemetry = createTelemetry({ service: "opportunity-worker", secrets: connectionSecrets(redisUrl, databaseUrl),
     traceSink: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(process.env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const transport = new RedpandaEventBus({ clientId: "range-opportunity-worker", brokers });
   const bus = instrumentEventBus(transport, telemetry);
