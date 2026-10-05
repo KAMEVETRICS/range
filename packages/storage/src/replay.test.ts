@@ -117,9 +117,10 @@ describe("deterministic replay", () => {
     const together = await new ReplayRunner(testPolicy).run([...original, ...other, checkpoint], "calc.v1");
     const expiry = (opportunities: typeof together.opportunities) => Date.parse(opportunities.find(
       item => item.underlyingId === "equity:OTHER" && item.strategy === "perp_spread")!.expiresAt);
-    // A quoted opportunity lives until its oldest book is 2 s old; these books were sourced at `at`.
-    expect(expiry(alone.opportunities)).toBe(at + 2_000);
-    expect(expiry(together.opportunities)).toBe(at + 2_000);
+    // A quoted opportunity lives until its books reach the tighter of their budgets, 1 s here (the strategy's TTL is 2 s);
+    // these books were sourced at `at`.
+    expect(expiry(alone.opportunities)).toBe(at + 1_000);
+    expect(expiry(together.opportunities)).toBe(at + 1_000);
   });
 
   it("advances due timers to the --to bound without flushing future work", async () => {
@@ -129,6 +130,6 @@ describe("deterministic replay", () => {
     const full = await new ReplayRunner(testPolicy).run(events, "calc.v1");
     const bounded = await new ReplayRunner(testPolicy).run(events, "calc.v1", { toMs: at + 50 });
     expect(bounded.opportunities).toEqual(full.opportunities);
-    expect(Date.parse(bounded.opportunities.find(item => item.strategy === "perp_spread")!.expiresAt)).toBe(at - 10 + 2_000);
+    expect(Date.parse(bounded.opportunities.find(item => item.strategy === "perp_spread")!.expiresAt)).toBe(at - 10 + 1_000);
   });
 });
