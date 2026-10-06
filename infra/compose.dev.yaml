@@ -1,0 +1,13 @@
+# For local development only. It publishes the broker, Redis, MinIO and the collector on 127.0.0.1, so code running on
+# the host can reach them. compose.yaml publishes none of them, because on a shared host every process could. Use:
+#   docker compose -f infra/compose.yaml -f infra/compose.dev.yaml --env-file ../range.env up -d --build
+# Redis still needs its password from the host: REDIS_URL=redis://:<RANGE_REDIS_PASSWORD>@localhost:6379.
+services:
+  redpanda:
+    ports: ["127.0.0.1:19092:19092", "127.0.0.1:19644:9644"]
+  redis:
+    ports: ["127.0.0.1:6379:6379"]
+  minio:
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+  otel-collector:
+    ports: ["127.0.0.1:4318:4318", "127.0.0.1:13133:13133"]

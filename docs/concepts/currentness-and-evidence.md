@@ -7,7 +7,7 @@ A number is only useful if you know how old it is and can check where it came fr
 Each result has an `expiresAt`:
 
 * **Price spread**: at most **2 seconds** after its oldest quote. The quotes are usually 0.5 to 1.5 seconds old when priced, so a price-spread result is valid for about a second.
-* **Funding differential**: up to **30 seconds**, and never past the freshness of the funding it used.
+* **Funding differential**: its prices come from the same books, so it also ends at most **2 seconds** after its oldest quote, and never past the freshness of the funding it used. The 30-second limit for funding results only applies to books with a longer budget. While the books keep updating, each update issues a new result, so a funding opportunity stays on the board as long as its edge holds.
 
 A result is **current** while it is actionable, unexpired and still the newest result for its pair and direction. A newer evaluation replaces it, often within a second. The scanner lists only current results; the stream sends an invalidation when one stops being current; and inspecting a result that is no longer current returns it as `expired`, for research.
 

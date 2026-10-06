@@ -44,8 +44,9 @@ the next publish or subscription. Do not await publication to the same topic
 from its own handler; use Redpanda for asynchronous pipelines and durable storage.
 
 Local infrastructure: `docker compose -f infra/compose.yaml up -d --wait` from
-the repository root. On hosts, connect to `localhost:19092`; containers connect
-to `redpanda:9092`. The Compose services use public local-only credentials and
+the repository root. Containers connect to `redpanda:9092`. Code on the host
+connects to `localhost:19092` once `-f infra/compose.dev.yaml` publishes it;
+`compose.yaml` alone publishes no broker port. The Compose services use public local-only credentials and
 named volumes. They are a development reference, not a production deployment.
 
 Run `pnpm vitest packages/event-bus --run` with Docker running. The integration

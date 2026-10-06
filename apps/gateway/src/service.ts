@@ -3,7 +3,7 @@ import pg from "pg";
 import { loadConfig } from "@range/config";
 import { IntentService, RangeApplication, SqlIntentStore, StorageQueries, VenueViewSchema } from "@range/application";
 import { CurrentStateStore, HistoryStore, PostgresRevisionAuthority, type RedisCommands, type SqlPool } from "@range/storage";
-import { createTelemetry, createOtlpHttpTraceSink } from "@range/observability";
+import { connectionSecrets, createTelemetry, createOtlpHttpTraceSink } from "@range/observability";
 import { buildServer } from "./server.js";
 import { createGatewayClients } from "./service-config.js";
 
@@ -19,7 +19,8 @@ async function main() {
   const redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false }) as unknown as RedisCommands & { connect(): Promise<void>; disconnect(): void };
   const current = new CurrentStateStore(redis, new PostgresRevisionAuthority(sql));
   const history = new HistoryStore(sql);
-  const telemetry = createTelemetry({ service: "gateway", secrets: [token, dashboardToken, ...(agentToken ? [agentToken] : []), config.apiTokenPepper],
+  const telemetry = createTelemetry({ service: "gateway", secrets: [token, dashboardToken, ...(agentToken ? [agentToken] : []), config.apiTokenPepper,
+    ...connectionSecrets(config.redisUrl, config.databaseUrl)],
     traceSink: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ? createOtlpHttpTraceSink(process.env.OTEL_EXPORTER_OTLP_ENDPOINT) : undefined });
   const application = new RangeApplication(new StorageQueries(current, history, sql, manifest,
     entry => telemetry.logger.info("storage query", entry)));

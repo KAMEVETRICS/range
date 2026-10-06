@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApplicationError, StreamQuerySchema, ResumeIdSchema, type RangeApplication, type RequestContext, type IntentService } from "@range/application";
 import { intentRoutes } from "./routes/intents.js";
@@ -27,8 +27,18 @@ export function buildServer(options: GatewayOptions) {
   }
   const auth = new ClientAuth(options.clients, options.pepper, options.now);
   const requestStartedAt = new WeakMap<object, number>();
+  const clientErrorCode = (status: number) =>
+    ({ 413: "PAYLOAD_TOO_LARGE", 414: "URI_TOO_LONG", 415: "UNSUPPORTED_MEDIA_TYPE" } as Record<number, string>)[status] ?? "INVALID_REQUEST";
   const app = Fastify({ logger: false, genReqId: () => `rng_trace_${randomUUID()}`, requestIdHeader: false,
-    bodyLimit: 16_384, routerOptions: { maxParamLength: 200 } });
+    bodyLimit: 16_384, routerOptions: { maxParamLength: 200 },
+    // The router rejects a malformed or over-long path before any hook runs, and on its own answered in Fastify's
+    // format, echoing the path back; it gets Range's envelope too.
+    frameworkErrors: (error, request, reply) => {
+      const status = error.statusCode ?? 400;
+      // The hook's reply is typed for any route schema; this one only ever sends the error envelope.
+      (reply as unknown as FastifyReply).code(status).header("x-range-trace-id", request.id).header("cache-control", "no-store")
+        .send(options.application.error({ traceId: request.id, clientId: "anonymous" }, clientErrorCode(status)));
+    } });
   app.decorateRequest("rangeContext");
   app.addHook("onRequest", async (request, reply) => {
     requestStartedAt.set(request, Date.now());
@@ -43,10 +53,14 @@ export function buildServer(options: GatewayOptions) {
       duration_ms: Math.max(0, Date.now() - (requestStartedAt.get(request) ?? Date.now())) });
   });
   app.setErrorHandler((error, request, reply) => {
-    const applicationError = error instanceof ApplicationError;
-    const invalid = error instanceof z.ZodError || (error as { statusCode?: number }).statusCode === 400;
-    const code = applicationError ? error.code : invalid ? "INVALID_REQUEST" : "STORAGE_UNAVAILABLE";
-    reply.code(applicationError ? error.statusCode : invalid ? 400 : 503).send(options.application.error(request.rangeContext, code));
+    if (error instanceof ApplicationError) return reply.code(error.statusCode).send(options.application.error(request.rangeContext, error.code));
+    // Fastify's own client errors keep their status: a body over the limit is 413, an unsupported media type 415. Only
+    // 400 used to count, so those answered 503 STORAGE_UNAVAILABLE and read as an outage. Anything else is internal.
+    const status = error instanceof z.ZodError ? 400 : (error as { statusCode?: number }).statusCode;
+    if (status !== undefined && status >= 400 && status < 500) {
+      return reply.code(status).send(options.application.error(request.rangeContext, clientErrorCode(status)));
+    }
+    return reply.code(503).send(options.application.error(request.rangeContext, "STORAGE_UNAVAILABLE"));
   });
   app.setNotFoundHandler((request, reply) => reply.code(404).send(options.application.error(request.rangeContext, "NOT_FOUND")));
   for (const route of routes) app.get(route.path, async (request, reply) => {

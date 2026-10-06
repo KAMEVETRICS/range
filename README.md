@@ -59,7 +59,7 @@ You need Node.js 22 or later (Corepack, bundled with Node, provides pnpm 11) and
 corepack pnpm install
 ```
 
-The gateway needs three secrets. Keep them in a file outside the repository:
+Range needs five secrets: a token pepper, three client tokens and a Redis password. Keep them in a file outside the repository:
 
 ```bash
 cat > ../range.env <<EOF
@@ -67,6 +67,7 @@ RANGE_API_TOKEN_PEPPER=$(openssl rand -hex 32)
 RANGE_DEMO_API_TOKEN=$(openssl rand -hex 32)
 RANGE_DASHBOARD_READ_TOKEN=$(openssl rand -hex 32)
 RANGE_PUBLIC_AGENT_TOKEN=$(openssl rand -hex 32)
+RANGE_REDIS_PASSWORD=$(openssl rand -hex 32)
 EOF
 ```
 
@@ -78,7 +79,7 @@ Start the stack:
 docker compose -f infra/compose.yaml --env-file ../range.env up -d --build
 ```
 
-The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
+The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. Redis, the broker, MinIO and the collector publish no host port, since on a shared host every process could reach them. To use them from code on the host, add `-f infra/compose.dev.yaml`. One example is the stdio MCP server, with `REDIS_URL=redis://:<RANGE_REDIS_PASSWORD>@localhost:6379`. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
 
 The Markets page needs only the connectors. The scanner's pairs appear once both venues' connectors have published listings whose metadata matches the reviewed hashes. If a venue has changed a listing since the review, such as its lot size or trading hours, its pair stays off until the change is reviewed (fail-closed).
 

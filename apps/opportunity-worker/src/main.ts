@@ -237,6 +237,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
       const b = instruments[right]!;
       if (a.venue === b.venue) continue;
       const pair = [a, b] as const;
+      const bookBudgets = pair.flatMap(instrument => books.get(instrument.instrumentId)?.metadata()?.freshnessBudgetMs ?? []);
       const strategies: Strategy[] = a.productType === "perpetual" && b.productType === "perpetual"
         ? ["perp_spread", "funding_differential"]
         : a.productType !== b.productType ? ["spot_perp_basis"] : [];
@@ -295,6 +296,7 @@ export async function startOpportunityWorker(bus: EventBus, registry: Instrument
           maxClockSkewMs: policy.maxClockSkewMs ?? 500,
           calculationVersion: policy.calculationVersion ?? "calc.v1",
           holdingHorizonMs: policy.holdingHorizonMs,
+          ...(bookBudgets.length ? { quoteFreshnessBudgetMs: Math.min(...bookBudgets) } : {}),
           costs: { financingBps: policy.financingBps, gasAndTransferBps: policy.gasAndTransferBps,
             fxConversionBps: policy.fxConversionBps, uncertaintyBufferBps: policy.uncertaintyBufferBps },
           borrow: policy.borrowByInstrument?.[pair.find(item => item.productType === "tokenized_spot")?.instrumentId ?? ""],

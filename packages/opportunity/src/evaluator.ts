@@ -41,6 +41,7 @@ export interface EvaluationInput {
   maxClockSkewMs: number;
   calculationVersion: string;
   holdingHorizonMs: number;
+  /** The books' own freshness budget. The tighter of it and the strategy's TTL bounds every quote's age and the result's life. */
   quoteFreshnessBudgetMs?: number;
   costs: {
     financingBps?: string;
@@ -89,7 +90,9 @@ export function evaluateOpportunityWithEvidence(input: EvaluationInput) {
   const sells = input.legs.filter(leg => leg.side === "sell");
   if (buys.length !== 1 || sells.length !== 1) reasons.add("UNKNOWN_INSTRUMENT_EQUIVALENCE");
 
-  const budget = input.quoteFreshnessBudgetMs ?? TTL[input.strategy];
+  // A funding result's TTL is 30 seconds, but its prices are only as fresh as its books, which go stale in 2: on the TTL
+  // alone it stayed actionable on books 28 seconds past their budget.
+  const budget = Math.min(TTL[input.strategy], input.quoteFreshnessBudgetMs ?? Number.POSITIVE_INFINITY);
   const cleanQuotes = input.legs.map(leg => ExecutableQuoteSchema.safeParse(leg.quote));
   const quoteValues = cleanQuotes.map(result => result.success ? result.data : undefined);
   const ageValues: number[] = [];

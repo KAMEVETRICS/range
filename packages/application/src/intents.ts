@@ -37,6 +37,15 @@ function fillAtQuantity(book: OrderBook, side: "buy" | "sell", quantity: Instanc
   return { notional: filledNotional, averagePrice: filledNotional.div(quantity).toFixed() };
 }
 
+/** The smallest quantity that is a whole number of both steps: their least common multiple. */
+function commonStep(left: InstanceType<typeof Exact>, right: InstanceType<typeof Exact>) {
+  const scale = new Exact(10).pow(Math.max(left.decimalPlaces(), right.decimalPlaces()));
+  let a = left.times(scale), b = right.times(scale);
+  const product = a.times(b);
+  while (!b.isZero()) [a, b] = [b, a.mod(b)];
+  return product.div(a).div(scale);
+}
+
 /** One INSERT persists the immutable intent and caller audit together. Scoped,
  * hashed keys fit the existing global PK without exposing client credentials. */
 export class SqlIntentStore {
@@ -95,8 +104,7 @@ export class IntentService {
     const sourceFingerprints: unknown[] = [];
     const notional = Exact.min(input.requestedNotionalUsd, opportunity.capacityUsd).toFixed();
     let fundingBps = new Exact(0);
-    const prices: { side: string; price: string }[] = [];
-    const legs = opportunity.legs.map(leg => {
+    const checked = opportunity.legs.map(leg => {
       const instrument = instruments.find(item => item.instrumentId === leg.instrumentId);
       const member = members.find(item => item.instrumentId === leg.instrumentId);
       if (!instrument || (instrument.underlyingId !== opportunity.underlyingId && instrument.underlyingId !== member?.underlyingId) ||
@@ -134,16 +142,8 @@ export class IntentService {
       if (quote.status !== "executable" && quote.status !== "partial_fill") fail("INSUFFICIENT_DEPTH");
       if (new Exact(notional).gt(leg.executableQuote.capacityUsd)) fail("INSUFFICIENT_DEPTH");
       const best = book.levels(leg.side)[0].price;
-      const maximumPrice = Exact.max(best, quote.worstPrice);
       // Even a fill at the least favorable allowed price stays inside the cap.
-      const boundedQuantity = Exact.min(quote.filledQuantity, new Exact(notional).div(maximumPrice));
-      const quantity = boundedQuantity.div(instrument.contractMultiplier).div(instrument.lotSize).floor().times(instrument.lotSize);
-      if (quantity.lte(0)) fail("INSUFFICIENT_DEPTH");
-      const baseQuantity = quantity.times(instrument.contractMultiplier);
-      const filled = fillAtQuantity(book, leg.side, baseQuantity);
-      if (baseQuantity.times(Exact.min(best, quote.worstPrice)).lt(instrument.minimumNotional) ||
-          filled.notional.lt(instrument.minimumNotional)) fail("INSUFFICIENT_DEPTH");
-      prices.push({ side: leg.side, price: filled.averagePrice });
+      const bounded = Exact.min(quote.filledQuantity, new Exact(notional).div(Exact.max(best, quote.worstPrice)));
       if (instrument.productType === "perpetual") {
         if (!venue.capabilities.some(capability => ["funding", "funding_current", "funding_predicted"].includes(capability))) fail("CAPABILITY_WITHDRAWN");
         const funding = used.filter(item => item.payload.kind === "funding").map(item => normalizeFunding(item, now));
@@ -153,7 +153,21 @@ export class IntentService {
         if (projected.status === "projected") fundingBps = fundingBps.plus(projected.expectedCashflowBps);
         deadline = Math.min(deadline, projected.nextSettlementMs);
       }
-      return { legId: leg.legId, instrumentId: leg.instrumentId, side: leg.side, quantity: quantity.toFixed(),
+      return { leg, instrument, book, quote, best, bounded, step: new Exact(instrument.lotSize).times(instrument.contractMultiplier) };
+    });
+    // Both legs trade the same number of shares, or the pair leaves a directional position: sized separately, $1,200
+    // bought 12 at $100 and sold 11.76 at $102. The shares are the smaller leg's size, rounded down to a step that is a
+    // whole number of lots on both venues.
+    const step = checked.map(item => item.step).reduce(commonStep);
+    const shares = Exact.min(...checked.map(item => item.bounded)).div(step).floor().times(step);
+    if (shares.lte(0)) fail("INSUFFICIENT_DEPTH");
+    const prices: { side: string; price: string }[] = [];
+    const legs = checked.map(({ leg, instrument, book, quote, best }) => {
+      const filled = fillAtQuantity(book, leg.side, shares);
+      if (shares.times(Exact.min(best, quote.worstPrice)).lt(instrument.minimumNotional) ||
+          filled.notional.lt(instrument.minimumNotional)) fail("INSUFFICIENT_DEPTH");
+      prices.push({ side: leg.side, price: filled.averagePrice });
+      return { legId: leg.legId, instrumentId: leg.instrumentId, side: leg.side, quantity: shares.div(instrument.contractMultiplier).toFixed(),
         priceBounds: { minimum: Exact.min(best, quote.worstPrice).toFixed(), maximum: Exact.max(best, quote.worstPrice).toFixed() } };
     });
     // As in the evaluator, the books must agree in time; funding updates on its own schedule.
