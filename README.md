@@ -2,6 +2,8 @@
 
 Range is a read-only intelligence service for tokenized-stock and equity-perpetual markets. It watches the same stocks across venues, prices cross-venue spread and funding opportunities against executable order-book depth and explicit costs, and shows the evidence behind every number. It holds no trading keys and never signs or submits orders.
 
+Agents decide what to ask and explain the answer; Range does the arithmetic and keeps the evidence. No language model touches a price, a cost or an expiry (see [Role of the LLM](#role-of-the-llm)).
+
 **Live dashboard:** [range.datatides.xyz](https://range.datatides.xyz), public and read-only. It opens on Markets; the scanner is under Opportunities.
 
 **Docs:** [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/): the quickstart, the API and MCP server for agents, and how Range prices a trade.
@@ -9,6 +11,50 @@ Range is a read-only intelligence service for tokenized-stock and equity-perpetu
 Hackathon focus: Track 1, arbitrage and funding opportunities.
 
 **Live run records:** [records/2026-10-02-live](records/2026-10-02-live): every actionable result from eight hours of production, with the queries that produced them.
+
+**Tests:** about 600 unit tests, plus Playwright tests for the dashboard. See [For developers](#for-developers).
+
+## Use it without installing anything
+
+The public deployment is read-only and needs no key or account.
+
+**Dashboard.** At [range.datatides.xyz](https://range.datatides.xyz), Markets compares prices and funding across 12 venues. Opportunities shows each reviewed pair's latest result; open one to see the order-book updates behind it.
+
+**API.** Every reviewed pair's latest evaluation, in both directions and for both strategies, with its net edge, costs and rejection reasons:
+
+```bash
+curl -s https://range.datatides.xyz/v1/pairs
+```
+
+**MCP.** Connect your AI assistant, then ask it whether anything between Bitget and trade.xyz is worth trading after costs:
+
+```bash
+claude mcp add --transport http range https://range.datatides.xyz/mcp                # Claude Code
+codex mcp add range --url https://range.datatides.xyz/mcp                            # Codex
+grok mcp add range https://range.datatides.xyz/mcp                                   # Grok Build
+gemini mcp add --scope user --transport http range https://range.datatides.xyz/mcp   # Gemini CLI
+```
+
+Cursor, VS Code, Windsurf, Claude Desktop and any other MCP client: see [`docs/agents/mcp.md`](docs/agents/mcp.md).
+
+## What we found
+
+Observed over eight hours of production, 22:00 to 06:00 UTC on 1 to 2 October 2026, at $2,500 per leg ([records](records/2026-10-02-live)):
+
+- A Bitget and trade.xyz pair was actionable after costs in 7,904 of the 28,800 seconds (27%), and in 440 of the 480 minutes. All ten stocks were actionable at some point.
+- The edge is thin. The median net edge when actionable was 0.36 to 1.71 bps, depending on the stock and strategy, after about 8.9 bps of entry costs (17 bps on MSTR). The highest was 9.62 bps, on MSTR.
+- Fees decide most results. In the 3.9 days before Range priced trade.xyz at its live taker fee instead of a flat 9 bps, it found actionable results in only 159 seconds.
+- Opportunities are brief. A price-spread result is valid for at most 2 seconds from its oldest quote, a funding result for up to 30.
+
+Why trade.xyz is Bitget's counterpart, observed every 30 seconds over 24 hours on 5 to 6 October ([records](records/2026-10-06-counterparts)):
+
+| Counterpart | Its own spread, median | Mid-price gap to Bitget, median | Samples where buying there and selling Bitget cleared costs |
+| --- | ---: | ---: | ---: |
+| trade.xyz | 1.1 bps | 6.4 bps | 1.9% |
+| Binance bStocks | 3.7 bps | 7.5 bps | 0.0% |
+| Kraken xStocks | 4.1 bps | 9.0 bps | 0.1% |
+
+That comparison counts price gaps only, without funding, on a different day, so its rate doesn't compare with the 27% above.
 
 ## What it does
 
@@ -40,6 +86,24 @@ flowchart LR
 4. **The gateway** serves one application layer over REST, SSE and MCP, with scoped bearer tokens and per-operation rate limits.
 5. **The dashboard** is a React app behind nginx, which adds a read-only token to API calls so the browser never holds one.
 
+## How it uses Bitget
+
+Bitget is Range's primary venue: every reviewed pair has a Bitget leg, and Bitget comes first on the Markets page.
+
+- **Market data.** The connector reads Bitget's public UTA v3 market API, the same API Bitget's Agent Hub wraps. It loads instruments, tickers and order books over REST (`/api/v3/market/...`) and streams order books and tickers over the public WebSocket. No key is needed.
+- **Refresh rates.** Books for the ten reviewed stock perpetuals refresh every 500 ms, inside the evaluator's 2-second quote budget. Other Bitget data refreshes every 10 seconds, and only for the roughly 220 stocks another venue also lists.
+- **Listings.** Bitget's listing flags (`symbolType=stock`, `isRwa`, `isReality`) mark its tokenized-stock listings. Each reviewed pair is pinned to a hash of both listings' specs, such as lot size and trading hours, and only listings that match it can form the pair.
+- **Funding.** Bitget's current rate and next settlement time come from its tickers and are priced settlement by settlement over a one-hour hold.
+- **Costs.** Bitget's 6 bps taker fee, plus Range's 1 bp slippage buffer per leg.
+
+Not used yet: Agent Hub, Bitget's US-stock MCP server, Playbook and Qwen.
+
+## Role of the LLM
+
+Range runs no language model, and none of its numbers come from one. Fills, fees, funding, net edge and expiry are computed in exact decimal arithmetic by deterministic, tested code. Every result names the venue updates behind it, so the same inputs always give the same answer.
+
+Language models come in as clients. An agent connects to Range's MCP server, decides what to ask, calls its eight tools and explains the result, quoting the evidence. The public server refuses the two intent tools, and nothing in Range signs or submits an order. Claude Code and Grok Build have both been checked against the live server.
+
 ## Venues
 
 | Venue | Role |
@@ -51,65 +115,9 @@ flowchart LR
 
 The review behind the ten pairs, including the differences it accepted, is in [`docs/reviews/2026-09-30-bitget-hyperliquid.md`](docs/reviews/2026-09-30-bitget-hyperliquid.md). [`docs/operations/venue-enablement.md`](docs/operations/venue-enablement.md) describes how another venue or pair becomes executable.
 
-## Running it
-
-You need Node.js 22 or later (Corepack, bundled with Node, provides pnpm 11) and Docker with Compose.
-
-```bash
-corepack pnpm install
-```
-
-Range needs five secrets: a token pepper, three client tokens and a Redis password. Keep them in a file outside the repository:
-
-```bash
-cat > ../range.env <<EOF
-RANGE_API_TOKEN_PEPPER=$(openssl rand -hex 32)
-RANGE_DEMO_API_TOKEN=$(openssl rand -hex 32)
-RANGE_DASHBOARD_READ_TOKEN=$(openssl rand -hex 32)
-RANGE_PUBLIC_AGENT_TOKEN=$(openssl rand -hex 32)
-RANGE_REDIS_PASSWORD=$(openssl rand -hex 32)
-EOF
-```
-
-Tokens must be 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. The demo token is for operators and can create intents; the dashboard token is read-only. Database passwords fall back to development-only values; set `RANGE_POSTGRES_PASSWORD` on any shared or internet-facing host. [`docs/operations/credentials.md`](docs/operations/credentials.md) lists every credential, including the optional read-only `EXTENDED_API_KEY`.
-
-Start the stack:
-
-```bash
-docker compose -f infra/compose.yaml --env-file ../range.env up -d --build
-```
-
-The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. Redis, the broker, MinIO and the collector publish no host port, since on a shared host every process could reach them. To use them from code on the host, add `-f infra/compose.dev.yaml`. One example is the stdio MCP server, with `REDIS_URL=redis://:<RANGE_REDIS_PASSWORD>@localhost:6379`. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
-
-The Markets page needs only the connectors. The scanner's pairs appear once both venues' connectors have published listings whose metadata matches the reviewed hashes. If a venue has changed a listing since the review, such as its lot size or trading hours, its pair stays off until the change is reviewed (fail-closed).
-
-## Tests
-
-```bash
-corepack pnpm test:unit
-corepack pnpm typecheck
-corepack pnpm lint
-corepack pnpm --filter @range/gateway openapi:check
-corepack pnpm test:e2e
-```
-
-- `test:unit` runs Vitest. Its Redpanda integration test starts a container, so it needs Docker and fails without it by design.
-- Four tests are skipped unless enabled: two need a real Postgres (`RANGE_TEST_DATABASE_URL`) and two probe live venues (`RUN_LIVE_EXTENDED_PROBE=1`, `RUN_LIVE_HYPERLIQUID_PROBE=1`).
-- `test:e2e` runs the Playwright dashboard tests against mocked API responses, in the installed Google Chrome.
-- `scripts/verify-demo.ts` checks eight release invariants against a running deployment. [`docs/operations/demo.md`](docs/operations/demo.md) lists what it needs and why it does not pass yet.
-
 ## API and MCP
 
-The public deployment is open to agents and scripts without a key: REST at `https://range.datatides.xyz/v1`, an MCP server at `https://range.datatides.xyz/mcp`, the OpenAPI document at [`/openapi.json`](https://range.datatides.xyz/openapi.json) and an index for language models at [`/llms.txt`](https://range.datatides.xyz/llms.txt). Start with [Range for agents](https://range-2.gitbook.io/range-docs/for-agents/agents); the full documentation is at [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/), published from [`docs/`](docs/README.md).
-
-```bash
-claude mcp add --transport http range https://range.datatides.xyz/mcp                # Claude Code
-codex mcp add range --url https://range.datatides.xyz/mcp                            # Codex
-grok mcp add range https://range.datatides.xyz/mcp                                   # Grok Build
-gemini mcp add --scope user --transport http range https://range.datatides.xyz/mcp   # Gemini CLI
-```
-
-Cursor, VS Code, Windsurf, Claude Desktop and any other MCP client: see [`docs/agents/mcp.md`](docs/agents/mcp.md).
+The public deployment is open to agents and scripts without a key: REST at `https://range.datatides.xyz/v1`, an MCP server at `https://range.datatides.xyz/mcp`, the OpenAPI document at [`/openapi.json`](https://range.datatides.xyz/openapi.json) and an index for language models at [`/llms.txt`](https://range.datatides.xyz/llms.txt). Start with [Range for agents](https://range-2.gitbook.io/range-docs/for-agents/agents); the full documentation is at [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/), published from [`docs/`](docs/README.md). To connect an AI assistant, see [Use it without installing anything](#use-it-without-installing-anything).
 
 A self-hosted gateway needs a bearer token on every route. Reads need `market:read` or `opportunity:read`; intents need `intent:create`.
 
@@ -141,7 +149,56 @@ The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The M
 - Costs decide most results. Bitget charges a 6 bps taker fee. trade.xyz is charged each market's live taker fee, read every minute: 0.9 bps for the nine stocks in its growth mode and 9 bps for MSTR. With a 1 bp slippage buffer per leg, most pairs cost about 9 bps to trade, close to the spreads usually on offer; results that fall short are published as rejected, with their reasons.
 - Financing, transfer, currency-conversion and uncertainty costs exist in the cost model but are set to zero. The pairs settle in different stablecoins (USDT on Bitget, USDC on trade.xyz) and handle splits and dividends differently. The review describes each difference.
 
-## Repository layout
+## For developers
+
+### Running it
+
+You need Node.js 22 or later (Corepack, bundled with Node, provides pnpm 11) and Docker with Compose.
+
+```bash
+corepack pnpm install
+```
+
+Range needs five secrets: a token pepper, three client tokens and a Redis password. Keep them in a file outside the repository:
+
+```bash
+cat > ../range.env <<EOF
+RANGE_API_TOKEN_PEPPER=$(openssl rand -hex 32)
+RANGE_DEMO_API_TOKEN=$(openssl rand -hex 32)
+RANGE_DASHBOARD_READ_TOKEN=$(openssl rand -hex 32)
+RANGE_PUBLIC_AGENT_TOKEN=$(openssl rand -hex 32)
+RANGE_REDIS_PASSWORD=$(openssl rand -hex 32)
+EOF
+```
+
+Tokens must be 32 to 256 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. The demo token is for operators and can create intents; the dashboard token is read-only. Database passwords fall back to development-only values; set `RANGE_POSTGRES_PASSWORD` on any shared or internet-facing host. [`docs/operations/credentials.md`](docs/operations/credentials.md) lists every credential, including the optional read-only `EXTENDED_API_KEY`.
+
+Start the stack:
+
+```bash
+docker compose -f infra/compose.yaml --env-file ../range.env up -d --build
+```
+
+The dashboard is at http://127.0.0.1:4173 and the API at http://127.0.0.1:8080; every port binds to 127.0.0.1 only. Redis, the broker, MinIO and the collector publish no host port, since on a shared host every process could reach them. To use them from code on the host, add `-f infra/compose.dev.yaml`. One example is the stdio MCP server, with `REDIS_URL=redis://:<RANGE_REDIS_PASSWORD>@localhost:6379`. [`docs/operations/runbook.md`](docs/operations/runbook.md) covers operations, the public dashboard setup, and disk guards.
+
+The Markets page needs only the connectors. The scanner's pairs appear once both venues' connectors have published listings whose metadata matches the reviewed hashes. If a venue has changed a listing since the review, such as its lot size or trading hours, its pair stays off until the change is reviewed (fail-closed).
+
+### Tests
+
+```bash
+corepack pnpm test:unit
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm --filter @range/gateway openapi:check
+corepack pnpm test:e2e
+```
+
+- `test:unit` runs Vitest. Its Redpanda integration test starts a container, so it needs Docker and fails without it by design.
+- Four tests are skipped unless enabled: two need a real Postgres (`RANGE_TEST_DATABASE_URL`) and two probe live venues (`RUN_LIVE_EXTENDED_PROBE=1`, `RUN_LIVE_HYPERLIQUID_PROBE=1`).
+- `test:e2e` runs the Playwright dashboard tests against mocked API responses, in the installed Google Chrome.
+- `scripts/verify-demo.ts` checks eight release invariants against a running deployment. [`docs/operations/demo.md`](docs/operations/demo.md) lists what it needs and why it does not pass yet.
+
+### Repository layout
 
 | Path | Contents |
 | --- | --- |
@@ -162,6 +219,7 @@ The full spec is [`apps/gateway/openapi.json`](apps/gateway/openapi.json). The M
 | `infra` | Dockerfile, Compose stack, nginx, disk guard, systemd units |
 | `scripts` | Mapping tools, replay, release verifier |
 | `tests` | Venue contract tests and end-to-end tests |
+| `records` | Exported live results and research data, with the queries and scripts behind them |
 | `docs` | The documentation site: guides, API, design, operations, reviews |
 
 ## Documentation
@@ -174,3 +232,7 @@ The documentation site, [range-2.gitbook.io/range-docs](https://range-2.gitbook.
 - [Credentials](docs/operations/credentials.md)
 - [Venue enablement](docs/operations/venue-enablement.md)
 - [Bitget and trade.xyz review](docs/reviews/2026-09-30-bitget-hyperliquid.md)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
