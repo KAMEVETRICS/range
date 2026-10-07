@@ -6,7 +6,7 @@ Range gives an agent cost-aware, evidence-backed answers about Bitget and trade.
 
 | | Endpoint | Best for |
 | --- | --- | --- |
-| MCP | `https://range.datatides.xyz/mcp` (Streamable HTTP) | Agents in Claude, Cursor, VS Code and other MCP clients. See [MCP server](mcp.md) |
+| MCP | `https://range.datatides.xyz/mcp` (Streamable HTTP) | Agents in Claude Code, Codex, Grok Build, Gemini CLI, Cursor, VS Code and any other MCP client. See [MCP server](mcp.md) |
 | REST | `https://range.datatides.xyz/v1` | Scripts, bots and agents with an HTTP tool. See [API overview](../api/README.md) |
 
 Both are public, read-only and need no key. Both return the same envelope with the same evidence. For a language model, [`/llms.txt`](https://range.datatides.xyz/llms.txt) indexes these docs and [`/openapi.json`](https://range.datatides.xyz/openapi.json) describes every operation.

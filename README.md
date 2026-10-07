@@ -103,8 +103,13 @@ corepack pnpm test:e2e
 The public deployment is open to agents and scripts without a key: REST at `https://range.datatides.xyz/v1`, an MCP server at `https://range.datatides.xyz/mcp`, the OpenAPI document at [`/openapi.json`](https://range.datatides.xyz/openapi.json) and an index for language models at [`/llms.txt`](https://range.datatides.xyz/llms.txt). Start with [Range for agents](https://range-2.gitbook.io/range-docs/for-agents/agents); the full documentation is at [range-2.gitbook.io/range-docs](https://range-2.gitbook.io/range-docs/), published from [`docs/`](docs/README.md).
 
 ```bash
-claude mcp add --transport http range https://range.datatides.xyz/mcp
+claude mcp add --transport http range https://range.datatides.xyz/mcp                # Claude Code
+codex mcp add range --url https://range.datatides.xyz/mcp                            # Codex
+grok mcp add range https://range.datatides.xyz/mcp                                   # Grok Build
+gemini mcp add --scope user --transport http range https://range.datatides.xyz/mcp   # Gemini CLI
 ```
+
+Cursor, VS Code, Windsurf, Claude Desktop and any other MCP client: see [`docs/agents/mcp.md`](docs/agents/mcp.md).
 
 A self-hosted gateway needs a bearer token on every route. Reads need `market:read` or `opportunity:read`; intents need `intent:create`.
 

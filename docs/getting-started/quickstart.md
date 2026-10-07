@@ -42,13 +42,18 @@ Every response is the same envelope: `status`, `as_of`, `freshness`, `result`, `
 
 ## 3. Connect an AI agent
 
-Range's MCP server is public at `https://range.datatides.xyz/mcp`. In Claude Code:
+Range's MCP server is public at `https://range.datatides.xyz/mcp` and needs no key. Run the line for your assistant:
 
 ```bash
-claude mcp add --transport http range https://range.datatides.xyz/mcp
+claude mcp add --transport http range https://range.datatides.xyz/mcp                # Claude Code
+codex mcp add range --url https://range.datatides.xyz/mcp                            # Codex
+grok mcp add range https://range.datatides.xyz/mcp                                   # Grok Build
+gemini mcp add --scope user --transport http range https://range.datatides.xyz/mcp   # Gemini CLI
 ```
 
-Then ask something like "Is anything between Bitget and trade.xyz worth trading after costs right now? Show me the evidence." The agent calls `scan_opportunities`, `compare_funding` and `inspect_opportunity`; Range does the arithmetic. Other clients are covered in [MCP server](../agents/mcp.md).
+Cursor, VS Code, Windsurf, Claude Desktop and any other MCP client are covered in [MCP server](../agents/mcp.md).
+
+Then ask something like "Is anything between Bitget and trade.xyz worth trading after costs right now? Show me the evidence." The agent calls `scan_opportunities`, `compare_funding` and `inspect_opportunity`; Range does the arithmetic.
 
 ## Next
 
