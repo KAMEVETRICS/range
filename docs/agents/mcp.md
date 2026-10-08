@@ -6,35 +6,98 @@ Range's MCP server is public at:
 https://range.datatides.xyz/mcp
 ```
 
-It speaks Streamable HTTP with JSON responses and keeps no session state. It is read-only and needs no key.
+It speaks Streamable HTTP, answers each request with a single Server-Sent Event, and keeps no session state. It is read-only and needs no key.
 
 ## Connect
 
-**Claude Code**
+Every client needs the same three settings:
+
+| Setting | Value |
+| --- | --- |
+| URL | `https://range.datatides.xyz/mcp` |
+| Transport | Streamable HTTP, which most clients call `http` |
+| Authentication | None |
+
+### Claude Code
 
 ```bash
 claude mcp add --transport http range https://range.datatides.xyz/mcp
 ```
 
-**Claude Desktop and claude.ai**: add a custom connector with the URL `https://range.datatides.xyz/mcp` under Settings, Connectors, where your plan offers custom connectors.
+Add `--scope project` to write a `.mcp.json` you can commit for your team.
 
-**Cursor**: in `~/.cursor/mcp.json`:
+### Codex
+
+```bash
+codex mcp add range --url https://range.datatides.xyz/mcp
+```
+
+Or add it to `~/.codex/config.toml`, which the Codex CLI, the Codex IDE extension and Codex in the ChatGPT desktop app share:
+
+```toml
+[mcp_servers.range]
+url = "https://range.datatides.xyz/mcp"
+```
+
+### Grok Build
+
+```bash
+grok mcp add range https://range.datatides.xyz/mcp
+```
+
+This writes `~/.grok/config.toml`; `--scope project` writes `./.grok/config.toml` instead. Grok Build also loads servers from Claude Code's configuration (`~/.claude.json` and `.mcp.json`). `grok mcp doctor range` checks the connection and should find 8 tools.
+
+### Gemini CLI
+
+```bash
+gemini mcp add --scope user --transport http range https://range.datatides.xyz/mcp
+```
+
+Without `--scope user`, it goes into the current project's `.gemini/settings.json`. In a settings file the key is `httpUrl`:
+
+```json
+{ "mcpServers": { "range": { "httpUrl": "https://range.datatides.xyz/mcp" } } }
+```
+
+### Cursor
+
+In `~/.cursor/mcp.json`, or `.cursor/mcp.json` in a project:
 
 ```json
 { "mcpServers": { "range": { "url": "https://range.datatides.xyz/mcp" } } }
 ```
 
-**VS Code**: in `.vscode/mcp.json`:
+### VS Code with GitHub Copilot
+
+In `.vscode/mcp.json`, or in your profile's file (run **MCP: Open User Configuration**):
 
 ```json
 { "servers": { "range": { "type": "http", "url": "https://range.datatides.xyz/mcp" } } }
 ```
 
-**A client that only runs local servers** can bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
+### Windsurf
+
+Open the MCP config file from the `...` menu at the top right of the Cascade panel, and add:
 
 ```json
-{ "mcpServers": { "range": { "command": "npx", "args": ["mcp-remote", "https://range.datatides.xyz/mcp"] } } }
+{ "mcpServers": { "range": { "serverUrl": "https://range.datatides.xyz/mcp" } } }
 ```
+
+### Claude Desktop and claude.ai
+
+Go to Customize, Connectors, Add, Add custom connector. Enter the URL above and choose no sign-in. On Team and Enterprise plans, an owner adds it under Organization settings, Connectors. Claude connects from Anthropic's servers, not from your machine.
+
+### Any other client
+
+If it takes a server URL, use the three settings above. Most configuration files follow Cursor's shape (`url`) or VS Code's (`"type": "http"` with `url`).
+
+If it only launches local commands, bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which needs Node.js:
+
+```json
+{ "mcpServers": { "range": { "command": "npx", "args": ["-y", "mcp-remote", "https://range.datatides.xyz/mcp"] } } }
+```
+
+If it has no MCP support, use the [REST API](../api/README.md), or post JSON-RPC as shown in [Calling it without a client](#calling-it-without-a-client).
 
 ## Tools
 
